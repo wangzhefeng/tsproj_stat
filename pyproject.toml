@@ -1,0 +1,10 @@
+[project]
+name = "ts-forecast-framework"
+version = "0.1.0"
+description = "Statistical time series forecasting testing & inference framework"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
