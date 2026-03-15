@@ -1,7 +1,7 @@
 ﻿import pandas as pd
 
-from task.evaluation.backtest import rolling_backtest
-from task.models.factory import ModelFactory
+from evaluation.backtest import rolling_backtest
+from models.factory import ModelFactory
 
 
 def test_backtest_smoke():

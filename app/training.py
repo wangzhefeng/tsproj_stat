@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from .models.factory import ModelFactory
+from models.factory import ModelFactory
 
 
 class Trainer:

@@ -1,6 +1,6 @@
 ﻿import pandas as pd
 
-from task.models.factory import ModelFactory
+from models.factory import ModelFactory
 from models.persistence import load_model, save_model
 
 

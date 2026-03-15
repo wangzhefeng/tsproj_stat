@@ -2,8 +2,8 @@
 
 import pandas as pd
 
-from .evaluation.backtest import rolling_backtest
-from .models.factory import ModelFactory
+from evaluation.backtest import rolling_backtest
+from models.factory import ModelFactory
 
 
 class Tester:
@@ -27,7 +27,7 @@ class Tester:
     def evaluate(self, df: pd.DataFrame) -> pd.DataFrame:
         model = self.factory.create_model(self.model_name, self.model_params)
         return rolling_backtest(
-            df,
+            df=df,
             model=model,
             target_col=self.target_col,
             initial_train_size=self.initial_train_size,

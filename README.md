@@ -1,63 +1,60 @@
-﻿# 统计模型时间序列预测框架（重构版）
+﻿# 统计模型时间序列预测框架
 
-本项目已按 `tsproj_ml/stable` 风格完成一次性重构，采用分层架构：配置层、模型工厂层、训练/测试/预测编排层、CLI 入口层。
+本项目用于基于统计模型的时间序列预测，采用根目录主线分层架构，统一支持训练、回测、预测与模型持久化。
 
-## 新架构
+## 项目结构
 
 ```text
 .
-├─ src/ts_forecast_framework/
-│  ├─ config/                # dataclass 配置
-│  ├─ models/                # 统一模型抽象 + 工厂
-│  ├─ evaluation/            # 指标与回测
-│  ├─ app/                   # Pipeline 编排
-│  ├─ training.py            # Trainer
-│  ├─ testing.py             # Tester
-│  ├─ forecasting.py         # Forecaster
-│  ├─ io.py                  # 数据加载
-│  └─ persistence.py         # 模型保存/加载
-├─ run.py                    # CLI 入口（主入口）
-├─ main.py                   # 最小示例入口
-└─ tests/                    # 重构后测试集
+|- app/                # 应用编排层（pipeline / training / testing / forecasting）
+|- config/             # dataclass 配置
+|- models/             # 统计模型抽象、工厂与实现
+|- evaluation/         # 指标与回测
+|- inference/          # 预测策略分发（one_step / recursive / direct）
+|- data_provider/      # 数据加载与窗口切分
+|- features/           # 特征工程与缩放
+|- datasets/           # 示例与模拟数据
+|- run.py              # CLI 入口
+|- main.py             # 本地最小入口
 ```
 
-## 已接入模型（统一工厂）
+## 统计预测策略
 
-`naive`, `arima`, `auto_arima`, `sarima`, `ets`, `theta`, `var`, `bayesian_var`, `linear_var`, `arch`, `garch`, `tbats`, `prophet`, `neuralprophet`, `bayesian_tmt`, `rar`
-
-说明：对可选依赖模型，框架实现了鲁棒回退策略（趋势/Naive），保证管线可运行。
+- `one_step`：一步预测
+- `recursive`：递归多步预测
+- `direct`：直接多步预测
+- `rolling_backtest`：滚动窗口回测（见 `evaluation/backtest.py`）
 
 ## 快速开始
 
 ```bash
 python -m venv .venv
-# Windows
-.venv\Scripts\activate
+.venv\\Scripts\\activate
 pip install -r requirements.txt
-
 pytest -q
-python run.py --model-name arima --do-train true --do-test true --do-forecast true
 ```
 
-## CLI 示例
+## 运行示例
 
 ```bash
-python run.py \
-  --config-module ts_forecast_framework.config.default \
-  --config-class AppConfig \
-  --model-name var \
-  --forecast-horizon 14 \
-  --do-train true --do-test true --do-forecast true
+python run.py --model-name arima --pred-method direct --do-train true --do-test true --do-forecast true
 ```
 
-## 输出结果
+## 输出目录
 
-- 训练模型：`artifacts/checkpoints/model.pkl`
-- 回测结果：`artifacts/test_results/backtest_metrics.csv`
-- 预测结果：`artifacts/pred_results/prediction.csv`
-- 运行摘要：`artifacts/pred_results/run_summary.json`
+- `artifacts/checkpoints/model.pkl`
+- `artifacts/results_test/backtest_metrics.csv`
+- `artifacts/results_forecast/prediction.csv`
+- `artifacts/results_forecast/feature_snapshot.csv`
+- `artifacts/results_forecast/run_summary.json`
 
-## 仓库变更记录
+## 模拟数据
 
-- 2026-03-15：完成统计框架一次性重构（架构、入口、模型工厂、测试全部切换）。
-- 2026-03-15：`models/models_ad` 已删除，异常检测资产不在当前主线范围。
+- `datasets/simulated_daily.csv`：用于本地快速冒烟验证。
+
+## 本次更新（2026-03-15）
+
+- `main.py` 与 `run.py` 新增常见 `statsmodels` 拟合警告的定向过滤：
+  - `Non-invertible starting MA parameters found`
+  - `ConvergenceWarning`
+- 目的：减少噪声日志，保留主流程输出，不影响模型训练与预测逻辑。

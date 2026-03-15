@@ -1,7 +1,7 @@
 ﻿import pandas as pd
 import pytest
 
-from task.models.factory import ModelFactory
+from models.factory import ModelFactory
 
 
 def test_factory_supported_models_create():

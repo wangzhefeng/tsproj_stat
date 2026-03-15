@@ -2,12 +2,11 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 
 @dataclass
 class AppConfig:
-    project_name: str = "ts-forecast-framework"
+    project_name: str = "tsproj_stat"
     seed: int = 2026
 
     data_path: str | None = None
@@ -16,22 +15,28 @@ class AppConfig:
     freq: str = "D"
 
     model_name: str = "arima"
-    model_params: dict[str, Any] = field(default_factory=lambda: {"order": (1, 1, 1)})
+    model_params: dict = field(default_factory=lambda: {"order": (1, 1, 1)})
 
+    pred_method: str = "direct"
     do_train: bool = True
     do_test: bool = True
     do_forecast: bool = True
 
-    holdout_size: int = 14
-    forecast_horizon: int = 7
+    history_size: int = 90
+    predict_horizon: int = 7
 
     backtest_initial_train_size: int = 30
     backtest_horizon: int = 7
     backtest_step: int = 7
 
+    enable_datetime_features: bool = True
+    lags: list[int] = field(default_factory=lambda: [1, 2, 7, 14])
+    scale: bool = False
+    scaler_type: str = "standard"
+
     checkpoints_dir: str = "artifacts/checkpoints"
-    test_results_dir: str = "artifacts/test_results"
-    pred_results_dir: str = "artifacts/pred_results"
+    test_results_dir: str = "artifacts/results_test"
+    pred_results_dir: str = "artifacts/results_forecast"
 
 
 DEFAULT_CONFIG = AppConfig()

@@ -1,6 +1,6 @@
 ﻿import numpy as np
 
-from task.evaluation.metrics import mae, mape, rmse
+from evaluation.metrics import mae, mape, rmse
 
 
 def test_metrics_basic():

@@ -3,25 +3,37 @@
 import argparse
 import importlib
 import random
-import sys
+import warnings
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
-
-ROOT = Path(__file__).resolve().parent
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
 
 import numpy as np
 
-from task.app import ModelApp
-from task.config import AppConfig
+from app import ModelApp
+from config import AppConfig
+
+
+def _configure_warnings() -> None:
+    # Ignore common SARIMAX initialization noise without hiding unrelated warnings.
+    warnings.filterwarnings(
+        "ignore",
+        message=".*Non-invertible starting MA parameters found.*",
+        category=UserWarning,
+    )
+    try:
+        from statsmodels.tools.sm_exceptions import ConvergenceWarning
+
+        warnings.filterwarnings("ignore", category=ConvergenceWarning)
+    except Exception:
+        # Keep startup robust even if statsmodels is not installed in some environments.
+        pass
 
 
 def _parse_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
+    if value is None:
+        return False
     text = str(value).strip().lower()
     if text in {"1", "true", "yes", "y", "on"}:
         return True
@@ -35,12 +47,12 @@ def _set_seed(seed: int) -> None:
     np.random.seed(seed)
 
 
-def _load_config(module_name: str, class_name: str):
-    module = importlib.import_module(module_name)
-    cfg_cls = getattr(module, class_name)
+def _load_config(config_module: str, config_class: str):
+    module = importlib.import_module(config_module)
+    cfg_cls = getattr(module, config_class)
     cfg = cfg_cls()
     if not isinstance(cfg, AppConfig):
-        raise TypeError(f"{module_name}.{class_name} must construct AppConfig")
+        raise TypeError(f"{config_module}.{config_class} must construct AppConfig")
     return cfg
 
 
@@ -49,28 +61,52 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.data_path = args.data_path
     if args.model_name is not None:
         cfg.model_name = args.model_name
-    if args.forecast_horizon is not None:
-        cfg.forecast_horizon = args.forecast_horizon
+    if args.pred_method is not None:
+        cfg.pred_method = args.pred_method
+    if args.target_col is not None:
+        cfg.target_col = args.target_col
+    if args.time_col is not None:
+        cfg.time_col = args.time_col
+    if args.freq is not None:
+        cfg.freq = args.freq
+    if args.history_size is not None:
+        cfg.history_size = args.history_size
+    if args.predict_horizon is not None:
+        cfg.predict_horizon = args.predict_horizon
     if args.do_train is not None:
         cfg.do_train = _parse_bool(args.do_train)
     if args.do_test is not None:
         cfg.do_test = _parse_bool(args.do_test)
     if args.do_forecast is not None:
         cfg.do_forecast = _parse_bool(args.do_forecast)
+    if args.scale is not None:
+        cfg.scale = _parse_bool(args.scale)
+    if args.scaler_type is not None:
+        cfg.scaler_type = args.scaler_type
     if args.seed is not None:
         cfg.seed = args.seed
+    if args.lags is not None:
+        cfg.lags = [int(v.strip()) for v in args.lags.split(",") if v.strip()]
     return cfg
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Statistical TS Forecasting CLI")
-    parser.add_argument("--config-module", type=str, default="ts_forecast_framework.config.default")
+    parser = argparse.ArgumentParser(description="Statistical Time Series Forecasting CLI")
+    parser.add_argument("--config-module", type=str, default="config.default")
     parser.add_argument("--config-class", type=str, default="AppConfig")
-    parser.add_argument("--seed", type=int, default=None)
 
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--data-path", type=str, default=None)
     parser.add_argument("--model-name", type=str, default=None)
-    parser.add_argument("--forecast-horizon", type=int, default=None)
+    parser.add_argument("--pred-method", type=str, default=None)
+    parser.add_argument("--target-col", type=str, default=None)
+    parser.add_argument("--time-col", type=str, default=None)
+    parser.add_argument("--freq", type=str, default=None)
+    parser.add_argument("--history-size", type=int, default=None)
+    parser.add_argument("--predict-horizon", type=int, default=None)
+    parser.add_argument("--lags", type=str, default=None)
+    parser.add_argument("--scale", default=None)
+    parser.add_argument("--scaler-type", type=str, default=None)
 
     parser.add_argument("--do-train", default=None)
     parser.add_argument("--do-test", default=None)
@@ -83,11 +119,11 @@ def main() -> None:
     cfg = _load_config(args.config_module, args.config_class)
     cfg = _apply_overrides(cfg, args)
 
+    _configure_warnings()
     _set_seed(cfg.seed)
-    app = ModelApp(cfg)
-    result = app.run()
+    result = ModelApp(cfg).run()
 
-    print("Run finished.")
+    print("Run finished")
     print(asdict(cfg))
     print(result)
 

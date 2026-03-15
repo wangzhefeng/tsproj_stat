@@ -1,21 +1,31 @@
 ﻿from __future__ import annotations
 
-import sys
-from pathlib import Path
+import warnings
 
-ROOT = Path(__file__).resolve().parent
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+from app import ModelApp
+from config import AppConfig
 
-from task.app import ModelApp
-from task.config import AppConfig
+
+def _configure_warnings() -> None:
+    # Ignore common SARIMAX initialization noise without hiding unrelated warnings.
+    warnings.filterwarnings(
+        "ignore",
+        message=".*Non-invertible starting MA parameters found.*",
+        category=UserWarning,
+    )
+    try:
+        from statsmodels.tools.sm_exceptions import ConvergenceWarning
+
+        warnings.filterwarnings("ignore", category=ConvergenceWarning)
+    except Exception:
+        # Keep startup robust even if statsmodels is not installed in some environments.
+        pass
 
 
 def main() -> None:
+    _configure_warnings()
     cfg = AppConfig()
-    app = ModelApp(cfg)
-    result = app.run()
+    result = ModelApp(cfg).run()
     print("ModelApp done:", result)
 
 
