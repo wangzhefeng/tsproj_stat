@@ -24,14 +24,15 @@ def test_cli_override_eda_fields():
         denoise_enabled="true",
         denoise_window=5,
         detrend_method="linear",
-        eda_output_dir="artifacts/custom_eda",
+        eda_output_dir="saved_results/custom_eda",
         seed=None,
         lags=None,
     )
 
     updated = _apply_overrides(cfg, args)
     assert updated.do_eda is True
-    assert updated.eda_output_dir == "artifacts/custom_eda"
+    assert updated.eda_output_dir == "saved_results/custom_eda"
     assert updated.denoise_enabled is True
     assert updated.denoise_window == 5
     assert updated.detrend_method == "linear"
+

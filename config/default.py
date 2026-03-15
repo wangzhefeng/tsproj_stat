@@ -40,10 +40,10 @@ class AppConfig:
     denoise_window: int = 3
     detrend_method: str = "none"
 
-    checkpoints_dir: str = "artifacts/checkpoints"
-    test_results_dir: str = "artifacts/results_test"
-    pred_results_dir: str = "artifacts/results_forecast"
-    eda_output_dir: str = "artifacts/results_eda"
+    checkpoints_dir: str = "saved_results/checkpoints"
+    test_results_dir: str = "saved_results/results_test"
+    pred_results_dir: str = "saved_results/results_forecast"
+    eda_output_dir: str = "saved_results/results_eda"
 
 
 DEFAULT_CONFIG = AppConfig()
@@ -54,3 +54,4 @@ def ensure_output_dirs(cfg: AppConfig) -> None:
     Path(cfg.test_results_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.pred_results_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.eda_output_dir).mkdir(parents=True, exist_ok=True)
+
