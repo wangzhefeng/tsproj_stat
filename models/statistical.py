@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 import inspect
-
+from difflib import get_close_matches
 import numpy as np
 import pandas as pd
 
@@ -354,11 +354,107 @@ class LinearVARModel(VARModel):
 
 
 class BayesianTMTModel(TrendFallbackModel):
-    pass
+    def __init__(self, lags: list[int] | None = None):
+        super().__init__()
+        self.lags = sorted(set(lags or [1, 2, 7]))
+        if any(lag <= 0 for lag in self.lags):
+            raise ValueError("lags must be positive integers")
+        self._model = None
+        self._history: list[float] = []
+        self._fallback = TrendFallbackModel()
+
+    def fit(self, y: pd.Series | pd.DataFrame) -> "BayesianTMTModel":
+        series = _to_univariate_series(y).astype(float)
+        self._history = series.tolist()
+        self._fallback.fit(series)
+
+        max_lag = max(self.lags)
+        if len(series) <= max_lag + 2:
+            self._model = None
+            return self
+
+        x_rows = []
+        y_vals = []
+        for t in range(max_lag, len(series)):
+            x_rows.append([series.iloc[t - lag] for lag in self.lags])
+            y_vals.append(series.iloc[t])
+
+        try:
+            from sklearn.linear_model import BayesianRidge
+
+            model = BayesianRidge()
+            model.fit(np.asarray(x_rows, dtype=float), np.asarray(y_vals, dtype=float))
+            self._model = model
+        except Exception as exc:
+            self._model = None
+            warnings.warn(f"BayesianTMT fit failed, fallback to trend: {exc}", RuntimeWarning)
+        return self
+
+    def predict(self, horizon: int) -> pd.Series:
+        if horizon <= 0:
+            raise ValueError("horizon must be positive")
+        if self._model is None:
+            return self._fallback.predict(horizon)
+
+        history = list(self._history)
+        preds: list[float] = []
+        for _ in range(horizon):
+            if len(history) < max(self.lags):
+                next_val = float(self._fallback.predict(1).iloc[0])
+            else:
+                feat = np.asarray([[history[-lag] for lag in self.lags]], dtype=float)
+                next_val = float(self._model.predict(feat)[0])
+            preds.append(next_val)
+            history.append(next_val)
+        return pd.Series(preds, name="yhat")
 
 
 class RARModel(TrendFallbackModel):
-    pass
+    def __init__(self, alpha: float = 0.2):
+        if not 0 < alpha <= 1:
+            raise ValueError("alpha must be in (0, 1]")
+        super().__init__()
+        self.alpha = alpha
+        self._resid_result = None
+        self._last_index = 0
+
+    def fit(self, y: pd.Series | pd.DataFrame) -> "RARModel":
+        series = _to_univariate_series(y).astype(float)
+        super().fit(series)
+        self._last_index = len(series) - 1
+
+        x = np.arange(len(series), dtype=float)
+        baseline = self._coef * x + self._intercept
+        resid = series.values - baseline
+
+        lag = max(1, int(round(self.alpha * 10)))
+        if len(resid) <= lag + 2:
+            self._resid_result = None
+            return self
+
+        try:
+            from statsmodels.tsa.ar_model import AutoReg
+
+            self._resid_result = AutoReg(resid, lags=lag, old_names=False).fit()
+        except Exception as exc:
+            self._resid_result = None
+            warnings.warn(f"RAR residual AR fit failed, fallback to trend: {exc}", RuntimeWarning)
+        return self
+
+    def predict(self, horizon: int) -> pd.Series:
+        if horizon <= 0:
+            raise ValueError("horizon must be positive")
+
+        x_future = np.arange(self._last_index + 1, self._last_index + 1 + horizon, dtype=float)
+        baseline = self._coef * x_future + self._intercept
+        if self._resid_result is None:
+            return pd.Series(baseline, name="yhat")
+
+        try:
+            resid_fc = self._resid_result.forecast(steps=horizon)
+            return pd.Series(baseline + np.asarray(resid_fc, dtype=float), name="yhat")
+        except Exception:
+            return pd.Series(baseline, name="yhat")
 
 
 @dataclass
@@ -391,13 +487,22 @@ def create_stat_model(name: str, params: dict | None = None) -> BaseStatModel:
     key = name.lower().strip()
     if key not in MODEL_REGISTRY:
         supported = ", ".join(sorted(MODEL_REGISTRY))
-        raise ValueError(f"Unsupported model '{name}'. Supported models: {supported}")
+        suggestion = get_close_matches(key, MODEL_REGISTRY.keys(), n=1)
+        hint = f" Did you mean '{suggestion[0]}'?" if suggestion else ""
+        raise ValueError(f"Unsupported model '{name}'.{hint} Supported models: {supported}")
     spec = MODEL_REGISTRY[key]
     merged = dict(spec.default_params)
     if params:
         merged.update(params)
     signature = inspect.signature(spec.cls.__init__)
-    valid_kwargs = {k: v for k, v in merged.items() if k in signature.parameters and k != "self"}
+    valid_names = {k for k in signature.parameters if k != "self"}
+    unknown = sorted([k for k in merged if k not in valid_names])
+    if unknown:
+        raise ValueError(
+            f"Invalid params for model '{key}': {unknown}. "
+            f"Accepted params: {sorted(valid_names)}"
+        )
+    valid_kwargs = {k: v for k, v in merged.items() if k in valid_names}
     return spec.cls(**valid_kwargs)
 
 
@@ -413,4 +518,8 @@ def _to_dataframe(y: pd.Series | pd.DataFrame) -> pd.DataFrame:
     if isinstance(y, pd.DataFrame):
         return y.reset_index(drop=True)
     return pd.DataFrame({"y": y.reset_index(drop=True)})
+
+
+
+
 

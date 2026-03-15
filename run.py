@@ -14,7 +14,6 @@ from config import AppConfig
 
 
 def _configure_warnings() -> None:
-    # Ignore common SARIMAX initialization noise without hiding unrelated warnings.
     warnings.filterwarnings(
         "ignore",
         message=".*Non-invertible starting MA parameters found.*",
@@ -25,7 +24,6 @@ def _configure_warnings() -> None:
 
         warnings.filterwarnings("ignore", category=ConvergenceWarning)
     except Exception:
-        # Keep startup robust even if statsmodels is not installed in some environments.
         pass
 
 
@@ -79,10 +77,20 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.do_test = _parse_bool(args.do_test)
     if args.do_forecast is not None:
         cfg.do_forecast = _parse_bool(args.do_forecast)
+    if args.do_eda is not None:
+        cfg.do_eda = _parse_bool(args.do_eda)
     if args.scale is not None:
         cfg.scale = _parse_bool(args.scale)
     if args.scaler_type is not None:
         cfg.scaler_type = args.scaler_type
+    if args.denoise_enabled is not None:
+        cfg.denoise_enabled = _parse_bool(args.denoise_enabled)
+    if args.denoise_window is not None:
+        cfg.denoise_window = args.denoise_window
+    if args.detrend_method is not None:
+        cfg.detrend_method = args.detrend_method
+    if args.eda_output_dir is not None:
+        cfg.eda_output_dir = args.eda_output_dir
     if args.seed is not None:
         cfg.seed = args.seed
     if args.lags is not None:
@@ -108,9 +116,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scale", default=None)
     parser.add_argument("--scaler-type", type=str, default=None)
 
+    parser.add_argument("--denoise-enabled", default=None)
+    parser.add_argument("--denoise-window", type=int, default=None)
+    parser.add_argument("--detrend-method", type=str, default=None)
+
+    parser.add_argument("--eda-output-dir", type=str, default=None)
+
     parser.add_argument("--do-train", default=None)
     parser.add_argument("--do-test", default=None)
     parser.add_argument("--do-forecast", default=None)
+    parser.add_argument("--do-eda", default=None)
     return parser.parse_args()
 
 

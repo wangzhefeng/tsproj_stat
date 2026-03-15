@@ -11,7 +11,7 @@ def build_order_grid(p_values=(0, 1, 2), d_values=(0, 1), q_values=(0, 1, 2)):
 
 
 def select_arima_order(y: pd.Series, order_grid: Iterable[tuple[int, int, int]], ic: str = "aic"):
-    """在给定候选网格中按 AIC/BIC 选择最佳 ARIMA 阶数。"""
+    """在给定网格中按 AIC/BIC 选择最优 ARIMA 阶数。"""
     if ic not in {"aic", "bic"}:
         raise ValueError("ic must be one of {'aic', 'bic'}")
 

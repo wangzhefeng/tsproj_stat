@@ -6,13 +6,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from config import AppConfig, ensure_output_dirs
-from data_provider.data_loader import DataLoader
-from features.FeatureEngineering import FeatureEngineer
-from features.FeatureScalering import FeatureScaler
 from app.forecasting import Forecaster
 from app.testing import Tester
 from app.training import Trainer
+from config import AppConfig, ensure_output_dirs
+from data_provider.data_loader import DataLoader
+from data_provider.data_processor import DataProcessor
+from eda import run_eda
+from features.FeatureEngineering import FeatureEngineer
+from features.FeatureScalering import FeatureScaler
 from models.persistence import save_model
 
 
@@ -34,6 +36,30 @@ class ModelApp:
 
         out: dict[str, str] = {}
 
+        if self.cfg.do_eda:
+            out.update(
+                run_eda(
+                    df=df,
+                    time_col=self.cfg.time_col,
+                    target_col=self.cfg.target_col,
+                    freq=self.cfg.freq,
+                    output_dir=self.cfg.eda_output_dir,
+                )
+            )
+
+        processor = DataProcessor(
+            detrend_method=self.cfg.detrend_method,
+            denoise_enabled=self.cfg.denoise_enabled,
+            denoise_window=self.cfg.denoise_window,
+        )
+        if processor.enabled:
+            processed_target = processor.fit_transform(df[self.cfg.target_col])
+            df = df.copy()
+            df[self.cfg.target_col] = processed_target
+            out["processor_applied"] = "true"
+            out["processor_detrend_method"] = self.cfg.detrend_method
+            out["processor_denoise_enabled"] = str(self.cfg.denoise_enabled).lower()
+
         history, _future = loader.split_history_future(
             df=df,
             history_size=self.cfg.history_size,
@@ -41,7 +67,6 @@ class ModelApp:
         )
         history_y = history[self.cfg.target_col].astype(float).reset_index(drop=True)
 
-        scaler = None
         if self.cfg.scale:
             scaler = FeatureScaler(self.cfg.scaler_type)
             scaled = scaler.fit_transform(pd.DataFrame({self.cfg.target_col: history_y}))
@@ -75,12 +100,13 @@ class ModelApp:
                 pred_method=self.cfg.pred_method,
             )
             pred = forecaster.forecast(history=history_y, horizon=self.cfg.predict_horizon)
+            if processor.enabled:
+                pred = processor.inverse_forecast(pred)
             pred_df = pd.DataFrame({"step": range(1, len(pred) + 1), "yhat": pred.values})
             pred_path = Path(self.cfg.pred_results_dir) / "prediction.csv"
             pred_df.to_csv(pred_path, index=False)
             out["prediction_path"] = str(pred_path)
 
-        # 输出特征工程快照，便于调试与对齐 tsproj_ml 风格
         fe = FeatureEngineer(time_col=self.cfg.time_col, target_col=self.cfg.target_col)
         featured_df, feature_cols, target_shift_cols = fe.create_features(
             df=df[[self.cfg.time_col, self.cfg.target_col]].copy(),
@@ -98,4 +124,3 @@ class ModelApp:
         summary_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
         out["summary_path"] = str(summary_path)
         return out
-

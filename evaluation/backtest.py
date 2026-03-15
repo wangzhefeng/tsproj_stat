@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .metrics import mae, rmse, mape
+from .metrics import mae, mape, rmse
 
 
-def rolling_backtest(df: pd.DataFrame, model, target_col="y", initial_train_size=30, horizon=7, step=7):
+def rolling_backtest(
+    df: pd.DataFrame,
+    model,
+    target_col: str = "y",
+    initial_train_size: int = 30,
+    horizon: int = 7,
+    step: int = 7,
+) -> pd.DataFrame:
     """滚动窗口回测：每个窗口训练后预测 horizon 步。"""
     n = len(df)
     if initial_train_size + horizon > n:
@@ -15,7 +22,7 @@ def rolling_backtest(df: pd.DataFrame, model, target_col="y", initial_train_size
     start = initial_train_size
     while start + horizon <= n:
         train_y = df[target_col].iloc[:start]
-        test_y = df[target_col].iloc[start:start + horizon]
+        test_y = df[target_col].iloc[start : start + horizon]
 
         model.fit(train_y)
         pred = model.predict(horizon)
