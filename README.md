@@ -1,73 +1,63 @@
-# 统计模型时间序列预测测试与推理框架
+﻿# 统计模型时间序列预测框架（重构版）
 
-一个基于统计模型（ARIMA / Naive）的时间序列预测骨架，包含训练、推理、回测、评估与模型持久化。
+本项目已按 `tsproj_ml/stable` 风格完成一次性重构，采用分层架构：配置层、模型工厂层、训练/测试/预测编排层、CLI 入口层。
 
-## 目录结构
+## 新架构
 
 ```text
 .
-├── config/
-│   └── default.yaml
-├── examples/
-│   └── run_backtest.py
-├── src/
-│   └── ts_forecast_framework/
-│       ├── data.py
-│       ├── persistence.py                # 模型保存/加载
-│       ├── evaluation/
-│       │   ├── backtest.py
-│       │   └── metrics.py
-│       ├── inference/
-│       │   └── predict.py
-│       └── models/
-│           ├── base.py
-│           ├── selection.py              # AIC/BIC 自动选阶
-│           └── statistical.py            # Naive/ARIMA
-├── tests/
-│   ├── test_metrics.py
-│   ├── test_backtest_smoke.py
-│   ├── test_arima_smoke.py
-│   ├── test_arima_auto_order.py
-│   └── test_persistence.py
-├── pyproject.toml
-└── requirements.txt
+├─ src/ts_forecast_framework/
+│  ├─ config/                # dataclass 配置
+│  ├─ models/                # 统一模型抽象 + 工厂
+│  ├─ evaluation/            # 指标与回测
+│  ├─ app/                   # Pipeline 编排
+│  ├─ training.py            # Trainer
+│  ├─ testing.py             # Tester
+│  ├─ forecasting.py         # Forecaster
+│  ├─ io.py                  # 数据加载
+│  └─ persistence.py         # 模型保存/加载
+├─ run.py                    # CLI 入口（主入口）
+├─ main.py                   # 最小示例入口
+└─ tests/                    # 重构后测试集
 ```
 
-## 已实现能力
+## 已接入模型（统一工厂）
 
-- 统一模型接口：`fit / predict`
-- ARIMA 真实训练与预测（`statsmodels`）
-- ARIMA 自动选阶（网格搜索 + `AIC/BIC`）
-- 回测评估（MAE / RMSE / MAPE）
-- 模型保存与加载（pickle）
+`naive`, `arima`, `auto_arima`, `sarima`, `ets`, `theta`, `var`, `bayesian_var`, `linear_var`, `arch`, `garch`, `tbats`, `prophet`, `neuralprophet`, `bayesian_tmt`, `rar`
+
+说明：对可选依赖模型，框架实现了鲁棒回退策略（趋势/Naive），保证管线可运行。
 
 ## 快速开始
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
+# Windows
+.venv\Scripts\activate
 pip install -r requirements.txt
+
 pytest -q
-python examples/run_backtest.py
+python run.py --model-name arima --do-train true --do-test true --do-forecast true
 ```
 
-## 示例：ARIMA 自动选阶
+## CLI 示例
 
-```python
-from ts_forecast_framework.models.statistical import ARIMAForecaster
-
-model = ARIMAForecaster(
-    auto_order=True,
-    order_grid=[(0,1,0), (1,1,0), (1,1,1)],
-    ic="aic",
-)
+```bash
+python run.py \
+  --config-module ts_forecast_framework.config.default \
+  --config-class AppConfig \
+  --model-name var \
+  --forecast-horizon 14 \
+  --do-train true --do-test true --do-forecast true
 ```
 
-## 示例：模型持久化
+## 输出结果
 
-```python
-from ts_forecast_framework.persistence import save_model, load_model
+- 训练模型：`artifacts/checkpoints/model.pkl`
+- 回测结果：`artifacts/test_results/backtest_metrics.csv`
+- 预测结果：`artifacts/pred_results/prediction.csv`
+- 运行摘要：`artifacts/pred_results/run_summary.json`
 
-save_model(model, "artifacts/model.pkl")
-model2 = load_model("artifacts/model.pkl")
-```
+## 仓库变更记录
+
+- 2026-03-15：完成统计框架一次性重构（架构、入口、模型工厂、测试全部切换）。
+- 2026-03-15：`models/models_ad` 已删除，异常检测资产不在当前主线范围。

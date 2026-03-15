@@ -1,11 +1,12 @@
-import pandas as pd
+﻿import pandas as pd
 
-from ts_forecast_framework.models.statistical import NaiveForecaster
-from ts_forecast_framework.persistence import load_model, save_model
+from task.models.factory import ModelFactory
+from models.persistence import load_model, save_model
 
 
 def test_save_and_load_model(tmp_path):
-    model = NaiveForecaster().fit(pd.Series([1, 2, 3]))
+    model = ModelFactory().create_model("naive")
+    model.fit(pd.Series([1, 2, 3]))
     model_path = tmp_path / "naive.pkl"
 
     save_model(model, str(model_path))

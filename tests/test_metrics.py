@@ -1,10 +1,12 @@
-from ts_forecast_framework.evaluation.metrics import mae, rmse, mape
+﻿import numpy as np
+
+from task.evaluation.metrics import mae, mape, rmse
 
 
 def test_metrics_basic():
-    y_true = [1, 2, 3]
-    y_pred = [1, 2, 4]
+    y_true = np.array([1.0, 2.0, 3.0])
+    y_pred = np.array([1.0, 2.0, 4.0])
 
-    assert mae(y_true, y_pred) >= 0
-    assert rmse(y_true, y_pred) >= 0
-    assert mape(y_true, y_pred) >= 0
+    assert mae(y_true, y_pred) == 1.0 / 3.0
+    assert round(rmse(y_true, y_pred), 6) == round((1.0 / 3.0) ** 0.5, 6)
+    assert mape(y_true, y_pred) >= 0.0
