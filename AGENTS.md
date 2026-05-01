@@ -16,7 +16,8 @@
 - 新增 EDA 能力必须接入 `eda/pipeline.py`，并输出结构化结果与可追踪产物路径
 - 趋势去除、去噪、逆变换等可逆预处理统一放在 `data_provider/data_processor.py`
 - CLI 配置统一经由 `config/AppConfig` 与 `run.py` 参数覆盖，不允许平行新增另一套入口参数体系
-- 新增输出文件时，必须明确归属到 `saved_results/` 下的既有子目录，避免散落输出
+- 新增输出文件时，必须明确归属到 `saved_results/` 下的既有子目录，避免散落输出；测试可使用临时绝对路径
+- `features/` 当前定位为分析特征快照与后续扩展预留层，不作为当前统计模型训练输入
 
 ## 3. 依赖与质量基线
 
@@ -24,10 +25,10 @@
 - Python 环境统一使用项目根目录 `.venv` 的 `uv` 虚拟环境
 - 安装、增加、更新 Python 依赖统一使用 `uv add`；环境同步统一使用 `uv sync --extra dev`
 - Python 基线：`3.12`（以 `.python-version` 与当前开发环境为准）
-- 默认验证基线：`uv run pytest -q`
+- 默认验证基线：`UV_CACHE_DIR=.uv_cache uv run pytest -q`
 - CLI 烟雾验证基线：
-  - `uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5`
-  - `uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false`
+  - `UV_CACHE_DIR=.uv_cache uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5`
+  - `UV_CACHE_DIR=.uv_cache uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false`
 - 若环境未满足上述命令，先修复环境，再继续功能开发；不要跳过验证直接宣称完成
 
 ## 4. 文档同步
@@ -48,14 +49,15 @@
 ## 6. 当前状态（2026-05-01）
 
 - 主线入口已统一为 `run.py`，支持 `--do-eda`
+- 运行时 warning 初始化已统一到 `app/runtime.py`，CLI 与最小入口共用
 - EDA 子系统已并入主流程，入口为 `eda/pipeline.py`，产出结构化摘要、诊断表与图表路径
 - 数据预处理已集中到 `data_provider/data_processor.py`，支持去噪、去趋势与预测逆变换
+- `DataLoader` 已将 demo 数据加载从真实 CSV 读取逻辑中拆分
 - `BayesianTMT` / `RAR` 已完成非占位实现，并纳入测试覆盖
-- 入口层已对常见 `statsmodels` 拟合告警做定向过滤，减少无效噪声
+- 分析特征快照输出已更名为 `analysis_feature_snapshot.csv`，以避免与预测主链路混淆
 
 ## 7. 当前已知问题
 
 - `README.md` 存在与仓库实际状态不一致的描述，变更时必须同步修正
 - 当前环境基线已恢复，但仍需持续验证 `pytest` 与 CLI smoke 命令
-- `src/ts_forecast_framework/` 仍有历史残留，需要在后续单独确认其去留
-- 个别历史命名仍不够统一，例如 `FeatureScalering.py`，后续重构时应纳入收口范围
+- `uv` 缓存目录在受限环境下仍建议显式配置为仓库内目录

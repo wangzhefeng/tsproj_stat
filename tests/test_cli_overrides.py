@@ -1,8 +1,11 @@
 ﻿import argparse
+import json
 import sys
 
+import pytest
+
 from config import AppConfig
-from run import _apply_overrides, parse_args
+from run import _apply_overrides, _parse_model_params, parse_args
 
 
 def test_cli_override_eda_fields():
@@ -102,4 +105,14 @@ def test_cli_override_extended_app_config_fields():
     assert updated.checkpoints_dir == "saved_results/custom_ckpt"
     assert updated.test_results_dir == "saved_results/custom_test"
     assert updated.pred_results_dir == "saved_results/custom_pred"
+
+
+def test_parse_model_params_invalid_json_message():
+    with pytest.raises(ValueError, match="model_params must be valid JSON object text"):
+        _parse_model_params("{bad json")
+
+
+def test_parse_model_params_non_object_message():
+    with pytest.raises(ValueError, match="model_params must be a JSON object"):
+        _parse_model_params(json.dumps([1, 2, 3]))
 

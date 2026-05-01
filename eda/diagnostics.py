@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import math
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -8,6 +9,7 @@ from arch.unitroot import PhillipsPerron
 from pmdarima.arima.utils import nsdiffs
 from scipy.signal import find_peaks, periodogram
 from scipy.stats import entropy
+from statsmodels.tools.sm_exceptions import InterpolationWarning
 from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
 from statsmodels.tsa.seasonal import STL
 from statsmodels.tsa.stattools import acf, adfuller, kpss, pacf
@@ -24,7 +26,7 @@ def _safe_stat(fn_name: str, fn) -> dict:
 def stationarity_report(series: pd.Series) -> list[dict]:
     out = [
         _safe_stat("adf", lambda: adfuller(series, autolag="AIC")),
-        _safe_stat("kpss", lambda: kpss(series, regression="c", nlags="auto")),
+        _safe_stat("kpss", lambda: _run_kpss(series)),
     ]
 
     try:
@@ -34,6 +36,12 @@ def stationarity_report(series: pd.Series) -> list[dict]:
         out.append({"name": "pp", "statistic": math.nan, "pvalue": math.nan, "ok": False, "error": str(exc)})
 
     return out
+
+
+def _run_kpss(series: pd.Series):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", InterpolationWarning)
+        return kpss(series, regression="c", nlags="auto")
 
 
 def acf_pacf_report(series: pd.Series, nlags: int = 24) -> dict:

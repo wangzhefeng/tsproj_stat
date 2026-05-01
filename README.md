@@ -10,8 +10,8 @@
 |- config/             # dataclass 配置
 |- models/             # 统计模型抽象、工厂与实现
 |- evaluation/         # 指标与滚动回测
-|- data_provider/      # 数据加载与预处理（data_loader/data_processor）
-|- features/           # 特征工程与缩放
+|- data_provider/      # 数据加载、示例数据与预处理
+|- features/           # 分析特征快照与后续扩展预留层
 |- eda/                # EDA 子系统（analyzer/diagnostics/report/data_gen）
 |- tests/              # 测试用例
 |- saved_results/      # 运行期输出目录（按需生成）
@@ -29,6 +29,7 @@ uv sync --extra dev
 ```
 
 当前项目统一使用根目录 `.venv` 的 `uv` 虚拟环境。新增或更新依赖时，统一使用 `uv add`，不要直接用 `pip install` 维护项目依赖。
+为避免受限环境下的 `matplotlib` 缓存告警，项目默认使用根目录 `.mplconfig/` 作为本地 `MPLCONFIGDIR`。
 
 常用依赖管理命令：
 
@@ -43,19 +44,19 @@ uv sync --extra dev
 完整流程（训练 + 回测 + 预测）：
 
 ```bash
-uv run python run.py --model-name arima --pred-method direct --do-train true --do-test true --do-forecast true
+UV_CACHE_DIR=.uv_cache uv run python run.py --model-name arima --pred-method direct --do-train true --do-test true --do-forecast true
 ```
 
 仅执行 EDA：
 
 ```bash
-uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false
+UV_CACHE_DIR=.uv_cache uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false
 ```
 
 启用预处理（去噪 + 去趋势 + 逆变换）：
 
 ```bash
-uv run python run.py --denoise-enabled true --denoise-window 5 --detrend-method linear
+UV_CACHE_DIR=.uv_cache uv run python run.py --denoise-enabled true --denoise-window 5 --detrend-method linear
 ```
 
 ## 输出目录
@@ -63,11 +64,17 @@ uv run python run.py --denoise-enabled true --denoise-window 5 --detrend-method 
 - `saved_results/checkpoints/model.pkl`
 - `saved_results/results_test/backtest_metrics.csv`
 - `saved_results/results_forecast/prediction.csv`
-- `saved_results/results_forecast/feature_snapshot.csv`
+- `saved_results/results_forecast/analysis_feature_snapshot.csv`
 - `saved_results/results_forecast/run_summary.json`
 - `saved_results/results_eda/eda_summary.json`
 - `saved_results/results_eda/eda_diagnostics.csv`
 - `saved_results/results_eda/plots/*.png`
+
+## 当前主线说明
+
+- 统计预测主线当前仍是单变量序列建模，统一通过 `fit / predict` 接口接入。
+- `features/` 当前只用于生成分析型特征快照，不参与模型训练或预测主链路。
+- 无 `data_path` 时会加载内置 demo 序列，用于 smoke/test 场景；真实数据读取仍统一走 `data_provider/data_loader.py`。
 
 ## EDA 能力
 
@@ -94,15 +101,14 @@ uv run python run.py --denoise-enabled true --denoise-window 5 --detrend-method 
 ## 当前已知问题
 
 - 若 `.venv` 与 `pyproject.toml` / `uv.lock` 不一致，需要重新执行 `uv sync --extra dev`。
-- `src/ts_forecast_framework/` 仍有历史残留，暂未清理。
-- 个别历史命名仍待统一，例如 `FeatureScalering.py`。
+- 统计检验与自回归模型仍可能产生少量 warning，当前仅过滤高噪声初始化告警。
 
 详细问题与修复进度请见 `LOG.md`。
 
 ## 验证
 
 ```bash
-uv run pytest -q
-uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5
-uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false
+UV_CACHE_DIR=.uv_cache uv run pytest -q
+UV_CACHE_DIR=.uv_cache uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5
+UV_CACHE_DIR=.uv_cache uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false
 ```

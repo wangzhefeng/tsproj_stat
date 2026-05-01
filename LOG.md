@@ -12,9 +12,9 @@
 | P02 | 当前 `.venv` 初始状态缺少 `pip`、`pytest`、`numpy` 等最小依赖 | 无法运行测试与 CLI 烟雾验证 | P0 | 已修复 |
 | P03 | EDA 出图默认使用交互式 `matplotlib` 后端 | 在测试/无界面环境中触发崩溃 | P0 | 已修复 |
 | P04 | `README.md` 中存在与仓库不一致的描述，如 `datasets/` 目录 | 文档误导，增加维护成本 | P1 | 已修复 |
-| P05 | `src/ts_forecast_framework/` 仅剩历史残留 `__pycache__` | 包结构不干净，容易误导后续维护 | P2 | 待确认 |
-| P06 | 历史命名不完全统一，如 `FeatureScalering.py` | 增加认知负担，影响长期可维护性 | P2 | 待处理 |
-| P07 | `matplotlib` 默认缓存目录 `/Users/wangzf/.matplotlib` 不可写 | 首次运行会回退到临时目录，影响稳定性与性能 | P2 | 待处理 |
+| P05 | `src/ts_forecast_framework/` 历史残留未收口 | 包结构不干净，容易误导后续维护 | P2 | 已修复 |
+| P06 | 历史命名不完全统一，如 `FeatureScalering.py` | 增加认知负担，影响长期可维护性 | P2 | 已修复 |
+| P07 | `matplotlib` 默认缓存目录 `/Users/wangzf/.matplotlib` 不可写 | 首次运行会回退到临时目录，影响稳定性与性能 | P2 | 已修复 |
 | P08 | 部分统计模型与检验在验证中仍会产生 warning | 不阻塞通过，但会影响日志整洁度与信噪比 | P2 | 待处理 |
 
 ## 修复记录
@@ -61,15 +61,51 @@
 - 原因：其职责已被 `data_provider/data_loader.py` 中的 `DataLoader.load_data()` 覆盖，继续保留会制造重复入口与分层歧义
 - 影响范围：清理历史死代码，统一数据加载入口到 `data_provider`
 
+### 2026-05-01 / Step 8
+
+- 新增 `AppConfig.validate()`，统一校验主流程关键参数、预测策略与输出目录约束
+- 原因：避免配置分散校验导致运行时才暴露错误
+- 影响范围：`config/default.py`、`run.py`、`app/pipeline.py`、CLI override 测试
+
+### 2026-05-01 / Step 9
+
+- 拆分 `ModelApp.run()` 为阶段式编排，并将 warning 初始化统一到 `app/runtime.py`
+- 原因：降低入口编排耦合度，统一 CLI 与最小入口的运行时行为
+- 影响范围：`app/pipeline.py`、`app/runtime.py`、`main.py`、`run.py`
+
+### 2026-05-01 / Step 10
+
+- 将 demo 数据加载从 `DataLoader` 中抽离到 `data_provider/demo_data.py`
+- 原因：分离“示例数据”和“真实 CSV 加载”职责，减少数据层语义混淆
+- 影响范围：`data_provider/data_loader.py`、测试数据加载边界用例
+
+### 2026-05-01 / Step 11
+
+- 重命名 `FeatureEngineering.py` / `FeatureScalering.py`，并将快照产物更名为 `analysis_feature_snapshot.csv`
+- 原因：统一 Python 模块命名，明确 `features/` 当前仅承担分析型快照职责
+- 影响范围：`features/`、`app/pipeline.py`、README、AGENTS、pipeline 测试
+
+### 2026-05-01 / Step 12
+
+- 为 `matplotlib` 增加项目级 `.mplconfig/` 默认缓存目录，并在 EDA 诊断中定向抑制 KPSS `InterpolationWarning`
+- 原因：降低受限环境下的运行时噪声，同时保留其他统计告警的可见性
+- 影响范围：`eda/report.py`、`eda/diagnostics.py`、`app/runtime.py`、README、EDA/runtime 测试
+
+### 2026-05-01 / Step 13
+
+- 文档确认 `src/ts_forecast_framework/` 已由人工删除，不再作为待确认残留
+- 原因：消除主线边界歧义，避免后续文档继续传播过期状态
+- 影响范围：`README.md`、`AGENTS.md`、`LOG.md`
+
 ## 待办任务
 
 | ID | 任务 | 优先级 | 完成条件 |
 | --- | --- | --- | --- |
 | T01 | 持续保持本地最小可运行环境 | P0 | `uv run pytest -q` 可执行，且 `uv run python run.py` smoke 命令可运行 |
-| T02 | 处理 `src/ts_forecast_framework/` 历史残留 | P1 | 明确保留或删除方案，并更新文档 |
-| T03 | 评估并统一历史命名 | P2 | 输出重构方案，确认是否改名及兼容处理 |
+| T02 | 处理 `src/ts_forecast_framework/` 历史残留 | P1 | 已由人工删除，文档状态同步完成 |
+| T03 | 评估并统一历史命名 | P2 | 已完成主线文件命名收口；剩余历史残留需持续巡检 |
 | T04 | 增补环境初始化标准流程 | P1 | README 中提供基于 `uv venv` / `uv sync` 的可复现安装路径 |
-| T05 | 处理 `matplotlib` 缓存目录不可写问题 | P2 | 为本地开发或测试环境提供稳定的 `MPLCONFIGDIR` 方案 |
+| T05 | 处理 `matplotlib` 缓存目录不可写问题 | P2 | 已提供项目级 `.mplconfig/` 方案，并纳入主线运行约定 |
 
 ## 验证记录
 
@@ -88,6 +124,13 @@
 | `rg -n "load_timeseries|models/io\\.py|from models\\.io|import .*load_timeseries" -S .` | 通过 | 已无代码引用，仅 `LOG.md` 中保留历史记录 |
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5` | 通过 | 删除 `models/io.py` 后主线 smoke 仍通过 |
 | `UV_CACHE_DIR=.uv_cache uv sync --extra dev` | 失败 | 当前环境网络受限，无法下载 `pytest` 依赖链中的 `pluggy` |
+| `/Users/wangzf/projects/tsproj_stat/.venv/bin/python -m pytest tests/test_app_config.py tests/test_cli_overrides.py tests/test_data_loader.py tests/test_pipeline.py tests/test_runtime.py -q` | 通过 | 新增边界测试 `17 passed` |
+| `UV_PROJECT_ENVIRONMENT=/Users/wangzf/projects/tsproj_stat/.venv UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `34 passed`；当时仍有 ARIMA/KPSS 相关 warning |
+| `UV_PROJECT_ENVIRONMENT=/Users/wangzf/projects/tsproj_stat/.venv UV_CACHE_DIR=.uv_cache uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5` | 通过 | 训练、回测、预测、分析快照与 summary 均成功落盘 |
+| `UV_PROJECT_ENVIRONMENT=/Users/wangzf/projects/tsproj_stat/.venv UV_CACHE_DIR=.uv_cache uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false` | 通过 | EDA-only 模式可单独运行；当时仍有 KPSS 与 matplotlib 缓存目录 warning |
+| `/Users/wangzf/projects/tsproj_stat/.venv/bin/python -m pytest tests/test_runtime.py tests/test_eda_smoke.py -q` | 通过 | `.mplconfig` 默认路径与 KPSS warning 定向抑制生效 |
+| `UV_PROJECT_ENVIRONMENT=/Users/wangzf/projects/tsproj_stat/.venv UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `36 passed`；仅剩 ARIMA 拟合相关 warning |
+| `UV_PROJECT_ENVIRONMENT=/Users/wangzf/projects/tsproj_stat/.venv UV_CACHE_DIR=.uv_cache uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false` | 通过 | 不再出现 KPSS 与 `matplotlib` 不可写缓存告警；仅首次字体缓存构建提示 |
 
 ## 备注
 
