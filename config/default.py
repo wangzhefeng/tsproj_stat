@@ -45,6 +45,31 @@ class AppConfig:
     pred_results_dir: str = "saved_results/results_forecast"
     eda_output_dir: str = "saved_results/results_eda"
 
+    def validate(self) -> None:
+        _ensure_positive(self.history_size, "history_size")
+        _ensure_positive(self.predict_horizon, "predict_horizon")
+        _ensure_positive(self.backtest_initial_train_size, "backtest_initial_train_size")
+        _ensure_positive(self.backtest_horizon, "backtest_horizon")
+        _ensure_positive(self.backtest_step, "backtest_step")
+
+        if self.pred_method not in {"direct", "recursive", "one_step"}:
+            raise ValueError("pred_method must be one of {'direct', 'recursive', 'one_step'}")
+
+        if self.scaler_type not in {"standard", "minmax"}:
+            raise ValueError("scaler_type must be one of {'standard', 'minmax'}")
+
+        if self.detrend_method not in {"none", "linear", "moving_average"}:
+            raise ValueError("detrend_method must be one of {'none', 'linear', 'moving_average'}")
+
+        for output_dir in (
+            self.checkpoints_dir,
+            self.test_results_dir,
+            self.pred_results_dir,
+            self.eda_output_dir,
+        ):
+            if not _is_allowed_output_dir(output_dir):
+                raise ValueError("All output directories must remain under the 'saved_results/' namespace")
+
 
 DEFAULT_CONFIG = AppConfig()
 
@@ -55,3 +80,11 @@ def ensure_output_dirs(cfg: AppConfig) -> None:
     Path(cfg.pred_results_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.eda_output_dir).mkdir(parents=True, exist_ok=True)
 
+
+def _ensure_positive(value: int, field_name: str) -> None:
+    if value <= 0:
+        raise ValueError(f"{field_name} must be > 0")
+
+
+def _is_allowed_output_dir(output_dir: str) -> bool:
+    return output_dir.startswith("saved_results/") or Path(output_dir).is_absolute()

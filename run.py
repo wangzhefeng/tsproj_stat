@@ -4,28 +4,18 @@ import argparse
 import importlib
 import json
 import random
-import warnings
 from dataclasses import asdict
 from typing import Any
 
 import numpy as np
 
+from runtime_env import ensure_mpl_config_dir
+
+ensure_mpl_config_dir()
+
 from app import ModelApp
+from app.runtime import configure_warnings
 from config import AppConfig
-
-
-def _configure_warnings() -> None:
-    warnings.filterwarnings(
-        "ignore",
-        message=".*Non-invertible starting MA parameters found.*",
-        category=UserWarning,
-    )
-    try:
-        from statsmodels.tools.sm_exceptions import ConvergenceWarning
-
-        warnings.filterwarnings("ignore", category=ConvergenceWarning)
-    except Exception:
-        pass
 
 
 def _parse_bool(value: Any) -> bool:
@@ -49,7 +39,10 @@ def _set_seed(seed: int) -> None:
 def _parse_model_params(value: str | None) -> dict:
     if value is None:
         return {}
-    parsed = json.loads(value)
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("model_params must be valid JSON object text") from exc
     if not isinstance(parsed, dict):
         raise ValueError("model_params must be a JSON object")
 
@@ -169,8 +162,9 @@ def main() -> None:
     args = parse_args()
     cfg = _load_config(args.config_module, args.config_class)
     cfg = _apply_overrides(cfg, args)
+    cfg.validate()
 
-    _configure_warnings()
+    configure_warnings()
     _set_seed(cfg.seed)
     result = ModelApp(cfg).run()
 

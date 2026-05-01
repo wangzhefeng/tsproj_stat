@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 
+# Historical reference only. Do not import this module into the current
+# forecasting mainline; use `data_provider/demo_data.py` or `eda/data_gen.py`
+# for active demo/test data generation.
+
 # ***************************************************
 # * File        : data_gene.py
 # * Author      : Zhefeng Wang
