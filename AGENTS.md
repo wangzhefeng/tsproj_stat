@@ -13,6 +13,8 @@
 
 - 预测策略主线：`direct` / `recursive` / `one_step`，统一通过应用层编排与 `rolling_backtest` 验证
 - 新增模型必须接入 `models/factory.py`，并实现统一 `fit / predict` 接口
+- 统计模型主实现位于 `models/statistical/` 包内，按模型家族分文件维护；新增模型不得回退到单文件堆叠
+- ARIMA 阶数搜索 helper 统一内聚在 `models/statistical/arima_family.py`；模型 registry 统一位于 `models/registry.py`
 - 新增 EDA 能力必须接入 `eda/pipeline.py`，并输出结构化结果与可追踪产物路径
 - 趋势去除、去噪、逆变换等可逆预处理统一放在 `data_provider/data_processor.py`
 - CLI 配置统一经由 `config/AppConfig` 与 `run.py` 参数覆盖，不允许平行新增另一套入口参数体系
@@ -50,6 +52,7 @@
 
 - 主线入口已统一为 `run.py`，支持 `--do-eda`
 - 运行时 warning 初始化已统一到 `app/runtime.py`，CLI 与最小入口共用
+- `models/statistical.py` 已重构为 `models/statistical/` 包结构，fallback 和公共 helper 已独立；registry 已上移到 `models/registry.py`
 - EDA 子系统已并入主流程，入口为 `eda/pipeline.py`，产出结构化摘要、诊断表与图表路径
 - 数据预处理已集中到 `data_provider/data_processor.py`，支持去噪、去趋势与预测逆变换
 - `DataLoader` 已将 demo 数据加载从真实 CSV 读取逻辑中拆分
@@ -61,3 +64,4 @@
 - `README.md` 存在与仓库实际状态不一致的描述，变更时必须同步修正
 - 当前环境基线已恢复，但仍需持续验证 `pytest` 与 CLI smoke 命令
 - `uv` 缓存目录在受限环境下仍建议显式配置为仓库内目录
+- ARIMA 家族仍可能出现少量 `ConvergenceWarning`，后续若继续治理，应保持模型层定向处理而非重新回到入口层全局过滤

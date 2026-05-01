@@ -15,7 +15,7 @@
 | P05 | `src/ts_forecast_framework/` 历史残留未收口 | 包结构不干净，容易误导后续维护 | P2 | 已修复 |
 | P06 | 历史命名不完全统一，如 `FeatureScalering.py` | 增加认知负担，影响长期可维护性 | P2 | 已修复 |
 | P07 | `matplotlib` 默认缓存目录 `/Users/wangzf/.matplotlib` 不可写 | 首次运行会回退到临时目录，影响稳定性与性能 | P2 | 已修复 |
-| P08 | 部分统计模型与检验在验证中仍会产生 warning | 不阻塞通过，但会影响日志整洁度与信噪比 | P2 | 待处理 |
+| P08 | 部分统计模型与检验在验证中仍会产生 warning | 不阻塞通过，但会影响日志整洁度与信噪比 | P2 | 部分修复 |
 
 ## 修复记录
 
@@ -97,6 +97,24 @@
 - 原因：消除主线边界歧义，避免后续文档继续传播过期状态
 - 影响范围：`README.md`、`AGENTS.md`、`LOG.md`
 
+### 2026-05-01 / Step 14
+
+- 将 `models/statistical.py` 一次性拆分为 `models/statistical/` 包结构，并新增公共 helper、分族模型模块与独立 registry
+- 原因：原单文件同时承担模型实现、fallback、参数校验和 registry 职责，扩展和维护成本过高
+- 影响范围：`models/statistical/`、`models/selection.py`、统计模型相关测试
+
+### 2026-05-01 / Step 15
+
+- 将 ARIMA 家族的高噪声初始化 warning 下沉到模型层和选型层定向过滤
+- 原因：让 warning 治理靠近模型实现，减少入口层兜底和测试层噪声
+- 影响范围：`models/statistical/arima_family.py`、`models/selection.py`、ARIMA 家族测试
+
+### 2026-05-01 / Step 16
+
+- 将 `models/selection.py` 的 ARIMA 选型逻辑整合进 `models/statistical/arima_family.py`，并将 registry 上移到 `models/registry.py`
+- 原因：进一步收紧统计模型项目边界，让 ARIMA 家族内部逻辑内聚，同时把工厂与 registry 放回同一层级
+- 影响范围：`models/statistical/arima_family.py`、`models/registry.py`、`models/factory.py`、`models/__init__.py`、兼容导出层与相关测试
+
 ## 待办任务
 
 | ID | 任务 | 优先级 | 完成条件 |
@@ -131,6 +149,11 @@
 | `/Users/wangzf/projects/tsproj_stat/.venv/bin/python -m pytest tests/test_runtime.py tests/test_eda_smoke.py -q` | 通过 | `.mplconfig` 默认路径与 KPSS warning 定向抑制生效 |
 | `UV_PROJECT_ENVIRONMENT=/Users/wangzf/projects/tsproj_stat/.venv UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `36 passed`；仅剩 ARIMA 拟合相关 warning |
 | `UV_PROJECT_ENVIRONMENT=/Users/wangzf/projects/tsproj_stat/.venv UV_CACHE_DIR=.uv_cache uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false` | 通过 | 不再出现 KPSS 与 `matplotlib` 不可写缓存告警；仅首次字体缓存构建提示 |
+| `./.venv/bin/python -m pytest tests/test_statistical_common.py tests/test_statistical_fallbacks.py tests/test_statistical_registry.py tests/test_statistical_arima_family.py tests/test_factory.py tests/test_factory_params.py tests/test_arima_smoke.py tests/test_arima_auto_order.py -q` | 通过 | `15 passed`；仅剩 `ConvergenceWarning` |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `45 passed`；仅剩 `ConvergenceWarning` |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5` | 通过 | 拆分 `models/statistical` 后主线训练、回测、预测仍正常 |
+| `./.venv/bin/python -m pytest tests/test_statistical_common.py tests/test_statistical_fallbacks.py tests/test_statistical_registry.py tests/test_statistical_arima_family.py tests/test_factory.py tests/test_factory_params.py tests/test_arima_smoke.py tests/test_arima_auto_order.py -q` | 通过 | `15 passed`；`selection.py` 内聚与 registry 上移后兼容性保持 |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `45 passed`；`models/registry.py` 上移后全量回归仍通过 |
 
 ## 备注
 

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from .base import BaseStatModel
-from .statistical import MODEL_REGISTRY, create_stat_model
+from .registry import MODEL_REGISTRY, create_stat_model
 
 
 @dataclass

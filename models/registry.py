@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+import inspect
+from dataclasses import dataclass
+from difflib import get_close_matches
+
+from models.base import BaseStatModel
+from models.statistical.arima_family import ARIMAModel, AutoARIMAModel, SARIMAModel
+from models.statistical.exponential_family import ETSModel, ThetaModel
+from models.statistical.extended_models import BayesianTMTModel, NeuralProphetModel, ProphetModel, RARModel, TBATSModel
+from models.statistical.fallbacks import NaiveModel
+from models.statistical.multivariate import BayesianVARModel, LinearVARModel, VARModel
+from models.statistical.volatility_family import ARCHModel, GARCHModel
+
+
+@dataclass
+class ModelSpec:
+    cls: type[BaseStatModel]
+    default_params: dict
+    family: str
+    stability: str
+    supports_multivariate: bool
+
+
+MODEL_REGISTRY: dict[str, ModelSpec] = {
+    "naive": ModelSpec(NaiveModel, {}, "fallbacks", "stable", False),
+    "arima": ModelSpec(ARIMAModel, {"order": (1, 1, 1)}, "arima_family", "stable", False),
+    "auto_arima": ModelSpec(AutoARIMAModel, {}, "arima_family", "stable", False),
+    "sarima": ModelSpec(SARIMAModel, {"order": (1, 1, 1), "seasonal_order": (1, 1, 1, 7)}, "arima_family", "stable", False),
+    "ets": ModelSpec(ETSModel, {}, "exponential_family", "stable", False),
+    "theta": ModelSpec(ThetaModel, {}, "exponential_family", "stable", False),
+    "var": ModelSpec(VARModel, {}, "multivariate", "stable", True),
+    "bayesian_var": ModelSpec(BayesianVARModel, {}, "multivariate", "experimental", True),
+    "linear_var": ModelSpec(LinearVARModel, {}, "multivariate", "experimental", True),
+    "arch": ModelSpec(ARCHModel, {}, "volatility_family", "optional", False),
+    "garch": ModelSpec(GARCHModel, {}, "volatility_family", "optional", False),
+    "tbats": ModelSpec(TBATSModel, {}, "extended_models", "optional", False),
+    "prophet": ModelSpec(ProphetModel, {}, "extended_models", "optional", False),
+    "neuralprophet": ModelSpec(NeuralProphetModel, {}, "extended_models", "experimental", False),
+    "bayesian_tmt": ModelSpec(BayesianTMTModel, {}, "extended_models", "experimental", False),
+    "rar": ModelSpec(RARModel, {}, "extended_models", "experimental", False),
+}
+
+
+def create_stat_model(name: str, params: dict | None = None) -> BaseStatModel:
+    model_name = name.lower().strip()
+    if model_name not in MODEL_REGISTRY:
+        supported = ", ".join(sorted(MODEL_REGISTRY))
+        suggestion = get_close_matches(model_name, MODEL_REGISTRY.keys(), n=1)
+        hint = f" Did you mean '{suggestion[0]}'?" if suggestion else ""
+        raise ValueError(f"Unsupported model '{name}'.{hint} Supported models: {supported}")
+
+    spec = MODEL_REGISTRY[model_name]
+    merged = dict(spec.default_params)
+    if params:
+        merged.update(params)
+
+    signature = inspect.signature(spec.cls.__init__)
+    valid_names = {key for key in signature.parameters if key != "self"}
+    unknown = sorted([key for key in merged if key not in valid_names])
+    if unknown:
+        raise ValueError(
+            f"Invalid params for model '{model_name}': {unknown}. "
+            f"Accepted params: {sorted(valid_names)}"
+        )
+    valid_kwargs = {key: value for key, value in merged.items() if key in valid_names}
+    return spec.cls(**valid_kwargs)

@@ -8,7 +8,7 @@
 .
 |- app/                # 应用编排层（pipeline/training/testing/forecasting）
 |- config/             # dataclass 配置
-|- models/             # 统计模型抽象、工厂与实现
+|- models/             # 统计模型抽象、工厂与实现（`models/statistical/` 为分族包结构）
 |- evaluation/         # 指标与滚动回测
 |- data_provider/      # 数据加载、示例数据与预处理
 |- features/           # 分析特征快照与后续扩展预留层
@@ -73,6 +73,8 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --denoise-enabled true --denoise-win
 ## 当前主线说明
 
 - 统计预测主线当前仍是单变量序列建模，统一通过 `fit / predict` 接口接入。
+- 统计模型实现已从单文件 `models/statistical.py` 重构为 `models/statistical/` 包，按 ARIMA、指数平滑、多变量、波动率和扩展模型分组维护。
+- ARIMA 选型 helper 已并入 `models/statistical/arima_family.py`；模型 registry 当前位于 `models/registry.py`，由 `models.statistical` 做兼容导出。
 - `features/` 当前只用于生成分析型特征快照，不参与模型训练或预测主链路。
 - 无 `data_path` 时会加载内置 demo 序列，用于 smoke/test 场景；真实数据读取仍统一走 `data_provider/data_loader.py`。
 
@@ -101,7 +103,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --denoise-enabled true --denoise-win
 ## 当前已知问题
 
 - 若 `.venv` 与 `pyproject.toml` / `uv.lock` 不一致，需要重新执行 `uv sync --extra dev`。
-- 统计检验与自回归模型仍可能产生少量 warning，当前仅过滤高噪声初始化告警。
+- ARIMA 家族的高噪声初始化 warning 已在模型层定向过滤；当前仍可能看到少量 `ConvergenceWarning`。
 
 详细问题与修复进度请见 `LOG.md`。
 
