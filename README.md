@@ -14,6 +14,7 @@
 |- features/           # 分析特征快照与后续扩展预留层
 |- eda/                # EDA 子系统（analyzer/diagnostics/report/data_gen）
 |- tests/              # 测试用例
+|- scripts/            # 数据集专项运行脚本
 |- saved_results/      # 运行期输出目录（按需生成）
 |- run.py              # 完整 CLI 入口
 |- main.py             # 最小示例入口
@@ -77,6 +78,16 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --denoise-enabled true --denoise-win
 - ARIMA 选型 helper 已并入 `models/statistical/arima_family.py`；模型 registry 当前位于 `models/registry.py`，由 `models.statistical` 做兼容导出。
 - `features/` 当前只用于生成分析型特征快照，不参与模型训练或预测主链路。
 - 无 `data_path` 时会加载内置 demo 序列，用于 smoke/test 场景；真实数据读取仍统一走 `data_provider/data_loader.py`。
+- `dataset/wind_dataset.csv` 的单变量脚本已落在 `scripts/wind_univariate/`，当前约定 `DATE` 为时间列、`WIND` 为目标列。
+
+## 数据集脚本
+
+- 单模型脚本入口：
+  - `bash scripts/wind_univariate/run_naive.sh`
+  - `bash scripts/wind_univariate/run_arima.sh`
+  - 其余模型同名脚本位于 `scripts/wind_univariate/`
+- 当前每个脚本都直接写死 `dataset/wind_dataset.csv`、`DATE`、`WIND` 与输出目录参数，不依赖公共 `common.sh`
+- 当前单变量脚本覆盖所有 `supports_multivariate=False` 的模型；`var / bayesian_var / linear_var` 暂未纳入。
 
 ## EDA 能力
 

@@ -208,7 +208,7 @@ __marimo__/
 
 # custom
 saved_results/
-datasets/
+dataset/
 logs/
 .uv-cache/
 .worktrees/
