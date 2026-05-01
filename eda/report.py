@@ -3,10 +3,15 @@
 import json
 from pathlib import Path
 
-import matplotlib.pyplot as plt
+import matplotlib
 import pandas as pd
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.tsa.seasonal import STL
+
+# Force a non-interactive backend so EDA plots work in tests and CLI runs
+# without requiring a GUI session.
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 
 def save_eda_outputs(

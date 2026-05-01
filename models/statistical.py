@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
 import inspect
+from dataclasses import dataclass
 from difflib import get_close_matches
+
 import numpy as np
 import pandas as pd
 
@@ -457,6 +458,23 @@ class RARModel(TrendFallbackModel):
             return pd.Series(baseline, name="yhat")
 
 
+def _to_univariate_series(y: pd.Series | pd.DataFrame) -> pd.Series:
+    if isinstance(y, pd.DataFrame):
+        if y.shape[1] == 0:
+            raise ValueError("Input dataframe is empty")
+        return y.iloc[:, 0].reset_index(drop=True)
+    return y.reset_index(drop=True)
+
+
+def _to_dataframe(y: pd.Series | pd.DataFrame) -> pd.DataFrame:
+    if isinstance(y, pd.DataFrame):
+        return y.reset_index(drop=True)
+    return pd.DataFrame({"y": y.reset_index(drop=True)})
+
+
+# ##############################
+# Statistical model registry
+# ##############################
 @dataclass
 class ModelSpec:
     cls: type[BaseStatModel]
@@ -484,42 +502,30 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
 
 
 def create_stat_model(name: str, params: dict | None = None) -> BaseStatModel:
-    key = name.lower().strip()
-    if key not in MODEL_REGISTRY:
+    # model name
+    model_name = name.lower().strip()
+    
+    if model_name not in MODEL_REGISTRY:
         supported = ", ".join(sorted(MODEL_REGISTRY))
-        suggestion = get_close_matches(key, MODEL_REGISTRY.keys(), n=1)
+        suggestion = get_close_matches(model_name, MODEL_REGISTRY.keys(), n=1)
         hint = f" Did you mean '{suggestion[0]}'?" if suggestion else ""
         raise ValueError(f"Unsupported model '{name}'.{hint} Supported models: {supported}")
-    spec = MODEL_REGISTRY[key]
+    
+    # model space
+    spec = MODEL_REGISTRY[model_name]
+    # update default model params
     merged = dict(spec.default_params)
     if params:
         merged.update(params)
+    # model signature
     signature = inspect.signature(spec.cls.__init__)
     valid_names = {k for k in signature.parameters if k != "self"}
     unknown = sorted([k for k in merged if k not in valid_names])
     if unknown:
         raise ValueError(
-            f"Invalid params for model '{key}': {unknown}. "
+            f"Invalid params for model '{model_name}': {unknown}. "
             f"Accepted params: {sorted(valid_names)}"
         )
     valid_kwargs = {k: v for k, v in merged.items() if k in valid_names}
+
     return spec.cls(**valid_kwargs)
-
-
-def _to_univariate_series(y: pd.Series | pd.DataFrame) -> pd.Series:
-    if isinstance(y, pd.DataFrame):
-        if y.shape[1] == 0:
-            raise ValueError("Input dataframe is empty")
-        return y.iloc[:, 0].reset_index(drop=True)
-    return y.reset_index(drop=True)
-
-
-def _to_dataframe(y: pd.Series | pd.DataFrame) -> pd.DataFrame:
-    if isinstance(y, pd.DataFrame):
-        return y.reset_index(drop=True)
-    return pd.DataFrame({"y": y.reset_index(drop=True)})
-
-
-
-
-

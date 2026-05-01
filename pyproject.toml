@@ -5,6 +5,7 @@ description = "Statistical time series forecasting framework"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "akshare>=1.18.59",
     "arch>=8.0.0",
     "matplotlib>=3.10.8",
     "numpy>=2.4.3",

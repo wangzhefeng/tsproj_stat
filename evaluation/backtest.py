@@ -13,7 +13,9 @@ def rolling_backtest(
     horizon: int = 7,
     step: int = 7,
 ) -> pd.DataFrame:
-    """滚动窗口回测：每个窗口训练后预测 horizon 步。"""
+    """
+    滚动窗口回测：每个窗口训练后预测 horizon 步。
+    """
     n = len(df)
     if initial_train_size + horizon > n:
         raise ValueError("Not enough data for backtest")
@@ -21,9 +23,11 @@ def rolling_backtest(
     rows = []
     start = initial_train_size
     while start + horizon <= n:
+        # train history data
         train_y = df[target_col].iloc[:start]
+        # test ture data
         test_y = df[target_col].iloc[start : start + horizon]
-
+        # model training and forecasting
         model.fit(train_y)
         pred = model.predict(horizon)
 

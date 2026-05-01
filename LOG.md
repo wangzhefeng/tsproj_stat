@@ -1,0 +1,95 @@
+# LOG.md
+
+## 项目状态概览
+
+当前项目主流程已成型，但文档、环境和历史残留尚未收口；现阶段优先目标是恢复“文档可信、环境可复现、验证可执行”。
+
+## 当前问题
+
+| ID | 问题 | 影响 | 优先级 | 状态 |
+| --- | --- | --- | --- | --- |
+| P01 | `AGENTS.md` 中文内容已被错误转码后保存 | 项目规范不可读，协作基线失效 | P0 | 已修复 |
+| P02 | 当前 `.venv` 初始状态缺少 `pip`、`pytest`、`numpy` 等最小依赖 | 无法运行测试与 CLI 烟雾验证 | P0 | 已修复 |
+| P03 | EDA 出图默认使用交互式 `matplotlib` 后端 | 在测试/无界面环境中触发崩溃 | P0 | 已修复 |
+| P04 | `README.md` 中存在与仓库不一致的描述，如 `datasets/` 目录 | 文档误导，增加维护成本 | P1 | 已修复 |
+| P05 | `src/ts_forecast_framework/` 仅剩历史残留 `__pycache__` | 包结构不干净，容易误导后续维护 | P2 | 待确认 |
+| P06 | 历史命名不完全统一，如 `FeatureScalering.py` | 增加认知负担，影响长期可维护性 | P2 | 待处理 |
+| P07 | `matplotlib` 默认缓存目录 `/Users/wangzf/.matplotlib` 不可写 | 首次运行会回退到临时目录，影响稳定性与性能 | P2 | 待处理 |
+| P08 | 部分统计模型与检验在验证中仍会产生 warning | 不阻塞通过，但会影响日志整洁度与信噪比 | P2 | 待处理 |
+
+## 修复记录
+
+### 2026-05-01 / Step 1
+
+- 重写 `AGENTS.md`
+- 原因：原文件不是显示层编码问题，而是内容本身已被错误转码，无法可靠恢复
+- 影响范围：项目协作规范、主线边界、质量基线、已知问题说明
+
+### 2026-05-01 / Step 2
+
+- 新建 `LOG.md`
+- 原因：需要单文件持续维护问题台账、修复记录、待办与验证状态
+- 影响范围：项目治理与后续维护流程
+
+### 2026-05-01 / Step 3
+
+- 更新 `README.md`
+- 原因：修正目录描述、安装验证命令与环境说明，使其与当前仓库一致
+- 影响范围：开发者入门、日常运行与验证流程
+
+### 2026-05-01 / Step 4
+
+- 恢复并校准 Python 环境基线，确认项目使用 Python 3.12
+- 原因：`.python-version` 与当前 `.venv` 实际均为 Python 3.12，需让安装说明与验证环境保持一致
+- 影响范围：环境约束说明、安装预期
+
+### 2026-05-01 / Step 5
+
+- 在 `eda/report.py` 中固定 `matplotlib` 使用 `Agg` 后端
+- 原因：避免测试与 CLI 在非 GUI 环境中触发 `macosx` backend 崩溃
+- 影响范围：EDA 出图、`test_eda_smoke`、CLI EDA 烟雾验证
+
+### 2026-05-01 / Step 6
+
+- 按系统 `AGENTS.md` 规则更新项目文档中的 Python 环境说明
+- 原因：统一切换到项目根目录 `.venv` 的 `uv` 虚拟环境，并约束依赖管理使用 `uv add`
+- 影响范围：`README.md`、`AGENTS.md`、后续环境初始化与验证流程
+
+### 2026-05-01 / Step 7
+
+- 删除 `models/io.py` 中未被调用的 `load_timeseries()`
+- 原因：其职责已被 `data_provider/data_loader.py` 中的 `DataLoader.load_data()` 覆盖，继续保留会制造重复入口与分层歧义
+- 影响范围：清理历史死代码，统一数据加载入口到 `data_provider`
+
+## 待办任务
+
+| ID | 任务 | 优先级 | 完成条件 |
+| --- | --- | --- | --- |
+| T01 | 持续保持本地最小可运行环境 | P0 | `uv run pytest -q` 可执行，且 `uv run python run.py` smoke 命令可运行 |
+| T02 | 处理 `src/ts_forecast_framework/` 历史残留 | P1 | 明确保留或删除方案，并更新文档 |
+| T03 | 评估并统一历史命名 | P2 | 输出重构方案，确认是否改名及兼容处理 |
+| T04 | 增补环境初始化标准流程 | P1 | README 中提供基于 `uv venv` / `uv sync` 的可复现安装路径 |
+| T05 | 处理 `matplotlib` 缓存目录不可写问题 | P2 | 为本地开发或测试环境提供稳定的 `MPLCONFIGDIR` 方案 |
+
+## 验证记录
+
+### 2026-05-01
+
+| 命令 | 结果 | 备注 |
+| --- | --- | --- |
+| `pytest -q` | 失败 | shell 中无全局 `pytest` |
+| `./.venv/bin/python -m pytest -q` | 失败 | 当前 `.venv` 中未安装 `pytest` |
+| `./.venv/bin/python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5` | 失败 | 当前 `.venv` 中缺少 `numpy` |
+| `./.venv/bin/python -m ensurepip --upgrade` | 通过 | 已补齐 `pip` |
+| `./.venv/bin/python -m pip install -e '.[dev]'` | 通过 | 已安装项目依赖与测试依赖 |
+| `./.venv/bin/python -m pytest -q` | 通过 | `19 passed`，存在统计模型与 KPSS 相关 warning |
+| `./.venv/bin/python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5` | 通过 | 训练、回测、预测与结果落盘均成功 |
+| `./.venv/bin/python run.py --do-eda true --do-train false --do-test false --do-forecast false` | 通过 | EDA 摘要、诊断表与图表均成功生成 |
+| `rg -n "load_timeseries|models/io\\.py|from models\\.io|import .*load_timeseries" -S .` | 通过 | 已无代码引用，仅 `LOG.md` 中保留历史记录 |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5` | 通过 | 删除 `models/io.py` 后主线 smoke 仍通过 |
+| `UV_CACHE_DIR=.uv_cache uv sync --extra dev` | 失败 | 当前环境网络受限，无法下载 `pytest` 依赖链中的 `pluggy` |
+
+## 备注
+
+- 删除 `src/` 历史残留涉及文件删除，命中项目红线；后续若要清理，需先确认。
+- 本文档应在每次修复后更新，而不是等问题累积后一次性补记。

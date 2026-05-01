@@ -7,6 +7,7 @@ from models.factory import ModelFactory
 
 
 class Tester:
+
     def __init__(
         self,
         model_name: str,
@@ -26,6 +27,7 @@ class Tester:
 
     def evaluate(self, df: pd.DataFrame) -> pd.DataFrame:
         model = self.factory.create_model(self.model_name, self.model_params)
+        
         return rolling_backtest(
             df=df,
             model=model,

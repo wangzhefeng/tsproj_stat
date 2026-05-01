@@ -4,6 +4,7 @@ import pandas as pd
 
 
 class FeatureEngineer:
+
     def __init__(self, time_col: str = "ds", target_col: str = "y"):
         self.time_col = time_col
         self.target_col = target_col
@@ -38,4 +39,5 @@ class FeatureEngineer:
 
         feature_cols = [c for c in out.columns if c not in {self.time_col, self.target_col} and not c.startswith("target_t_plus_")]
         out = out.dropna().reset_index(drop=True)
+
         return out, feature_cols, target_shift_cols

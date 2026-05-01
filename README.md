@@ -13,18 +13,29 @@
 |- data_provider/      # 数据加载与预处理（data_loader/data_processor）
 |- features/           # 特征工程与缩放
 |- eda/                # EDA 子系统（analyzer/diagnostics/report/data_gen）
-|- datasets/           # 示例与模拟数据
+|- tests/              # 测试用例
+|- saved_results/      # 运行期输出目录（按需生成）
 |- run.py              # 完整 CLI 入口
 |- main.py             # 最小示例入口
+|- AGENTS.md           # 项目协作规范
+|- LOG.md              # 问题台账、修复记录与待办
 ```
 
 ## 安装
 
 ```bash
-python -m venv .venv
-.venv\\Scripts\\activate
-pip install -e .
-pip install -e .[dev]
+uv venv .venv --python 3.12
+uv sync --extra dev
+```
+
+当前项目统一使用根目录 `.venv` 的 `uv` 虚拟环境。新增或更新依赖时，统一使用 `uv add`，不要直接用 `pip install` 维护项目依赖。
+
+常用依赖管理命令：
+
+```bash
+uv add <package>
+uv add --dev <package>
+uv sync --extra dev
 ```
 
 ## 运行示例
@@ -32,19 +43,19 @@ pip install -e .[dev]
 完整流程（训练 + 回测 + 预测）：
 
 ```bash
-python run.py --model-name arima --pred-method direct --do-train true --do-test true --do-forecast true
+uv run python run.py --model-name arima --pred-method direct --do-train true --do-test true --do-forecast true
 ```
 
 仅执行 EDA：
 
 ```bash
-python run.py --do-eda true --do-train false --do-test false --do-forecast false
+uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false
 ```
 
 启用预处理（去噪 + 去趋势 + 逆变换）：
 
 ```bash
-python run.py --denoise-enabled true --denoise-window 5 --detrend-method linear
+uv run python run.py --denoise-enabled true --denoise-window 5 --detrend-method linear
 ```
 
 ## 输出目录
@@ -71,7 +82,7 @@ python run.py --denoise-enabled true --denoise-window 5 --detrend-method linear
 ## 数据生成脚本
 
 - `eda/data_gen.py`：用于生成模型测试数据。
-- 默认可生成并保存到 `datasets/simulated_daily.csv`。
+- 默认输出路径需以脚本实际配置为准；若新增数据目录，需同步更新 `AGENTS.md` 与本文件。
 
 ## 迁移说明
 
@@ -80,9 +91,18 @@ python run.py --denoise-enabled true --denoise-window 5 --detrend-method linear
 - `todo_models_source` 中 `BayesianTMT` 与 `RAR` 已完成非占位迁移。
 - `todo_models_source/` 与 `todo_ts_eda/` 目录已删除。
 
+## 当前已知问题
+
+- 若 `.venv` 与 `pyproject.toml` / `uv.lock` 不一致，需要重新执行 `uv sync --extra dev`。
+- `src/ts_forecast_framework/` 仍有历史残留，暂未清理。
+- 个别历史命名仍待统一，例如 `FeatureScalering.py`。
+
+详细问题与修复进度请见 `LOG.md`。
+
 ## 验证
 
 ```bash
-pytest -q
-python run.py --do-eda true --do-train false --do-test false --do-forecast false
+uv run pytest -q
+uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5
+uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false
 ```

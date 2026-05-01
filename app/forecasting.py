@@ -14,18 +14,19 @@ def run_inference(
     pred_method: str = "direct",
     model_builder=None,
 ) -> pd.Series:
+    # model forecasting method
     method = pred_method.lower()
     if method not in {"one_step", "recursive", "direct"}:
         raise ValueError("pred_method must be one of {'one_step','recursive','direct'}")
-
+    # one step forecasting
     if method == "one_step":
         model.fit(history)
         return model.predict(1)
-
+    # direct forecasting
     if method == "direct":
         model.fit(history)
         return model.predict(horizon)
-
+    # recursive forecasting
     hist = _to_series(history)
     preds = []
     for _ in range(horizon):
@@ -34,16 +35,19 @@ def run_inference(
         next_val = float(model_i.predict(1).iloc[0])
         preds.append(next_val)
         hist = pd.concat([hist, pd.Series([next_val])], ignore_index=True)
+    
     return pd.Series(preds, name="yhat")
 
 
 def _to_series(history: pd.Series | pd.DataFrame) -> pd.Series:
     if isinstance(history, pd.DataFrame):
         return history.iloc[:, 0].reset_index(drop=True)
+    
     return history.reset_index(drop=True)
 
 
 class Forecaster:
+
     def __init__(self, model_name: str, model_params: dict | None = None, pred_method: str = "direct"):
         self.model_name = model_name
         self.model_params = model_params or {}
@@ -51,7 +55,9 @@ class Forecaster:
         self.factory = ModelFactory()
 
     def forecast(self, history: pd.Series | pd.DataFrame, horizon: int) -> pd.Series:
+        # model building
         model = self.factory.create_model(self.model_name, self.model_params)
+        # model inference
         return run_inference(
             model=model,
             history=history,

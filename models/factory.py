@@ -8,6 +8,7 @@ from .statistical import MODEL_REGISTRY, create_stat_model
 
 @dataclass
 class ModelFactory:
+    
     def create_model(self, model_name: str, model_params: dict | None = None) -> BaseStatModel:
         return create_stat_model(model_name, model_params)
 

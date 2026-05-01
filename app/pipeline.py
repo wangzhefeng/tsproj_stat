@@ -19,6 +19,7 @@ from models.persistence import save_model
 
 
 class ModelApp:
+
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
         ensure_output_dirs(cfg)
@@ -26,6 +27,7 @@ class ModelApp:
     def run(self) -> dict[str, str]:
         np.random.seed(self.cfg.seed)
 
+        # data loader
         loader = DataLoader(
             data_path=self.cfg.data_path,
             time_col=self.cfg.time_col,
@@ -34,8 +36,11 @@ class ModelApp:
         )
         df = loader.load_data()
 
+        # app output
         out: dict[str, str] = {}
-
+        # ------------------------------
+        # EDA
+        # ------------------------------
         if self.cfg.do_eda:
             out.update(
                 run_eda(
@@ -46,12 +51,15 @@ class ModelApp:
                     output_dir=self.cfg.eda_output_dir,
                 )
             )
-
+        # ------------------------------
+        # data preprocessing
+        # ------------------------------
         processor = DataProcessor(
             detrend_method=self.cfg.detrend_method,
             denoise_enabled=self.cfg.denoise_enabled,
             denoise_window=self.cfg.denoise_window,
         )
+        # data transform
         if processor.enabled:
             processed_target = processor.fit_transform(df[self.cfg.target_col])
             df = df.copy()
@@ -59,26 +67,32 @@ class ModelApp:
             out["processor_applied"] = "true"
             out["processor_detrend_method"] = self.cfg.detrend_method
             out["processor_denoise_enabled"] = str(self.cfg.denoise_enabled).lower()
-
+        # history data split
         history, _future = loader.split_history_future(
             df=df,
             history_size=self.cfg.history_size,
             horizon=self.cfg.predict_horizon,
         )
         history_y = history[self.cfg.target_col].astype(float).reset_index(drop=True)
-
+        # ------------------------------
+        # data scaling
+        # ------------------------------
         if self.cfg.scale:
             scaler = FeatureScaler(self.cfg.scaler_type)
             scaled = scaler.fit_transform(pd.DataFrame({self.cfg.target_col: history_y}))
             history_y = scaled[self.cfg.target_col]
-
+        # ------------------------------
+        # model training
+        # ------------------------------
         if self.cfg.do_train:
             trainer = Trainer(self.cfg.model_name, self.cfg.model_params)
             model = trainer.train(history_y)
             model_path = Path(self.cfg.checkpoints_dir) / "model.pkl"
             save_model(model, str(model_path))
             out["model_path"] = str(model_path)
-
+        # ------------------------------
+        # model testing
+        # ------------------------------
         if self.cfg.do_test:
             tester = Tester(
                 model_name=self.cfg.model_name,
@@ -92,7 +106,9 @@ class ModelApp:
             test_path = Path(self.cfg.test_results_dir) / "backtest_metrics.csv"
             test_df.to_csv(test_path, index=False)
             out["test_metrics_path"] = str(test_path)
-
+        # ------------------------------
+        # model forecasting
+        # ------------------------------
         if self.cfg.do_forecast:
             forecaster = Forecaster(
                 model_name=self.cfg.model_name,
@@ -106,7 +122,9 @@ class ModelApp:
             pred_path = Path(self.cfg.pred_results_dir) / "prediction.csv"
             pred_df.to_csv(pred_path, index=False)
             out["prediction_path"] = str(pred_path)
-
+        # ------------------------------
+        # TODO feature engineering
+        # ------------------------------
         fe = FeatureEngineer(time_col=self.cfg.time_col, target_col=self.cfg.target_col)
         featured_df, feature_cols, target_shift_cols = fe.create_features(
             df=df[[self.cfg.time_col, self.cfg.target_col]].copy(),
@@ -119,8 +137,11 @@ class ModelApp:
         out["feature_snapshot_path"] = str(feature_path)
         out["feature_columns"] = ",".join(feature_cols)
         out["target_shift_columns"] = ",".join(target_shift_cols)
-
+        # ------------------------------
+        # 模型结果汇总
+        # ------------------------------
         summary_path = Path(self.cfg.pred_results_dir) / "run_summary.json"
         summary_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
         out["summary_path"] = str(summary_path)
+        
         return out

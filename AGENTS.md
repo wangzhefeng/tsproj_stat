@@ -1,31 +1,61 @@
 # AGENTS.md
 
-鏈枃浠跺畾涔?`E:\\tsfm_projects\\tsproj_stat` 鐨勯」鐩崗浣滆鑼冦€?
-## 1. 涓荤嚎杈圭晫
+本文档定义 `/Users/wangzf/projects/tsproj_stat` 的项目协作规范。
 
-- 涓荤嚎鍛藉悕绌洪棿锛歚app / config / models / evaluation / data_provider / features / eda`
-- 缁熶竴鍏ュ彛锛歚run.py`锛堝畬鏁?CLI锛変笌 `main.py`锛堟渶灏忕ず渚嬶級
-- `todo_models_source/`銆乣todo_ts_eda/` 宸插畬鎴愯縼绉诲苟鍒犻櫎
+## 1. 主线边界
 
-## 2. 寮€鍙戠害瀹?
-- 缁熻绛栫暐涓荤嚎锛歚one_step` / `recursive` / `direct` + `rolling_backtest`
-- 鏂版ā鍨嬪繀椤绘帴鍏?`models/factory.py` 骞跺疄鐜扮粺涓€ `fit/predict`
-- 鏂拌瘖鏂兘鍔涘繀椤绘帴鍏?`eda/pipeline.py` 骞惰緭鍑虹粨鏋勫寲缁撴灉
-- 瓒嬪娍鍘婚櫎銆侀€嗗彉鎹€佸幓鍣粺涓€鏀惧湪 `data_provider/data_processor.py`
+- 主线目录命名空间：`app / config / models / evaluation / data_provider / features / eda / tests`
+- 统一入口：`run.py` 为完整 CLI，`main.py` 为最小示例入口
+- 当前仓库以“统计模型时间序列预测 + EDA + 可逆预处理”为主线，不在主线内的实验性内容不得直接混入上述目录
+- `todo_models_source/`、`todo_ts_eda/` 已完成迁移并移除；后续若新增迁移目录，必须先定义生命周期与清理时机
 
-## 3. 渚濊禆涓庤川閲?
-- 渚濊禆绛栫暐锛氱‖渚濊禆锛堢己澶卞嵆澶辫触锛?- 渚濊禆鏉ユ簮锛歚pyproject.toml`
-- 楠岃瘉鍩虹嚎锛歚pytest -q`
+## 2. 开发约定
 
-## 4. 鏂囨。鍚屾
+- 预测策略主线：`direct` / `recursive` / `one_step`，统一通过应用层编排与 `rolling_backtest` 验证
+- 新增模型必须接入 `models/factory.py`，并实现统一 `fit / predict` 接口
+- 新增 EDA 能力必须接入 `eda/pipeline.py`，并输出结构化结果与可追踪产物路径
+- 趋势去除、去噪、逆变换等可逆预处理统一放在 `data_provider/data_processor.py`
+- CLI 配置统一经由 `config/AppConfig` 与 `run.py` 参数覆盖，不允许平行新增另一套入口参数体系
+- 新增输出文件时，必须明确归属到 `saved_results/` 下的既有子目录，避免散落输出
 
-姣忔鏀瑰姩鍚庡悓姝ユ鏌ュ苟鏇存柊锛?- `README.md`锛堝姛鑳姐€佺敤娉曘€佷骇鐗┿€侀獙璇佸懡浠わ級
-- `AGENTS.md`锛堣竟鐣屻€佹祦绋嬨€佽川閲忛棬妲涳級
+## 3. 依赖与质量基线
 
-## 5. 瀹夊叏涓庨闄?
-- 鏈粡纭涓嶆墽琛岀牬鍧忔€ф搷浣?- 涓嶇‖缂栫爜瀵嗛挜鎴栧嚟璇?- 鎺ュ彛鍙樻洿闇€琛ュ厖鏈€灏忓繀瑕佹祴璇?
-## 6. 褰撳墠鐘舵€侊紙2026-03-15锛?
-- 涓荤嚎鍏ュ彛宸茬粺涓€锛屾敮鎸?`--do-eda`
-- EDA 瀛愮郴缁熷凡骞跺叆涓绘祦绋嬶紝杈撳嚭缁撴瀯鍖栨姤鍛婁笌鍥捐〃
-- 鏁版嵁棰勫鐞嗗凡鏂板 `DataProcessor`锛堝幓鍣?鍘昏秼鍔?閫嗗彉鎹級
-- `BayesianTMT` / `RAR` 宸插畬鎴愰潪鍗犱綅瀹炵幇骞剁撼鍏ユ祴璇曞熀绾?- `statsmodels` 甯歌鎷熷悎鍣０璀﹀憡宸插湪鍏ュ彛瀹氬悜杩囨护
+- 依赖来源：`pyproject.toml`
+- Python 环境统一使用项目根目录 `.venv` 的 `uv` 虚拟环境
+- 安装、增加、更新 Python 依赖统一使用 `uv add`；环境同步统一使用 `uv sync --extra dev`
+- Python 基线：`3.12`（以 `.python-version` 与当前开发环境为准）
+- 默认验证基线：`uv run pytest -q`
+- CLI 烟雾验证基线：
+  - `uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5`
+  - `uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false`
+- 若环境未满足上述命令，先修复环境，再继续功能开发；不要跳过验证直接宣称完成
+
+## 4. 文档同步
+
+每次改动后同步检查并更新：
+
+- `README.md`：功能、安装方式、运行命令、验证命令、目录说明
+- `AGENTS.md`：项目边界、主线流程、质量门槛、当前约束
+- `LOG.md`：当前问题、修复记录、待办任务、验证记录
+
+## 5. 安全与风险
+
+- 未经确认不执行破坏性操作，包括删除文件、目录或历史
+- 不硬编码密钥、token、密码、凭证
+- 接口行为变更必须补最小必要测试
+- 发现环境、编码、路径、平台兼容问题时，优先修根因，不做静默绕过
+
+## 6. 当前状态（2026-05-01）
+
+- 主线入口已统一为 `run.py`，支持 `--do-eda`
+- EDA 子系统已并入主流程，入口为 `eda/pipeline.py`，产出结构化摘要、诊断表与图表路径
+- 数据预处理已集中到 `data_provider/data_processor.py`，支持去噪、去趋势与预测逆变换
+- `BayesianTMT` / `RAR` 已完成非占位实现，并纳入测试覆盖
+- 入口层已对常见 `statsmodels` 拟合告警做定向过滤，减少无效噪声
+
+## 7. 当前已知问题
+
+- `README.md` 存在与仓库实际状态不一致的描述，变更时必须同步修正
+- 当前环境基线已恢复，但仍需持续验证 `pytest` 与 CLI smoke 命令
+- `src/ts_forecast_framework/` 仍有历史残留，需要在后续单独确认其去留
+- 个别历史命名仍不够统一，例如 `FeatureScalering.py`，后续重构时应纳入收口范围

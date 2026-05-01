@@ -2,6 +2,7 @@
 
 import argparse
 import importlib
+import json
 import random
 import warnings
 from dataclasses import asdict
@@ -45,12 +46,23 @@ def _set_seed(seed: int) -> None:
     np.random.seed(seed)
 
 
+def _parse_model_params(value: str | None) -> dict:
+    if value is None:
+        return {}
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("model_params must be a JSON object")
+
+    return parsed
+
+
 def _load_config(config_module: str, config_class: str):
     module = importlib.import_module(config_module)
     cfg_cls = getattr(module, config_class)
     cfg = cfg_cls()
     if not isinstance(cfg, AppConfig):
         raise TypeError(f"{config_module}.{config_class} must construct AppConfig")
+
     return cfg
 
 
@@ -59,6 +71,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.data_path = args.data_path
     if args.model_name is not None:
         cfg.model_name = args.model_name
+    if args.model_params is not None:
+        cfg.model_params = _parse_model_params(args.model_params)
     if args.pred_method is not None:
         cfg.pred_method = args.pred_method
     if args.target_col is not None:
@@ -71,6 +85,12 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.history_size = args.history_size
     if args.predict_horizon is not None:
         cfg.predict_horizon = args.predict_horizon
+    if args.backtest_initial_train_size is not None:
+        cfg.backtest_initial_train_size = args.backtest_initial_train_size
+    if args.backtest_horizon is not None:
+        cfg.backtest_horizon = args.backtest_horizon
+    if args.backtest_step is not None:
+        cfg.backtest_step = args.backtest_step
     if args.do_train is not None:
         cfg.do_train = _parse_bool(args.do_train)
     if args.do_test is not None:
@@ -79,6 +99,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.do_forecast = _parse_bool(args.do_forecast)
     if args.do_eda is not None:
         cfg.do_eda = _parse_bool(args.do_eda)
+    if args.enable_datetime_features is not None:
+        cfg.enable_datetime_features = _parse_bool(args.enable_datetime_features)
     if args.scale is not None:
         cfg.scale = _parse_bool(args.scale)
     if args.scaler_type is not None:
@@ -89,6 +111,12 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.denoise_window = args.denoise_window
     if args.detrend_method is not None:
         cfg.detrend_method = args.detrend_method
+    if args.checkpoints_dir is not None:
+        cfg.checkpoints_dir = args.checkpoints_dir
+    if args.test_results_dir is not None:
+        cfg.test_results_dir = args.test_results_dir
+    if args.pred_results_dir is not None:
+        cfg.pred_results_dir = args.pred_results_dir
     if args.eda_output_dir is not None:
         cfg.eda_output_dir = args.eda_output_dir
     if args.seed is not None:
@@ -106,13 +134,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--data-path", type=str, default=None)
     parser.add_argument("--model-name", type=str, default=None)
+    parser.add_argument("--model-params", type=str, default=None)
     parser.add_argument("--pred-method", type=str, default=None)
     parser.add_argument("--target-col", type=str, default=None)
     parser.add_argument("--time-col", type=str, default=None)
     parser.add_argument("--freq", type=str, default=None)
     parser.add_argument("--history-size", type=int, default=None)
     parser.add_argument("--predict-horizon", type=int, default=None)
+    parser.add_argument("--backtest-initial-train-size", type=int, default=None)
+    parser.add_argument("--backtest-horizon", type=int, default=None)
+    parser.add_argument("--backtest-step", type=int, default=None)
     parser.add_argument("--lags", type=str, default=None)
+    parser.add_argument("--enable-datetime-features", default=None)
     parser.add_argument("--scale", default=None)
     parser.add_argument("--scaler-type", type=str, default=None)
 
@@ -120,6 +153,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--denoise-window", type=int, default=None)
     parser.add_argument("--detrend-method", type=str, default=None)
 
+    parser.add_argument("--checkpoints-dir", type=str, default=None)
+    parser.add_argument("--test-results-dir", type=str, default=None)
+    parser.add_argument("--pred-results-dir", type=str, default=None)
     parser.add_argument("--eda-output-dir", type=str, default=None)
 
     parser.add_argument("--do-train", default=None)

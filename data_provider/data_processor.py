@@ -5,7 +5,9 @@ import pandas as pd
 
 
 class DataProcessor:
-    """Preprocessing for denoising and detrending with reversible transform."""
+    """
+    Preprocessing for denoising and detrending with reversible transform.
+    """
 
     def __init__(
         self,

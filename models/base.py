@@ -6,6 +6,7 @@ import pandas as pd
 
 
 class BaseStatModel(ABC):
+
     @abstractmethod
     def fit(self, y: pd.Series | pd.DataFrame) -> "BaseStatModel":
         raise NotImplementedError
