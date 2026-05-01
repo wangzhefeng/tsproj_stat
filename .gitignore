@@ -211,4 +211,6 @@ saved_results/
 datasets/
 logs/
 .uv-cache/
+.worktrees/
+.mplconfig/
 

@@ -13,6 +13,7 @@ from .selection import build_order_grid, select_arima_order
 
 
 class NaiveModel(BaseStatModel):
+
     def __init__(self):
         self.last_value: float | None = None
 
@@ -236,6 +237,9 @@ class AutoARIMAModel(BaseStatModel):
 
 
 class ARCHModel(BaseStatModel):
+    """
+    自回归条件异方差模型
+    """
     def __init__(self):
         self._result = None
         self._fallback = NaiveModel()
@@ -261,6 +265,9 @@ class ARCHModel(BaseStatModel):
 
 
 class GARCHModel(BaseStatModel):
+    """
+    广义自回归条件异方差模型(GARCH)
+    """
     def __init__(self):
         self._result = None
         self._fallback = NaiveModel()
@@ -463,6 +470,7 @@ def _to_univariate_series(y: pd.Series | pd.DataFrame) -> pd.Series:
         if y.shape[1] == 0:
             raise ValueError("Input dataframe is empty")
         return y.iloc[:, 0].reset_index(drop=True)
+    
     return y.reset_index(drop=True)
 
 
