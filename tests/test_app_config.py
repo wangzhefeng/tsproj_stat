@@ -26,3 +26,14 @@ def test_app_config_validate_rejects_invalid_output_dir_namespace():
         assert "saved_results/" in str(exc)
     else:
         raise AssertionError("Expected ValueError for invalid output namespace")
+
+
+def test_app_config_validate_rejects_invalid_train_results_dir_namespace():
+    cfg = AppConfig(train_results_dir="artifacts/results_train")
+
+    try:
+        cfg.validate()
+    except ValueError as exc:
+        assert "saved_results/" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for invalid train output namespace")

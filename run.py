@@ -3,46 +3,50 @@
 import argparse
 import importlib
 import json
-import random
 from dataclasses import asdict
 from typing import Any
 
-import numpy as np
-
 from runtime_env import ensure_mpl_config_dir
-
 ensure_mpl_config_dir()
 
 from app import ModelApp
-from app.runtime import configure_warnings
 from config import AppConfig
+from utils.random_seed import set_seed
 
 
 def _parse_bool(value: Any) -> bool:
+    """
+    解析布尔类型参数
+    """
+    # bool
     if isinstance(value, bool):
         return value
+    # None
     if value is None:
         return False
+    # str
     text = str(value).strip().lower()
     if text in {"1", "true", "yes", "y", "on"}:
         return True
     if text in {"0", "false", "no", "n", "off"}:
         return False
+    
     raise ValueError(f"Invalid bool: {value}")
 
 
-def _set_seed(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-
-
 def _parse_model_params(value: str | None) -> dict:
+    """
+    解析模型参数
+    """
+    # None
     if value is None:
         return {}
+    # str
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError as exc:
         raise ValueError("model_params must be valid JSON object text") from exc
+    # not dict
     if not isinstance(parsed, dict):
         raise ValueError("model_params must be a JSON object")
 
@@ -106,6 +110,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.detrend_method = args.detrend_method
     if args.checkpoints_dir is not None:
         cfg.checkpoints_dir = args.checkpoints_dir
+    if args.train_results_dir is not None:
+        cfg.train_results_dir = args.train_results_dir
     if args.test_results_dir is not None:
         cfg.test_results_dir = args.test_results_dir
     if args.pred_results_dir is not None:
@@ -147,6 +153,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--detrend-method", type=str, default=None)
 
     parser.add_argument("--checkpoints-dir", type=str, default=None)
+    parser.add_argument("--train-results-dir", type=str, default=None)
     parser.add_argument("--test-results-dir", type=str, default=None)
     parser.add_argument("--pred-results-dir", type=str, default=None)
     parser.add_argument("--eda-output-dir", type=str, default=None)
@@ -155,23 +162,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--do-test", default=None)
     parser.add_argument("--do-forecast", default=None)
     parser.add_argument("--do-eda", default=None)
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
+    args = parser.parse_args()
+    # ------------------------------
+    # TODO 优化
+    # ------------------------------
     cfg = _load_config(args.config_module, args.config_class)
     cfg = _apply_overrides(cfg, args)
     cfg.validate()
-
-    configure_warnings()
-    _set_seed(cfg.seed)
-    result = ModelApp(cfg).run()
-
-    print("Run finished")
     print(asdict(cfg))
-    print(result)
+    
+    return cfg
 
+
+
+
+def main() -> None:
+    # config
+    cfg = parse_args()
+    # Set seed
+    set_seed(cfg.seed)
+    # Run model
+    result = ModelApp(cfg).run()
+    # model result
+    print("Run finished")
+    print(result)
 
 if __name__ == "__main__":
     main()

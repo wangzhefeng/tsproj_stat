@@ -1,28 +1,44 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from app.forecasting import Forecaster
-from app.testing import Tester
-from app.training import Trainer
 from config import AppConfig, ensure_output_dirs
 from data_provider.data_loader import DataLoader
 from data_provider.data_processor import DataProcessor
-from eda import run_eda
 from features.feature_engineering import FeatureEngineer
 from features.feature_scaling import FeatureScaler
+from app.training import Trainer
+from app.testing import Tester
+from app.forecasting import Forecaster
 from models.persistence import save_model
-
+from eda import run_eda
+from evaluation.visualization import (
+    plot_backtest_predictions,
+    plot_backtest_residuals,
+    plot_error_distribution,
+    plot_forecast,
+)
+from app.results import (
+    RunArtifacts,
+    dataframe_to_csv,
+    forecast_timestamps,
+    model_info_payload,
+    prepare_run_artifacts,
+    write_json,
+)
 
 @dataclass
 class PrepareResult:
     df: pd.DataFrame
+    history_df: pd.DataFrame
     history_y: pd.Series
+    history_time: pd.Series
     processor: DataProcessor
     metadata: dict[str, str] = field(default_factory=dict)
 
@@ -40,6 +56,7 @@ class ModelApp:
         cfg.validate()
         self.cfg = cfg
         ensure_output_dirs(cfg)
+        self.artifacts = prepare_run_artifacts(cfg)
         self.loader = DataLoader(
             data_path=self.cfg.data_path,
             time_col=self.cfg.time_col,
@@ -50,14 +67,22 @@ class ModelApp:
     def run(self) -> dict[str, str]:
         np.random.seed(self.cfg.seed)
         df = self._load_dataset()
-        out: dict[str, str] = {}
+        out: dict[str, str] = {
+            "setting": self.artifacts.setting,
+            "data_name": self.artifacts.data_name,
+            "checkpoints_dir": str(self.artifacts.checkpoints_dir),
+            "train_results_dir": str(self.artifacts.train_results_dir),
+            "test_results_dir": str(self.artifacts.test_results_dir),
+            "forecast_results_dir": str(self.artifacts.forecast_results_dir),
+            "eda_dir": str(self.artifacts.eda_dir),
+        }
         out.update(self._run_eda_if_needed(df))
 
         prepared = self._prepare_target_series(df)
         out.update(prepared.metadata)
-        out.update(self._train_if_needed(prepared.history_y))
+        out.update(self._train_if_needed(prepared))
         out.update(self._test_if_needed(prepared.df))
-        out.update(self._forecast_if_needed(prepared.history_y, prepared.processor))
+        out.update(self._forecast_if_needed(prepared))
 
         feature_snapshot = self._export_feature_snapshot(prepared.df)
         out["analysis_feature_snapshot_path"] = feature_snapshot.path
@@ -77,7 +102,7 @@ class ModelApp:
             time_col=self.cfg.time_col,
             target_col=self.cfg.target_col,
             freq=self.cfg.freq,
-            output_dir=self.cfg.eda_output_dir,
+            output_dir=str(self.artifacts.eda_dir),
         )
 
     def _prepare_target_series(self, df: pd.DataFrame) -> PrepareResult:
@@ -95,30 +120,77 @@ class ModelApp:
             metadata["processor_detrend_method"] = self.cfg.detrend_method
             metadata["processor_denoise_enabled"] = str(self.cfg.denoise_enabled).lower()
 
-        history, _future = self.loader.split_history_future(
+        history_df, _future = self.loader.split_history_future(
             df=local_df,
             history_size=self.cfg.history_size,
             horizon=self.cfg.predict_horizon,
         )
-        history_y = history[self.cfg.target_col].astype(float).reset_index(drop=True)
+        history_y = history_df[self.cfg.target_col].astype(float).reset_index(drop=True)
+        history_time = pd.to_datetime(history_df[self.cfg.time_col]).reset_index(drop=True)
 
         if self.cfg.scale:
             scaler = FeatureScaler(self.cfg.scaler_type)
             scaled = scaler.fit_transform(pd.DataFrame({self.cfg.target_col: history_y}))
-            history_y = scaled[self.cfg.target_col]
+            history_y = scaled[self.cfg.target_col].reset_index(drop=True)
             metadata["history_scaled"] = "true"
             metadata["history_scaler_type"] = self.cfg.scaler_type
 
-        return PrepareResult(df=local_df, history_y=history_y, processor=processor, metadata=metadata)
+        return PrepareResult(
+            df=local_df,
+            history_df=history_df.reset_index(drop=True),
+            history_y=history_y,
+            history_time=history_time,
+            processor=processor,
+            metadata=metadata,
+        )
 
-    def _train_if_needed(self, history_y: pd.Series) -> dict[str, str]:
+    def _train_if_needed(self, prepared: PrepareResult) -> dict[str, str]:
         if not self.cfg.do_train:
             return {}
         trainer = Trainer(self.cfg.model_name, self.cfg.model_params)
-        model = trainer.train(history_y)
-        model_path = Path(self.cfg.checkpoints_dir) / "model.pkl"
+        model = trainer.train(prepared.history_y)
+        model_path = self.artifacts.checkpoints_dir / "model.pkl"
         save_model(model, str(model_path))
-        return {"model_path": str(model_path)}
+
+        train_series_path = dataframe_to_csv(
+            self.artifacts.train_results_dir / "train_series.csv",
+            pd.DataFrame(
+                {
+                    self.cfg.time_col: prepared.history_time,
+                    self.cfg.target_col: prepared.history_y,
+                }
+            ),
+        )
+        model_info_path = write_json(
+            self.artifacts.train_results_dir / "model_info.json",
+            model_info_payload(model, self.cfg.model_params),
+        )
+        train_summary = {
+            "model_name": self.cfg.model_name,
+            "data_name": self.artifacts.data_name,
+            "pred_method": self.cfg.pred_method,
+            "target_col": self.cfg.target_col,
+            "time_col": self.cfg.time_col,
+            "train_size": int(len(prepared.history_y)),
+            "history_size": int(self.cfg.history_size),
+            "predict_horizon": int(self.cfg.predict_horizon),
+            "model_params": self.cfg.model_params,
+            "scale": bool(self.cfg.scale),
+            "scaler_type": self.cfg.scaler_type,
+            "detrend_method": self.cfg.detrend_method,
+            "denoise_enabled": bool(self.cfg.denoise_enabled),
+            "processor_applied": prepared.processor.enabled,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "checkpoint_path": str(model_path),
+            "model_info_path": model_info_path,
+        }
+        train_summary_path = write_json(self.artifacts.train_results_dir / "train_summary.json", train_summary)
+        return {
+            "model_path": str(model_path),
+            "train_series_path": train_series_path,
+            "train_summary_path": train_summary_path,
+            "model_info_path": model_info_path,
+        }
 
     def _test_if_needed(self, df: pd.DataFrame) -> dict[str, str]:
         if not self.cfg.do_test:
@@ -127,16 +199,62 @@ class ModelApp:
             model_name=self.cfg.model_name,
             model_params=self.cfg.model_params,
             target_col=self.cfg.target_col,
+            time_col=self.cfg.time_col,
             initial_train_size=self.cfg.backtest_initial_train_size,
             horizon=self.cfg.backtest_horizon,
             step=self.cfg.backtest_step,
         )
-        test_df = tester.evaluate(df[[self.cfg.target_col]])
-        test_path = Path(self.cfg.test_results_dir) / "backtest_metrics.csv"
-        test_df.to_csv(test_path, index=False)
-        return {"test_metrics_path": str(test_path)}
+        result = tester.evaluate(df[[self.cfg.time_col, self.cfg.target_col]])
+        metrics_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics.csv", result.metrics_df)
+        predictions_path = dataframe_to_csv(
+            self.artifacts.test_results_dir / "backtest_predictions.csv",
+            result.predictions_df,
+        )
+        summary_path_csv = dataframe_to_csv(
+            self.artifacts.test_results_dir / "backtest_metrics_summary.csv",
+            result.summary_df,
+        )
+        test_summary_path = write_json(
+            self.artifacts.test_results_dir / "test_summary.json",
+            {
+                "model_name": self.cfg.model_name,
+                "data_name": self.artifacts.data_name,
+                "pred_method": self.cfg.pred_method,
+                "target_col": self.cfg.target_col,
+                "time_col": self.cfg.time_col,
+                "initial_train_size": int(self.cfg.backtest_initial_train_size),
+                "horizon": int(self.cfg.backtest_horizon),
+                "step": int(self.cfg.backtest_step),
+                **result.summary,
+            },
+        )
+        plot_title = f"{self.cfg.model_name} / {self.artifacts.data_name} / {self.cfg.pred_method}"
+        pred_plot_path = plot_backtest_predictions(
+            result.predictions_df,
+            str(self.artifacts.test_results_dir / "backtest_prediction_plot.png"),
+            f"Backtest Predictions - {plot_title}",
+        )
+        residual_plot_path = plot_backtest_residuals(
+            result.predictions_df,
+            str(self.artifacts.test_results_dir / "backtest_residual_plot.png"),
+            f"Backtest Residuals - {plot_title}",
+        )
+        error_dist_path = plot_error_distribution(
+            result.predictions_df,
+            str(self.artifacts.test_results_dir / "backtest_error_distribution.png"),
+            f"Backtest Error Distribution - {plot_title}",
+        )
+        return {
+            "test_metrics_path": metrics_path,
+            "backtest_predictions_path": predictions_path,
+            "backtest_metrics_summary_path": summary_path_csv,
+            "test_summary_path": test_summary_path,
+            "backtest_prediction_plot_path": pred_plot_path,
+            "backtest_residual_plot_path": residual_plot_path,
+            "backtest_error_distribution_path": error_dist_path,
+        }
 
-    def _forecast_if_needed(self, history_y: pd.Series, processor: DataProcessor) -> dict[str, str]:
+    def _forecast_if_needed(self, prepared: PrepareResult) -> dict[str, str]:
         if not self.cfg.do_forecast:
             return {}
         forecaster = Forecaster(
@@ -144,13 +262,45 @@ class ModelApp:
             model_params=self.cfg.model_params,
             pred_method=self.cfg.pred_method,
         )
-        pred = forecaster.forecast(history=history_y, horizon=self.cfg.predict_horizon)
-        if processor.enabled:
-            pred = processor.inverse_forecast(pred)
-        pred_df = pd.DataFrame({"step": range(1, len(pred) + 1), "yhat": pred.values})
-        pred_path = Path(self.cfg.pred_results_dir) / "prediction.csv"
-        pred_df.to_csv(pred_path, index=False)
-        return {"prediction_path": str(pred_path)}
+        pred = forecaster.forecast(history=prepared.history_y, horizon=self.cfg.predict_horizon)
+        if prepared.processor.enabled:
+            pred = prepared.processor.inverse_forecast(pred)
+        forecast_df = pd.DataFrame(
+            {
+                "step": range(1, len(pred) + 1),
+                "timestamp": forecast_timestamps(prepared.history_time, len(pred), self.cfg.freq),
+                "yhat": pred.values,
+            }
+        )
+        forecast_path = dataframe_to_csv(self.artifacts.forecast_results_dir / "forecast.csv", forecast_df)
+        forecast_plot_path = plot_forecast(
+            history_df=prepared.history_df.tail(self.cfg.history_size).copy(),
+            forecast_df=forecast_df,
+            output_path=str(self.artifacts.forecast_results_dir / "forecast_plot.png"),
+            title=f"Forecast - {self.cfg.model_name} / {self.artifacts.data_name} / {self.cfg.pred_method}",
+            time_col=self.cfg.time_col,
+            target_col=self.cfg.target_col,
+        )
+        forecast_summary_path = write_json(
+            self.artifacts.forecast_results_dir / "forecast_summary.json",
+            {
+                "model_name": self.cfg.model_name,
+                "data_name": self.artifacts.data_name,
+                "pred_method": self.cfg.pred_method,
+                "predict_horizon": int(self.cfg.predict_horizon),
+                "target_col": self.cfg.target_col,
+                "time_col": self.cfg.time_col,
+                "last_history_timestamp": prepared.history_time.iloc[-1].isoformat()
+                if not prepared.history_time.empty
+                else None,
+                "history_points_plotted": int(min(len(prepared.history_df), self.cfg.history_size)),
+            },
+        )
+        return {
+            "prediction_path": forecast_path,
+            "forecast_summary_path": forecast_summary_path,
+            "forecast_plot_path": forecast_plot_path,
+        }
 
     def _export_feature_snapshot(self, df: pd.DataFrame) -> FeatureSnapshotResult:
         engineer = FeatureEngineer(time_col=self.cfg.time_col, target_col=self.cfg.target_col)
@@ -160,7 +310,7 @@ class ModelApp:
             lags=self.cfg.lags,
             horizon=min(3, self.cfg.predict_horizon),
         )
-        feature_path = Path(self.cfg.pred_results_dir) / "analysis_feature_snapshot.csv"
+        feature_path = self.artifacts.forecast_results_dir / "analysis_feature_snapshot.csv"
         featured_df.to_csv(feature_path, index=False)
         return FeatureSnapshotResult(
             path=str(feature_path),
@@ -169,7 +319,7 @@ class ModelApp:
         )
 
     def _write_run_summary(self, out: dict[str, str]) -> dict[str, str]:
-        summary_path = Path(self.cfg.pred_results_dir) / "run_summary.json"
+        summary_path = self.artifacts.forecast_results_dir / "run_summary.json"
         summary_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
         result = dict(out)
         result["summary_path"] = str(summary_path)

@@ -1,4 +1,6 @@
-﻿from app import ModelApp
+from pathlib import Path
+
+from app import ModelApp
 from config import AppConfig
 
 
@@ -7,9 +9,10 @@ def test_pipeline_end_to_end(tmp_path):
         data_path=None,
         model_name="naive",
         pred_method="direct",
-        checkpoints_dir=str(tmp_path / "ckpt"),
-        test_results_dir=str(tmp_path / "test"),
-        pred_results_dir=str(tmp_path / "pred"),
+        checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
+        train_results_dir=str(tmp_path / "saved_results" / "results_train"),
+        test_results_dir=str(tmp_path / "saved_results" / "results_test"),
+        pred_results_dir=str(tmp_path / "saved_results" / "results_forecast"),
         do_train=True,
         do_test=True,
         do_forecast=True,
@@ -20,10 +23,22 @@ def test_pipeline_end_to_end(tmp_path):
         history_size=60,
     )
     result = ModelApp(cfg).run()
+    setting = "naive-demo_series-direct"
+
     assert "model_path" in result
+    assert "train_summary_path" in result
     assert "test_metrics_path" in result
+    assert "backtest_predictions_path" in result
+    assert "backtest_metrics_summary_path" in result
     assert "prediction_path" in result
+    assert "forecast_summary_path" in result
+    assert "forecast_plot_path" in result
     assert "analysis_feature_snapshot_path" in result
+    assert Path(result["model_path"]).as_posix().endswith(f"checkpoints/{setting}/model.pkl")
+    assert Path(result["train_summary_path"]).as_posix().endswith(f"results_train/{setting}/train_summary.json")
+    assert Path(result["test_metrics_path"]).as_posix().endswith(f"results_test/{setting}/backtest_metrics.csv")
+    assert Path(result["prediction_path"]).as_posix().endswith(f"results_forecast/{setting}/forecast.csv")
+    assert Path(result["eda_dir"]).as_posix().endswith(f"results_train/{setting}/eda")
 
 
 def test_pipeline_eda_only_mode(tmp_path):
@@ -33,10 +48,10 @@ def test_pipeline_eda_only_mode(tmp_path):
         do_train=False,
         do_test=False,
         do_forecast=False,
-        checkpoints_dir=str(tmp_path / "ckpt"),
-        test_results_dir=str(tmp_path / "test"),
-        pred_results_dir=str(tmp_path / "pred"),
-        eda_output_dir=str(tmp_path / "eda"),
+        checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
+        train_results_dir=str(tmp_path / "saved_results" / "results_train"),
+        test_results_dir=str(tmp_path / "saved_results" / "results_test"),
+        pred_results_dir=str(tmp_path / "saved_results" / "results_forecast"),
     )
 
     result = ModelApp(cfg).run()
@@ -46,6 +61,7 @@ def test_pipeline_eda_only_mode(tmp_path):
     assert "prediction_path" not in result
     assert "test_metrics_path" not in result
     assert "analysis_feature_snapshot_path" in result
+    assert Path(result["eda_summary_path"]).as_posix().endswith("results_train/arima-demo_series-direct/eda/eda_summary.json")
 
 
 def test_pipeline_forecast_only_mode(tmp_path):
@@ -58,14 +74,17 @@ def test_pipeline_forecast_only_mode(tmp_path):
         do_forecast=True,
         history_size=60,
         predict_horizon=4,
-        checkpoints_dir=str(tmp_path / "ckpt"),
-        test_results_dir=str(tmp_path / "test"),
-        pred_results_dir=str(tmp_path / "pred"),
+        checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
+        train_results_dir=str(tmp_path / "saved_results" / "results_train"),
+        test_results_dir=str(tmp_path / "saved_results" / "results_test"),
+        pred_results_dir=str(tmp_path / "saved_results" / "results_forecast"),
     )
 
     result = ModelApp(cfg).run()
 
     assert "prediction_path" in result
+    assert "forecast_summary_path" in result
+    assert "forecast_plot_path" in result
     assert "model_path" not in result
     assert "test_metrics_path" not in result
 
@@ -77,9 +96,10 @@ def test_pipeline_all_execution_flags_disabled(tmp_path):
         do_train=False,
         do_test=False,
         do_forecast=False,
-        checkpoints_dir=str(tmp_path / "ckpt"),
-        test_results_dir=str(tmp_path / "test"),
-        pred_results_dir=str(tmp_path / "pred"),
+        checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
+        train_results_dir=str(tmp_path / "saved_results" / "results_train"),
+        test_results_dir=str(tmp_path / "saved_results" / "results_test"),
+        pred_results_dir=str(tmp_path / "saved_results" / "results_forecast"),
     )
 
     result = ModelApp(cfg).run()

@@ -18,7 +18,9 @@
 - 新增 EDA 能力必须接入 `eda/pipeline.py`，并输出结构化结果与可追踪产物路径
 - 趋势去除、去噪、逆变换等可逆预处理统一放在 `data_provider/data_processor.py`
 - CLI 配置统一经由 `config/AppConfig` 与 `run.py` 参数覆盖，不允许平行新增另一套入口参数体系
-- 新增输出文件时，必须明确归属到 `saved_results/` 下的既有子目录，避免散落输出；测试可使用临时绝对路径
+- 结果目录主约定固定为 `saved_results/checkpoints / results_train / results_test / results_forecast`
+- 训练、测试、预测结果统一按 `setting={model_name}-{data_name}-{pred_method}` 分组保存；EDA 归属到 `results_train/{setting}/eda`
+- 新增输出文件时，必须明确归属到上述结果目录命名空间，避免散落输出；测试可使用临时绝对路径
 - `features/` 当前定位为分析特征快照与后续扩展预留层，不作为当前统计模型训练输入
 
 ## 3. 依赖与质量基线
@@ -48,7 +50,7 @@
 - 接口行为变更必须补最小必要测试
 - 发现环境、编码、路径、平台兼容问题时，优先修根因，不做静默绕过
 
-## 6. 当前状态（2026-05-01）
+## 6. 当前状态（2026-05-02）
 
 - 主线入口已统一为 `run.py`，支持 `--do-eda`
 - 运行时 warning 初始化已统一到 `app/runtime.py`，CLI 与最小入口共用
@@ -58,6 +60,8 @@
 - `DataLoader` 已将 demo 数据加载从真实 CSV 读取逻辑中拆分
 - `BayesianTMT` / `RAR` 已完成非占位实现，并纳入测试覆盖
 - 分析特征快照输出已更名为 `analysis_feature_snapshot.csv`，以避免与预测主链路混淆
+- 训练、测试、预测、EDA 结果已统一迁移到 `saved_results/` 四类一级目录下，并按 `setting` 自动分组
+- 回测结果已扩展为窗口级明细、汇总指标和图形产物；预测阶段已补充 `forecast.csv` 与预测可视化图
 
 ## 7. 当前已知问题
 

@@ -4,6 +4,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def _ensure_positive(value: int, field_name: str) -> None:
+    if value <= 0:
+        raise ValueError(f"{field_name} must be > 0")
+
+
+def _is_allowed_output_dir(output_dir: str) -> bool:
+    return output_dir.startswith("saved_results/") or Path(output_dir).is_absolute()
+
+
 @dataclass
 class AppConfig:
     project_name: str = "tsproj_stat"
@@ -41,6 +50,7 @@ class AppConfig:
     detrend_method: str = "none"
 
     checkpoints_dir: str = "saved_results/checkpoints"
+    train_results_dir: str = "saved_results/results_train"
     test_results_dir: str = "saved_results/results_test"
     pred_results_dir: str = "saved_results/results_forecast"
     eda_output_dir: str = "saved_results/results_eda"
@@ -63,6 +73,7 @@ class AppConfig:
 
         for output_dir in (
             self.checkpoints_dir,
+            self.train_results_dir,
             self.test_results_dir,
             self.pred_results_dir,
             self.eda_output_dir,
@@ -76,15 +87,7 @@ DEFAULT_CONFIG = AppConfig()
 
 def ensure_output_dirs(cfg: AppConfig) -> None:
     Path(cfg.checkpoints_dir).mkdir(parents=True, exist_ok=True)
+    Path(cfg.train_results_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.test_results_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.pred_results_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.eda_output_dir).mkdir(parents=True, exist_ok=True)
-
-
-def _ensure_positive(value: int, field_name: str) -> None:
-    if value <= 0:
-        raise ValueError(f"{field_name} must be > 0")
-
-
-def _is_allowed_output_dir(output_dir: str) -> bool:
-    return output_dir.startswith("saved_results/") or Path(output_dir).is_absolute()

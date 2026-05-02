@@ -121,6 +121,18 @@
 - 原因：需要针对真实数据集快速批量验证各统计模型，且保持统一 CLI 入口，不再手工拼接长命令
 - 影响范围：`scripts/wind_univariate/`、README 数据集脚本说明
 
+### 2026-05-02 / Step 18
+
+- 重构 `saved_results/` 结果管理体系，统一训练、测试、预测和 EDA 的目录布局与 summary 产物
+- 原因：原结果目录扁平且测试/预测信息不足，无法稳定管理多模型、多数据集、多预测方式实验
+- 影响范围：`app/pipeline.py`、`app/results.py`、`config/default.py`、`run.py`、README、AGENTS、pipeline/CLI 测试
+
+### 2026-05-02 / Step 19
+
+- 扩展回测结果结构、评价指标和测试/预测可视化输出
+- 原因：原回测只输出单个 `backtest_metrics.csv`，无法支撑窗口级分析、图形对比和统一汇总
+- 影响范围：`evaluation/backtest.py`、`evaluation/metrics.py`、`evaluation/visualization.py`、`app/testing.py`、相关 smoke/unit tests
+
 ## 待办任务
 
 | ID | 任务 | 优先级 | 完成条件 |
@@ -130,6 +142,7 @@
 | T03 | 评估并统一历史命名 | P2 | 已完成主线文件命名收口；剩余历史残留需持续巡检 |
 | T04 | 增补环境初始化标准流程 | P1 | README 中提供基于 `uv venv` / `uv sync` 的可复现安装路径 |
 | T05 | 处理 `matplotlib` 缓存目录不可写问题 | P2 | 已提供项目级 `.mplconfig/` 方案，并纳入主线运行约定 |
+| T06 | 持续治理 ARIMA 拟合 `ConvergenceWarning` | P2 | 保持模型层定向处理，不把低价值 warning 再推回入口层 |
 
 ## 验证记录
 
@@ -160,8 +173,12 @@
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5` | 通过 | 拆分 `models/statistical` 后主线训练、回测、预测仍正常 |
 | `./.venv/bin/python -m pytest tests/test_statistical_common.py tests/test_statistical_fallbacks.py tests/test_statistical_registry.py tests/test_statistical_arima_family.py tests/test_factory.py tests/test_factory_params.py tests/test_arima_smoke.py tests/test_arima_auto_order.py -q` | 通过 | `15 passed`；`selection.py` 内聚与 registry 上移后兼容性保持 |
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `45 passed`；`models/registry.py` 上移后全量回归仍通过 |
-| `bash scripts/wind_univariate/run_naive.sh` | 通过 | `dataset/wind_dataset.csv` 单变量脚本可直接运行，结果落盘到 `saved_results/wind_dataset/naive/` |
-| `bash scripts/wind_univariate/run_arima.sh` | 通过 | `dataset/wind_dataset.csv` 单变量 ARIMA 脚本可直接运行，结果落盘到 `saved_results/wind_dataset/arima/` |
+| `bash scripts/wind_univariate/run_naive.sh` | 通过 | `dataset/wind_dataset.csv` 单变量脚本可直接运行，结果落盘到 `saved_results/wind_dataset/naive/.../{setting}/` |
+| `bash scripts/wind_univariate/run_arima.sh` | 通过 | `dataset/wind_dataset.csv` 单变量 ARIMA 脚本可直接运行，结果落盘到 `saved_results/wind_dataset/arima/.../{setting}/` |
+| `UV_CACHE_DIR=.uv_cache uv run pytest tests/test_app_config.py tests/test_backtest_smoke.py tests/test_metrics.py tests/test_visualization.py tests/test_pipeline.py tests/test_cli_overrides.py tests/test_eda_smoke.py -q` | 通过 | `19 passed`；新结果目录、指标和可视化 smoke 生效 |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `48 passed`；仅剩 `ConvergenceWarning` |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5` | 通过 | 新结果目录结构、train/test/forecast summary 和图形产物均生成成功 |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --model-name arima --data-path dataset/wind_dataset.csv --time-col DATE --target-col WIND --do-train true --do-test true --do-forecast true` | 通过 | `wind_dataset` 主线 smoke 通过，结果按 `arima-wind_dataset-direct` 分组保存 |
 
 ## 备注
 

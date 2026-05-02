@@ -1,15 +1,14 @@
-#!/usr/bin/env bash
+export LOG_NAME=arch
 
-set -euo pipefail
+model_name=arch
 
-cd "$(dirname "$0")/../.."
 
-UV_CACHE_DIR=.uv_cache uv run python run.py \
+python -u run.py \
   --data-path dataset/wind_dataset.csv \
   --time-col DATE \
   --target-col WIND \
   --freq D \
-  --model-name arch \
+  --model-name $model_name \
   --pred-method direct \
   --do-train true \
   --do-test true \
