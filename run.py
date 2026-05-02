@@ -52,10 +52,14 @@ def _parse_model_params(value: str | None) -> dict:
     return parsed
 
 
-def _load_config(config_module: str, config_class: str):
+def _load_default_config(config_module: str, config_class: str):
+    # config.default.py
     module = importlib.import_module(config_module)
+    # AppConfig class
     cfg_cls = getattr(module, config_class)
+    # 默认参数配置: AppConfig 实例
     cfg = cfg_cls()
+    
     if not isinstance(cfg, AppConfig):
         raise TypeError(f"{config_module}.{config_class} must construct AppConfig")
 
@@ -125,6 +129,9 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
 
 
 def parse_args() -> argparse.Namespace:
+    # ------------------------------
+    # 命令行参数
+    # ------------------------------
     parser = argparse.ArgumentParser(description="Statistical Time Series Forecasting CLI")
     parser.add_argument("--config-module", type=str, default="config.default")
     parser.add_argument("--config-class", type=str, default="AppConfig")
@@ -163,10 +170,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--do-eda", default=None)
     args = parser.parse_args()
     # ------------------------------
-    # TODO 优化
+    # 默认参数
     # ------------------------------
-    cfg = _load_config(args.config_module, args.config_class)
-    cfg = _apply_overrides(cfg, args)
+    default_cfg = _load_default_config(args.config_module, args.config_class)
+    # ------------------------------
+    # 用命令行参数覆盖默认参数
+    # ------------------------------
+    cfg = _apply_overrides(default_cfg, args)
+    # 参数验证
     cfg.validate()
     print(asdict(cfg))
     
