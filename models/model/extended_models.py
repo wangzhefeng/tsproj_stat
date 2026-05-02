@@ -4,11 +4,12 @@ import numpy as np
 import pandas as pd
 
 from models.base import BaseStatModel
-
-from .common import FallbackMixin, to_univariate_series, validate_horizon, warn_and_use_fallback
+from data_provider.data_transfer import to_univariate_series
 from .exponential_family import ETSModel
-from .fallbacks import TrendFallbackModel
-
+from .fallbacks import (
+    NaiveModel, TrendFallbackModel,
+    FallbackMixin, validate_horizon, warn_and_use_fallback
+)
 
 class TBATSModel(FallbackMixin, BaseStatModel):
     def __init__(self):

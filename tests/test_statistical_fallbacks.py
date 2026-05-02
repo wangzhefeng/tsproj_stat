@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from models.statistical import NaiveModel, TrendFallbackModel
+from models.model import NaiveModel, TrendFallbackModel
 
 
 def test_naive_model_predict_zero_rejected():

@@ -4,9 +4,11 @@ import numpy as np
 import pandas as pd
 
 from models.base import BaseStatModel
-
-from .common import FallbackMixin, to_univariate_series, validate_horizon, warn_and_use_fallback
-from .fallbacks import NaiveModel
+from data_provider.data_transfer import to_univariate_series
+from .fallbacks import (
+    NaiveModel, TrendFallbackModel,
+    FallbackMixin, validate_horizon, warn_and_use_fallback
+)
 
 
 class ARCHModel(FallbackMixin, BaseStatModel):

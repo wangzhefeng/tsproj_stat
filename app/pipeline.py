@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -25,13 +24,13 @@ from evaluation.visualization import (
     plot_forecast,
 )
 from app.results import (
-    RunArtifacts,
     dataframe_to_csv,
     forecast_timestamps,
     model_info_payload,
     prepare_run_artifacts,
     write_json,
 )
+
 
 @dataclass
 class PrepareResult:
@@ -54,8 +53,8 @@ class ModelApp:
 
     def __init__(self, cfg: AppConfig):
         cfg.validate()
-        self.cfg = cfg
         ensure_output_dirs(cfg)
+        self.cfg = cfg
         self.artifacts = prepare_run_artifacts(cfg)
         self.loader = DataLoader(
             data_path=self.cfg.data_path,
@@ -65,8 +64,11 @@ class ModelApp:
         )
 
     def run(self) -> dict[str, str]:
+        # 设置随机种子
         np.random.seed(self.cfg.seed)
+        # 加载数据
         df = self._load_dataset()
+        # out
         out: dict[str, str] = {
             "setting": self.artifacts.setting,
             "data_name": self.artifacts.data_name,
@@ -76,34 +78,30 @@ class ModelApp:
             "forecast_results_dir": str(self.artifacts.forecast_results_dir),
             "eda_dir": str(self.artifacts.eda_dir),
         }
-        out.update(self._run_eda_if_needed(df))
-
+        # EDA result
+        out.update(self.eda(df))
+        # 准备目标序列
         prepared = self._prepare_target_series(df)
         out.update(prepared.metadata)
-        out.update(self._train_if_needed(prepared))
-        out.update(self._test_if_needed(prepared.df))
-        out.update(self._forecast_if_needed(prepared))
-
+        # training
+        out.update(self.train(prepared))
+        # testing
+        out.update(self.test(prepared.df))
+        # forecasting
+        out.update(self.forecast(prepared))
+        # 特征工程
         feature_snapshot = self._export_feature_snapshot(prepared.df)
         out["analysis_feature_snapshot_path"] = feature_snapshot.path
         out["analysis_feature_columns"] = ",".join(feature_snapshot.feature_columns)
         out["analysis_target_shift_columns"] = ",".join(feature_snapshot.target_shift_columns)
-
+        
         return self._write_run_summary(out)
 
     def _load_dataset(self) -> pd.DataFrame:
+        """
+        加载数据 
+        """
         return self.loader.load_data()
-
-    def _run_eda_if_needed(self, df: pd.DataFrame) -> dict[str, str]:
-        if not self.cfg.do_eda:
-            return {}
-        return run_eda(
-            df=df,
-            time_col=self.cfg.time_col,
-            target_col=self.cfg.target_col,
-            freq=self.cfg.freq,
-            output_dir=str(self.artifacts.eda_dir),
-        )
 
     def _prepare_target_series(self, df: pd.DataFrame) -> PrepareResult:
         local_df = df.copy()
@@ -144,7 +142,43 @@ class ModelApp:
             metadata=metadata,
         )
 
-    def _train_if_needed(self, prepared: PrepareResult) -> dict[str, str]:
+    def _export_feature_snapshot(self, df: pd.DataFrame) -> FeatureSnapshotResult:
+        engineer = FeatureEngineer(time_col=self.cfg.time_col, target_col=self.cfg.target_col)
+        featured_df, feature_cols, target_shift_cols = engineer.create_features(
+            df=df[[self.cfg.time_col, self.cfg.target_col]].copy(),
+            enable_datetime_features=self.cfg.enable_datetime_features,
+            lags=self.cfg.lags,
+            horizon=min(3, self.cfg.predict_horizon),
+        )
+        feature_path = self.artifacts.forecast_results_dir / "analysis_feature_snapshot.csv"
+        featured_df.to_csv(feature_path, index=False)
+        return FeatureSnapshotResult(
+            path=str(feature_path),
+            feature_columns=feature_cols,
+            target_shift_columns=target_shift_cols,
+        )
+
+    def _write_run_summary(self, out: dict[str, str]) -> dict[str, str]:
+        summary_path = self.artifacts.forecast_results_dir / "run_summary.json"
+        summary_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+        result = dict(out)
+        result["summary_path"] = str(summary_path)
+        return result
+    # ##############################
+    # EDA, training, testing, forecasting
+    # ##############################
+    def eda(self, df: pd.DataFrame) -> dict[str, str]:
+        if not self.cfg.do_eda:
+            return {}
+        return run_eda(
+            df=df,
+            time_col=self.cfg.time_col,
+            target_col=self.cfg.target_col,
+            freq=self.cfg.freq,
+            output_dir=str(self.artifacts.eda_dir),
+        )
+    
+    def train(self, prepared: PrepareResult) -> dict[str, str]:
         if not self.cfg.do_train:
             return {}
         trainer = Trainer(self.cfg.model_name, self.cfg.model_params)
@@ -192,7 +226,7 @@ class ModelApp:
             "model_info_path": model_info_path,
         }
 
-    def _test_if_needed(self, df: pd.DataFrame) -> dict[str, str]:
+    def test(self, df: pd.DataFrame) -> dict[str, str]:
         if not self.cfg.do_test:
             return {}
         tester = Tester(
@@ -254,7 +288,7 @@ class ModelApp:
             "backtest_error_distribution_path": error_dist_path,
         }
 
-    def _forecast_if_needed(self, prepared: PrepareResult) -> dict[str, str]:
+    def forecast(self, prepared: PrepareResult) -> dict[str, str]:
         if not self.cfg.do_forecast:
             return {}
         forecaster = Forecaster(
@@ -301,26 +335,3 @@ class ModelApp:
             "forecast_summary_path": forecast_summary_path,
             "forecast_plot_path": forecast_plot_path,
         }
-
-    def _export_feature_snapshot(self, df: pd.DataFrame) -> FeatureSnapshotResult:
-        engineer = FeatureEngineer(time_col=self.cfg.time_col, target_col=self.cfg.target_col)
-        featured_df, feature_cols, target_shift_cols = engineer.create_features(
-            df=df[[self.cfg.time_col, self.cfg.target_col]].copy(),
-            enable_datetime_features=self.cfg.enable_datetime_features,
-            lags=self.cfg.lags,
-            horizon=min(3, self.cfg.predict_horizon),
-        )
-        feature_path = self.artifacts.forecast_results_dir / "analysis_feature_snapshot.csv"
-        featured_df.to_csv(feature_path, index=False)
-        return FeatureSnapshotResult(
-            path=str(feature_path),
-            feature_columns=feature_cols,
-            target_shift_columns=target_shift_cols,
-        )
-
-    def _write_run_summary(self, out: dict[str, str]) -> dict[str, str]:
-        summary_path = self.artifacts.forecast_results_dir / "run_summary.json"
-        summary_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-        result = dict(out)
-        result["summary_path"] = str(summary_path)
-        return result

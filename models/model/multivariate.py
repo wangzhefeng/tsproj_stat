@@ -3,10 +3,11 @@ from __future__ import annotations
 import pandas as pd
 
 from models.base import BaseStatModel
-
-from .common import FallbackMixin, to_dataframe, validate_horizon, warn_and_use_fallback
-from .fallbacks import TrendFallbackModel
-
+from data_provider.data_transfer import to_dataframe
+from .fallbacks import (
+    NaiveModel, TrendFallbackModel,
+    FallbackMixin, validate_horizon, warn_and_use_fallback
+)
 
 class VARModel(FallbackMixin, BaseStatModel):
     def __init__(self, maxlags: int | None = None):

@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from models.statistical.common import validate_horizon, to_dataframe, to_univariate_series
+from data_provider.data_transfer import validate_horizon, to_dataframe, to_univariate_series
 
 
 def test_validate_horizon_rejects_non_positive():

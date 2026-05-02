@@ -2,7 +2,7 @@ import warnings
 
 import pandas as pd
 
-from models.statistical import ARIMAModel, AutoARIMAModel
+from models.model import ARIMAModel, AutoARIMAModel
 
 
 def test_arima_model_suppresses_known_initialization_warnings():

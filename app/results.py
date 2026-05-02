@@ -10,6 +10,9 @@ import pandas as pd
 from config import AppConfig
 
 
+# ##############################
+# 准备运行结果参数
+# ##############################
 @dataclass(frozen=True)
 class RunArtifacts:
     setting: str
@@ -21,19 +24,22 @@ class RunArtifacts:
     eda_dir: Path
 
 
-def resolve_data_name(data_path: str | None) -> str:
+def _resolve_data_name(data_path: str | None) -> str:
     if data_path is None:
         return "demo_series"
     return Path(data_path).stem
 
 
-def build_setting(model_name: str, data_name: str, pred_method: str) -> str:
+def _build_setting(model_name: str, data_name: str, pred_method: str) -> str:
     return f"{model_name}-{data_name}-{pred_method}"
 
 
 def prepare_run_artifacts(cfg: AppConfig) -> RunArtifacts:
-    data_name = resolve_data_name(cfg.data_path)
-    setting = build_setting(cfg.model_name, data_name, cfg.pred_method)
+    # 提取数据名称
+    data_name = _resolve_data_name(cfg.data_path)
+    # 构建结果目录
+    setting = _build_setting(cfg.model_name, data_name, cfg.pred_method)
+    # 创建结果参数实例
     artifacts = RunArtifacts(
         setting=setting,
         data_name=data_name,
@@ -51,9 +57,13 @@ def prepare_run_artifacts(cfg: AppConfig) -> RunArtifacts:
         artifacts.eda_dir,
     ):
         path.mkdir(parents=True, exist_ok=True)
+    
     return artifacts
 
 
+# ##############################
+# 
+# ##############################
 def write_json(path: Path, payload: dict[str, Any]) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

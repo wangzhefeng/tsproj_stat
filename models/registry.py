@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from difflib import get_close_matches
 
 from models.base import BaseStatModel
-from models.statistical.arima_family import ARIMAModel, AutoARIMAModel, SARIMAModel
-from models.statistical.exponential_family import ETSModel, ThetaModel
-from models.statistical.extended_models import BayesianTMTModel, NeuralProphetModel, ProphetModel, RARModel, TBATSModel
-from models.statistical.fallbacks import NaiveModel
-from models.statistical.multivariate import BayesianVARModel, LinearVARModel, VARModel
-from models.statistical.volatility_family import ARCHModel, GARCHModel
+from models.model.arima_family import ARIMAModel, AutoARIMAModel, SARIMAModel
+from models.model.exponential_family import ETSModel, ThetaModel
+from models.model.extended_models import BayesianTMTModel, NeuralProphetModel, ProphetModel, RARModel, TBATSModel
+from models.model.fallbacks import NaiveModel
+from models.model.multivariate import BayesianVARModel, LinearVARModel, VARModel
+from models.model.volatility_family import ARCHModel, GARCHModel
 
 
 @dataclass

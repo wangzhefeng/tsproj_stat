@@ -1,11 +1,28 @@
 from __future__ import annotations
+import warnings
 
 import numpy as np
 import pandas as pd
 
 from models.base import BaseStatModel
+from data_provider.data_transfer import to_univariate_series
 
-from .common import to_univariate_series, validate_horizon
+
+def validate_horizon(horizon: int) -> None:
+    if horizon <= 0:
+        raise ValueError("horizon must be positive")
+
+
+def warn_and_use_fallback(*, model_name: str, fallback_name: str, exc: Exception) -> None:
+    warnings.warn(f"{model_name} fit failed, fallback to {fallback_name}: {exc}", RuntimeWarning)
+
+
+class FallbackMixin:
+    _fallback: BaseStatModel
+
+    def _fallback_predict(self, horizon: int) -> pd.Series:
+        validate_horizon(horizon)
+        return self._fallback.predict(horizon)
 
 
 class NaiveModel(BaseStatModel):

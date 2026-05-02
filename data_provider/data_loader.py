@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .demo_data import load_demo_series
+from utils.demo_data import load_demo_series
 
 
 @dataclass

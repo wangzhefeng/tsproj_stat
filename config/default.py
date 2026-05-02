@@ -71,13 +71,7 @@ class AppConfig:
         if self.detrend_method not in {"none", "linear", "moving_average"}:
             raise ValueError("detrend_method must be one of {'none', 'linear', 'moving_average'}")
 
-        for output_dir in (
-            self.checkpoints_dir,
-            self.train_results_dir,
-            self.test_results_dir,
-            self.pred_results_dir,
-            self.eda_output_dir,
-        ):
+        for output_dir in (self.checkpoints_dir, self.train_results_dir, self.test_results_dir, self.pred_results_dir, self.eda_output_dir):
             if not _is_allowed_output_dir(output_dir):
                 raise ValueError("All output directories must remain under the 'saved_results/' namespace")
 
