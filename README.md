@@ -45,19 +45,19 @@ uv sync --extra dev
 完整流程（训练 + 回测 + 预测）：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py --model-name arima --pred-method direct --do-train true --do-test true --do-forecast true
+UV_CACHE_DIR=.uv_cache uv run python run.py --model_name arima --pred_method direct --do_train true --do_test true --do_forecast true
 ```
 
 仅执行 EDA：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false
+UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false
 ```
 
 启用预处理（去噪 + 去趋势 + 逆变换）：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py --denoise-enabled true --denoise-window 5 --detrend-method linear
+UV_CACHE_DIR=.uv_cache uv run python run.py --denoise_enabled true --denoise_window 5 --detrend_method linear
 ```
 
 ## 输出目录
@@ -68,9 +68,9 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --denoise-enabled true --denoise-win
 - `saved_results/results_train/{setting}/train_summary.json`
 - `saved_results/results_train/{setting}/train_series.csv`
 - `saved_results/results_train/{setting}/model_info.json`
-- `saved_results/results_train/{setting}/eda/eda_summary.json`
-- `saved_results/results_train/{setting}/eda/eda_diagnostics.csv`
-- `saved_results/results_train/{setting}/eda/plots/*.png`
+- `saved_results/results_eda/{setting}/eda_summary.json`
+- `saved_results/results_eda/{setting}/eda_diagnostics.csv`
+- `saved_results/results_eda/{setting}/plots/*.png`
 - `saved_results/results_test/{setting}/backtest_predictions.csv`
 - `saved_results/results_test/{setting}/backtest_metrics.csv`
 - `saved_results/results_test/{setting}/backtest_metrics_summary.csv`
@@ -89,7 +89,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --denoise-enabled true --denoise-win
 - 统计模型实现已从单文件 `models/statistical.py` 重构为 `models/statistical/` 包，按 ARIMA、指数平滑、多变量、波动率和扩展模型分组维护。
 - ARIMA 选型 helper 已并入 `models/statistical/arima_family.py`；模型 registry 当前位于 `models/registry.py`，由 `models.statistical` 做兼容导出。
 - `features/` 当前只用于生成分析型特征快照，不参与模型训练或预测主链路。
-- 训练、测试、预测和 EDA 结果现统一落到 `saved_results/` 的四类一级目录中，并按 `setting` 自动分组。
+- 训练、测试、预测和 EDA 结果现统一落到 `saved_results/checkpoints / results_train / results_test / results_forecast / results_eda`，并按 `setting` 自动分组。
 - 测试阶段当前会额外输出窗口级明细、汇总指标和三类图：预测对比图、残差图、误差分布图。
 - 无 `data_path` 时会加载内置 demo 序列，用于 smoke/test 场景；真实数据读取仍统一走 `data_provider/data_loader.py`。
 - `dataset/wind_dataset.csv` 的单变量脚本已落在 `scripts/wind_univariate/`，当前约定 `DATE` 为时间列、`WIND` 为目标列。
@@ -100,8 +100,8 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --denoise-enabled true --denoise-win
   - `bash scripts/wind_univariate/run_naive.sh`
   - `bash scripts/wind_univariate/run_arima.sh`
   - 其余模型同名脚本位于 `scripts/wind_univariate/`
-- 当前每个脚本都直接写死 `dataset/wind_dataset.csv`、`DATE`、`WIND` 与输出目录参数，不依赖公共 `common.sh`
-- 脚本运行后会自动把结果写到 `saved_results/checkpoints|results_train|results_test|results_forecast/{setting}/`
+- 当前每个脚本都显式传入完整 `AppConfig` 字段，并统一使用 `python -u run.py`、`model_name`、`LOG_NAME`
+- 脚本运行后会自动把结果写到 `saved_results/checkpoints|results_train|results_test|results_forecast|results_eda/{setting}/`
 - 当前单变量脚本覆盖所有 `supports_multivariate=False` 的模型；`var / bayesian_var / linear_var` 暂未纳入。
 
 ## EDA 能力
@@ -137,6 +137,6 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --denoise-enabled true --denoise-win
 
 ```bash
 UV_CACHE_DIR=.uv_cache uv run pytest -q
-UV_CACHE_DIR=.uv_cache uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5
-UV_CACHE_DIR=.uv_cache uv run python run.py --do-eda true --do-train false --do-test false --do-forecast false
+UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5
+UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false
 ```

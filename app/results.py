@@ -47,7 +47,7 @@ def prepare_run_artifacts(cfg: AppConfig) -> RunArtifacts:
         train_results_dir=Path(cfg.train_results_dir) / setting,
         test_results_dir=Path(cfg.test_results_dir) / setting,
         forecast_results_dir=Path(cfg.pred_results_dir) / setting,
-        eda_dir=Path(cfg.train_results_dir) / setting / "eda",
+        eda_dir=Path(cfg.eda_output_dir) / setting,
     )
     for path in (
         artifacts.checkpoints_dir,

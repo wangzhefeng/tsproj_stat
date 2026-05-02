@@ -4,24 +4,37 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-UV_CACHE_DIR=.uv_cache uv run python run.py \
-  --data-path dataset/wind_dataset.csv \
-  --time-col DATE \
-  --target-col WIND \
-  --freq D \
-  --model-name bayesian_tmt \
-  --pred-method direct \
-  --do-train true \
-  --do-test true \
-  --do-forecast true \
-  --do-eda false \
-  --history-size 365 \
-  --predict-horizon 7 \
-  --backtest-initial-train-size 365 \
-  --backtest-horizon 7 \
-  --backtest-step 7 \
+model_name=bayesian_tmt
+export LOG_NAME="$model_name"
+
+python -u run.py \
+  --project_name tsproj_stat \
   --seed 2026 \
-  --checkpoints-dir saved_results/wind_dataset/bayesian_tmt/checkpoints \
-  --test-results-dir saved_results/wind_dataset/bayesian_tmt/results_test \
-  --pred-results-dir saved_results/wind_dataset/bayesian_tmt/results_forecast \
-  --eda-output-dir saved_results/wind_dataset/bayesian_tmt/results_eda
+  --data_path dataset/wind_dataset.csv \
+  --time_col DATE \
+  --target_col WIND \
+  --freq D \
+  --model_name "$model_name" \
+  --model_params '{}' \
+  --pred_method direct \
+  --do_train true \
+  --do_test true \
+  --do_forecast true \
+  --do_eda false \
+  --history_size 365 \
+  --predict_horizon 7 \
+  --backtest_initial_train_size 365 \
+  --backtest_horizon 7 \
+  --backtest_step 7 \
+  --enable_datetime_features true \
+  --lags 1,2,7,14 \
+  --scale false \
+  --scaler_type standard \
+  --denoise_enabled false \
+  --denoise_window 3 \
+  --detrend_method none \
+  --checkpoints_dir saved_results/checkpoints \
+  --train_results_dir saved_results/results_train \
+  --test_results_dir saved_results/results_test \
+  --pred_results_dir saved_results/results_forecast \
+  --eda_output_dir saved_results/results_eda

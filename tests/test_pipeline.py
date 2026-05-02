@@ -5,6 +5,7 @@ from config import AppConfig
 
 
 def test_pipeline_end_to_end(tmp_path):
+    eda_root = tmp_path / "saved_results" / "results_eda"
     cfg = AppConfig(
         data_path=None,
         model_name="naive",
@@ -13,6 +14,7 @@ def test_pipeline_end_to_end(tmp_path):
         train_results_dir=str(tmp_path / "saved_results" / "results_train"),
         test_results_dir=str(tmp_path / "saved_results" / "results_test"),
         pred_results_dir=str(tmp_path / "saved_results" / "results_forecast"),
+        eda_output_dir=str(eda_root),
         do_train=True,
         do_test=True,
         do_forecast=True,
@@ -38,10 +40,11 @@ def test_pipeline_end_to_end(tmp_path):
     assert Path(result["train_summary_path"]).as_posix().endswith(f"results_train/{setting}/train_summary.json")
     assert Path(result["test_metrics_path"]).as_posix().endswith(f"results_test/{setting}/backtest_metrics.csv")
     assert Path(result["prediction_path"]).as_posix().endswith(f"results_forecast/{setting}/forecast.csv")
-    assert Path(result["eda_dir"]).as_posix().endswith(f"results_train/{setting}/eda")
+    assert Path(result["eda_dir"]).as_posix().endswith(f"results_eda/{setting}")
 
 
 def test_pipeline_eda_only_mode(tmp_path):
+    eda_root = tmp_path / "saved_results" / "results_eda_custom"
     cfg = AppConfig(
         data_path=None,
         do_eda=True,
@@ -52,6 +55,7 @@ def test_pipeline_eda_only_mode(tmp_path):
         train_results_dir=str(tmp_path / "saved_results" / "results_train"),
         test_results_dir=str(tmp_path / "saved_results" / "results_test"),
         pred_results_dir=str(tmp_path / "saved_results" / "results_forecast"),
+        eda_output_dir=str(eda_root),
     )
 
     result = ModelApp(cfg).run()
@@ -61,7 +65,8 @@ def test_pipeline_eda_only_mode(tmp_path):
     assert "prediction_path" not in result
     assert "test_metrics_path" not in result
     assert "analysis_feature_snapshot_path" in result
-    assert Path(result["eda_summary_path"]).as_posix().endswith("results_train/arima-demo_series-direct/eda/eda_summary.json")
+    assert Path(result["eda_summary_path"]).as_posix().endswith("results_eda_custom/arima-demo_series-direct/eda_summary.json")
+    assert Path(result["eda_dir"]).as_posix().endswith("results_eda_custom/arima-demo_series-direct")
 
 
 def test_pipeline_forecast_only_mode(tmp_path):

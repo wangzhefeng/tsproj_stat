@@ -133,6 +133,24 @@
 - 原因：原回测只输出单个 `backtest_metrics.csv`，无法支撑窗口级分析、图形对比和统一汇总
 - 影响范围：`evaluation/backtest.py`、`evaluation/metrics.py`、`evaluation/visualization.py`、`app/testing.py`、相关 smoke/unit tests
 
+### 2026-05-03 / Step 20
+
+- 将 `run.py` CLI 主参数统一为与 `AppConfig` 同名的下划线风格，并补齐全部配置字段解析
+- 原因：原 CLI 参数命名与 `AppConfig` 字段漂移，且 `AppConfig` 存在未暴露字段，导致脚本与配置维护成本持续上升
+- 影响范围：`run.py`、`tests/test_cli_overrides.py`、README、AGENTS
+
+### 2026-05-03 / Step 21
+
+- 让 `eda_output_dir` 真正控制 EDA 输出目录，并统一 `scripts/wind_univariate/` 模板
+- 原因：此前 `eda_output_dir` 仅能解析不能控制真实落盘路径，且单变量脚本长期存在两套风格
+- 影响范围：`app/results.py`、`tests/test_pipeline.py`、`scripts/wind_univariate/`、README、AGENTS
+
+### 2026-05-03 / Step 22
+
+- 在 `data_provider/data_transfer.py` 恢复 `validate_horizon()` 导出
+- 原因：全量测试收集阶段依赖该导出，当前函数已迁移但兼容层未收口，导致 `pytest` 基线直接中断
+- 影响范围：`data_provider/data_transfer.py`、`tests/test_statistical_common.py`
+
 ## 待办任务
 
 | ID | 任务 | 优先级 | 完成条件 |
@@ -173,12 +191,15 @@
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5` | 通过 | 拆分 `models/statistical` 后主线训练、回测、预测仍正常 |
 | `./.venv/bin/python -m pytest tests/test_statistical_common.py tests/test_statistical_fallbacks.py tests/test_statistical_registry.py tests/test_statistical_arima_family.py tests/test_factory.py tests/test_factory_params.py tests/test_arima_smoke.py tests/test_arima_auto_order.py -q` | 通过 | `15 passed`；`selection.py` 内聚与 registry 上移后兼容性保持 |
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `45 passed`；`models/registry.py` 上移后全量回归仍通过 |
-| `bash scripts/wind_univariate/run_naive.sh` | 通过 | `dataset/wind_dataset.csv` 单变量脚本可直接运行，结果落盘到 `saved_results/wind_dataset/naive/.../{setting}/` |
-| `bash scripts/wind_univariate/run_arima.sh` | 通过 | `dataset/wind_dataset.csv` 单变量 ARIMA 脚本可直接运行，结果落盘到 `saved_results/wind_dataset/arima/.../{setting}/` |
+| `bash scripts/wind_univariate/run_naive.sh` | 通过 | `dataset/wind_dataset.csv` 单变量脚本可直接运行，结果落盘到 `saved_results/.../{setting}/` |
+| `bash scripts/wind_univariate/run_arima.sh` | 通过 | `dataset/wind_dataset.csv` 单变量 ARIMA 脚本可直接运行，结果落盘到 `saved_results/.../{setting}/` |
 | `UV_CACHE_DIR=.uv_cache uv run pytest tests/test_app_config.py tests/test_backtest_smoke.py tests/test_metrics.py tests/test_visualization.py tests/test_pipeline.py tests/test_cli_overrides.py tests/test_eda_smoke.py -q` | 通过 | `19 passed`；新结果目录、指标和可视化 smoke 生效 |
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `48 passed`；仅剩 `ConvergenceWarning` |
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --model-name naive --do-train true --do-test true --do-forecast true --history-size 60 --predict-horizon 5` | 通过 | 新结果目录结构、train/test/forecast summary 和图形产物均生成成功 |
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --model-name arima --data-path dataset/wind_dataset.csv --time-col DATE --target-col WIND --do-train true --do-test true --do-forecast true` | 通过 | `wind_dataset` 主线 smoke 通过，结果按 `arima-wind_dataset-direct` 分组保存 |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | 当前全量回归通过；仍有少量 `ConvergenceWarning` |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5` | 通过 | 新下划线 CLI 参数可直接运行，EDA 返回目录为 `saved_results/results_eda/{setting}` |
+| `bash scripts/wind_univariate/run_naive.sh` | 通过 | 新脚本模板可运行，完整 `AppConfig` 参数显式透传，所有结果统一落到 `saved_results/.../{setting}/` |
 
 ## 备注
 

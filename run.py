@@ -67,20 +67,32 @@ def _load_default_config(config_module: str, config_class: str):
 
 
 def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
+    if args.project_name is not None:
+        cfg.project_name = args.project_name
+    if args.seed is not None:
+        cfg.seed = args.seed
     if args.data_path is not None:
         cfg.data_path = args.data_path
+    if args.time_col is not None:
+        cfg.time_col = args.time_col
+    if args.target_col is not None:
+        cfg.target_col = args.target_col
+    if args.freq is not None:
+        cfg.freq = args.freq
     if args.model_name is not None:
         cfg.model_name = args.model_name
     if args.model_params is not None:
         cfg.model_params = _parse_model_params(args.model_params)
     if args.pred_method is not None:
         cfg.pred_method = args.pred_method
-    if args.target_col is not None:
-        cfg.target_col = args.target_col
-    if args.time_col is not None:
-        cfg.time_col = args.time_col
-    if args.freq is not None:
-        cfg.freq = args.freq
+    if args.do_train is not None:
+        cfg.do_train = _parse_bool(args.do_train)
+    if args.do_test is not None:
+        cfg.do_test = _parse_bool(args.do_test)
+    if args.do_forecast is not None:
+        cfg.do_forecast = _parse_bool(args.do_forecast)
+    if args.do_eda is not None:
+        cfg.do_eda = _parse_bool(args.do_eda)
     if args.history_size is not None:
         cfg.history_size = args.history_size
     if args.predict_horizon is not None:
@@ -91,16 +103,10 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.backtest_horizon = args.backtest_horizon
     if args.backtest_step is not None:
         cfg.backtest_step = args.backtest_step
-    if args.do_train is not None:
-        cfg.do_train = _parse_bool(args.do_train)
-    if args.do_test is not None:
-        cfg.do_test = _parse_bool(args.do_test)
-    if args.do_forecast is not None:
-        cfg.do_forecast = _parse_bool(args.do_forecast)
-    if args.do_eda is not None:
-        cfg.do_eda = _parse_bool(args.do_eda)
     if args.enable_datetime_features is not None:
         cfg.enable_datetime_features = _parse_bool(args.enable_datetime_features)
+    if args.lags is not None:
+        cfg.lags = [int(v.strip()) for v in args.lags.split(",") if v.strip()]
     if args.scale is not None:
         cfg.scale = _parse_bool(args.scale)
     if args.scaler_type is not None:
@@ -121,53 +127,52 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.pred_results_dir = args.pred_results_dir
     if args.eda_output_dir is not None:
         cfg.eda_output_dir = args.eda_output_dir
-    if args.seed is not None:
-        cfg.seed = args.seed
-    if args.lags is not None:
-        cfg.lags = [int(v.strip()) for v in args.lags.split(",") if v.strip()]
     return cfg
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args() -> AppConfig:
     # ------------------------------
     # 命令行参数
     # ------------------------------
     parser = argparse.ArgumentParser(description="Statistical Time Series Forecasting CLI")
-    parser.add_argument("--config-module", type=str, default="config.default")
-    parser.add_argument("--config-class", type=str, default="AppConfig")
+    parser.add_argument("--config_module", type=str, default="config.default")
+    parser.add_argument("--config_class", type=str, default="AppConfig")
 
+    parser.add_argument("--project_name", type=str, default=None)
     parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--data-path", type=str, default=None)
-    parser.add_argument("--model-name", type=str, default=None)
-    parser.add_argument("--model-params", type=str, default=None)
-    parser.add_argument("--pred-method", type=str, default=None)
-    parser.add_argument("--target-col", type=str, default=None)
-    parser.add_argument("--time-col", type=str, default=None)
+    parser.add_argument("--data_path", type=str, default=None)
+    parser.add_argument("--time_col", type=str, default=None)
+    parser.add_argument("--target_col", type=str, default=None)
     parser.add_argument("--freq", type=str, default=None)
-    parser.add_argument("--history-size", type=int, default=None)
-    parser.add_argument("--predict-horizon", type=int, default=None)
-    parser.add_argument("--backtest-initial-train-size", type=int, default=None)
-    parser.add_argument("--backtest-horizon", type=int, default=None)
-    parser.add_argument("--backtest-step", type=int, default=None)
+    parser.add_argument("--model_name", type=str, default=None)
+    parser.add_argument("--model_params", type=str, default=None)
+    parser.add_argument("--pred_method", type=str, default=None)
+
+    parser.add_argument("--do_train", default=None)
+    parser.add_argument("--do_test", default=None)
+    parser.add_argument("--do_forecast", default=None)
+    parser.add_argument("--do_eda", default=None)
+
+    parser.add_argument("--history_size", type=int, default=None)
+    parser.add_argument("--predict_horizon", type=int, default=None)
+    parser.add_argument("--backtest_initial_train_size", type=int, default=None)
+    parser.add_argument("--backtest_horizon", type=int, default=None)
+    parser.add_argument("--backtest_step", type=int, default=None)
+
+    parser.add_argument("--enable_datetime_features", default=None)
     parser.add_argument("--lags", type=str, default=None)
-    parser.add_argument("--enable-datetime-features", default=None)
     parser.add_argument("--scale", default=None)
-    parser.add_argument("--scaler-type", type=str, default=None)
+    parser.add_argument("--scaler_type", type=str, default=None)
 
-    parser.add_argument("--denoise-enabled", default=None)
-    parser.add_argument("--denoise-window", type=int, default=None)
-    parser.add_argument("--detrend-method", type=str, default=None)
+    parser.add_argument("--denoise_enabled", default=None)
+    parser.add_argument("--denoise_window", type=int, default=None)
+    parser.add_argument("--detrend_method", type=str, default=None)
 
-    parser.add_argument("--checkpoints-dir", type=str, default=None)
-    parser.add_argument("--train-results-dir", type=str, default=None)
-    parser.add_argument("--test-results-dir", type=str, default=None)
-    parser.add_argument("--pred-results-dir", type=str, default=None)
-    parser.add_argument("--eda-output-dir", type=str, default=None)
-
-    parser.add_argument("--do-train", default=None)
-    parser.add_argument("--do-test", default=None)
-    parser.add_argument("--do-forecast", default=None)
-    parser.add_argument("--do-eda", default=None)
+    parser.add_argument("--checkpoints_dir", type=str, default=None)
+    parser.add_argument("--train_results_dir", type=str, default=None)
+    parser.add_argument("--test_results_dir", type=str, default=None)
+    parser.add_argument("--pred_results_dir", type=str, default=None)
+    parser.add_argument("--eda_output_dir", type=str, default=None)
     args = parser.parse_args()
     # ------------------------------
     # 默认参数
