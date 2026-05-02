@@ -6,11 +6,10 @@ import json
 from dataclasses import asdict
 from typing import Any
 
-from runtime_env import ensure_mpl_config_dir
+from utils.runtime_env import ensure_mpl_config_dir
 ensure_mpl_config_dir()
-
-from app import ModelApp
 from config import AppConfig
+from app import ModelApp
 from utils.random_seed import set_seed
 
 

@@ -1,4 +1,4 @@
-from runtime_env import ensure_mpl_config_dir
+from utils.runtime_env import ensure_mpl_config_dir
 
 ensure_mpl_config_dir()
 

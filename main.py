@@ -1,9 +1,7 @@
 ﻿from __future__ import annotations
 
-from runtime_env import ensure_mpl_config_dir
-
+from utils.runtime_env import ensure_mpl_config_dir
 ensure_mpl_config_dir()
-
 from config import AppConfig
 from app import ModelApp
 
