@@ -16,7 +16,7 @@ class TBATSModel(FallbackMixin, BaseStatModel):
         self._result = None
         self._fallback = ETSModel(seasonal="add", seasonal_periods=7)
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "TBATSModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "TBATSModel":
         series = to_univariate_series(y).astype(float)
         self._fallback.fit(series)
         try:
@@ -32,7 +32,7 @@ class TBATSModel(FallbackMixin, BaseStatModel):
             )
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
         if self._result is None:
             return self._fallback_predict(horizon)
@@ -46,7 +46,7 @@ class ProphetModel(FallbackMixin, BaseStatModel):
         self._last_ds = None
         self._fallback = TrendFallbackModel()
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "ProphetModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "ProphetModel":
         series = to_univariate_series(y).astype(float)
         self._fallback.fit(series)
         try:
@@ -69,7 +69,7 @@ class ProphetModel(FallbackMixin, BaseStatModel):
             )
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
         if self._model is None or self._last_ds is None:
             return self._fallback_predict(horizon)
@@ -92,7 +92,7 @@ class BayesianTMTModel(FallbackMixin, TrendFallbackModel):
         self._history: list[float] = []
         self._fallback = TrendFallbackModel()
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "BayesianTMTModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "BayesianTMTModel":
         series = to_univariate_series(y).astype(float)
         self._history = series.tolist()
         self._fallback.fit(series)
@@ -123,7 +123,7 @@ class BayesianTMTModel(FallbackMixin, TrendFallbackModel):
             )
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
         if self._model is None:
             return self._fallback_predict(horizon)
@@ -142,6 +142,9 @@ class BayesianTMTModel(FallbackMixin, TrendFallbackModel):
 
 
 class RARModel(TrendFallbackModel):
+    """
+    残差自回归模型(RAR)
+    """
     def __init__(self, alpha: float = 0.2):
         if not 0 < alpha <= 1:
             raise ValueError("alpha must be in (0, 1]")
@@ -150,7 +153,7 @@ class RARModel(TrendFallbackModel):
         self._resid_result = None
         self._last_index = 0
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "RARModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "RARModel":
         series = to_univariate_series(y).astype(float)
         super().fit(series)
         self._last_index = len(series) - 1
@@ -177,7 +180,7 @@ class RARModel(TrendFallbackModel):
             )
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
         x_future = np.arange(self._last_index + 1, self._last_index + 1 + horizon, dtype=float)
         baseline = self._coef * x_future + self._intercept

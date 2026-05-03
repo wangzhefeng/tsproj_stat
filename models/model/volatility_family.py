@@ -12,11 +12,14 @@ from .fallbacks import (
 
 
 class ARCHModel(FallbackMixin, BaseStatModel):
+    """
+    自回归条件异方差模型
+    """
     def __init__(self):
         self._result = None
         self._fallback = NaiveModel()
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "ARCHModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "ARCHModel":
         series = to_univariate_series(y).astype(float)
         self._fallback.fit(series)
         try:
@@ -32,7 +35,7 @@ class ARCHModel(FallbackMixin, BaseStatModel):
             )
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
         if self._result is None:
             return self._fallback_predict(horizon)
@@ -42,11 +45,14 @@ class ARCHModel(FallbackMixin, BaseStatModel):
 
 
 class GARCHModel(FallbackMixin, BaseStatModel):
+    """
+    广义自回归条件异方差模型(GARCH)
+    """
     def __init__(self):
         self._result = None
         self._fallback = NaiveModel()
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "GARCHModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "GARCHModel":
         series = to_univariate_series(y).astype(float)
         self._fallback.fit(series)
         try:
@@ -62,7 +68,7 @@ class GARCHModel(FallbackMixin, BaseStatModel):
             )
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
         if self._result is None:
             return self._fallback_predict(horizon)

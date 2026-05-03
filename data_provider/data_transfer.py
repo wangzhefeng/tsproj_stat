@@ -21,3 +21,26 @@ def to_dataframe(y: pd.Series | pd.DataFrame) -> pd.DataFrame:
         return y.reset_index(drop=True)
     column = y.name or "y"
     return pd.DataFrame({column: y.reset_index(drop=True)})
+
+
+def combine_history_frame(
+    y: pd.Series | pd.DataFrame,
+    X_hist: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    if X_hist is None:
+        return to_dataframe(y).astype(float)
+
+    frame = X_hist.reset_index(drop=True).copy()
+    target = to_univariate_series(y).astype(float).reset_index(drop=True)
+    target_name = target.name or (frame.columns[0] if len(frame.columns) else "y")
+
+    if len(frame) != len(target):
+        raise ValueError("X_hist must have the same number of rows as y")
+
+    if target_name in frame.columns:
+        frame[target_name] = target.values
+    else:
+        frame.insert(0, target_name, target.values)
+
+    ordered = [target_name, *[col for col in frame.columns if col != target_name]]
+    return frame[ordered].astype(float)

@@ -44,6 +44,10 @@ class PrepareResult:
     df: pd.DataFrame
     history_df: pd.DataFrame
     history_y: pd.Series
+    history_endog_df: pd.DataFrame
+    history_exog_df: pd.DataFrame | None
+    history_model_input_df: pd.DataFrame
+    future_exog_df: pd.DataFrame | None
     history_time: pd.Series
     processor: DataProcessor
     metadata: dict[str, str] = field(default_factory=dict)
@@ -66,7 +70,24 @@ class ModelApp:
             time_col=self.cfg.time_col,
             target_col=self.cfg.target_col,
             freq=self.cfg.freq,
+            value_cols=self.model_value_cols,
+            future_exog_path=self.cfg.future_exog_path,
+            future_exog_time_col=self.cfg.future_exog_time_col,
         )
+
+    @property
+    def effective_endog_cols(self) -> list[str]:
+        cols = self.cfg.endog_cols or [self.cfg.target_col]
+        ordered = [self.cfg.target_col, *[col for col in cols if col != self.cfg.target_col]]
+        return ordered
+
+    @property
+    def model_value_cols(self) -> list[str]:
+        cols = []
+        for col in [*self.effective_endog_cols, *self.cfg.hist_exog_cols]:
+            if col not in cols:
+                cols.append(col)
+        return cols
 
     def run(self) -> dict[str, str]:
         # ------------------------------
@@ -182,6 +203,11 @@ class ModelApp:
             horizon=self.cfg.predict_horizon,
         )
         history_y = history_df[self.cfg.target_col].astype(float).reset_index(drop=True)
+        history_endog_df = history_df[self.effective_endog_cols].astype(float).reset_index(drop=True)
+        history_exog_df = None
+        if self.cfg.hist_exog_cols:
+            history_exog_df = history_df[self.cfg.hist_exog_cols].astype(float).reset_index(drop=True)
+        history_model_input_df = history_df[self.model_value_cols].astype(float).reset_index(drop=True)
         history_time = pd.to_datetime(history_df[self.cfg.time_col]).reset_index(drop=True)
         logger.info(f"After data split history_df:\n {history_df}")
         logger.info(f"After data split history_y:\n {history_y}")
@@ -192,14 +218,29 @@ class ModelApp:
             scaler = FeatureScaler(self.cfg.scaler_type)
             scaled = scaler.fit_transform(pd.DataFrame({self.cfg.target_col: history_y}))
             history_y = scaled[self.cfg.target_col].reset_index(drop=True)
+            history_endog_df[self.cfg.target_col] = history_y.values
+            history_model_input_df[self.cfg.target_col] = history_y.values
             metadata["history_scaled"] = "true"
             metadata["history_scaler_type"] = self.cfg.scaler_type
             logger.info(f"After scale history_y:\n {history_y}")
+
+        future_exog_df = None
+        if self.cfg.future_exog_path is not None:
+            future_exog_raw = self.loader.load_future_exog(
+                future_exog_cols=self.cfg.future_exog_cols,
+                horizon=self.cfg.predict_horizon,
+            )
+            future_exog_df = future_exog_raw[self.cfg.future_exog_cols].astype(float).reset_index(drop=True)
+            metadata["future_exog_rows"] = str(len(future_exog_df))
 
         return PrepareResult(
             df=local_df,
             history_df=history_df.reset_index(drop=True),
             history_y=history_y,
+            history_endog_df=history_endog_df,
+            history_exog_df=history_exog_df,
+            history_model_input_df=history_model_input_df,
+            future_exog_df=future_exog_df,
             history_time=history_time,
             processor=processor,
             metadata=metadata,
@@ -249,7 +290,11 @@ class ModelApp:
             return {}
         # model training
         trainer = Trainer(self.cfg.model_name, self.cfg.model_params)
-        model = trainer.train(prepared.history_y)
+        model = trainer.train(
+            prepared.history_y,
+            X_hist=prepared.history_model_input_df,
+            X_future=prepared.future_exog_df,
+        )
         # model saving
         model_path = self.artifacts.checkpoints_dir / "model.pkl"
         save_model(model, str(model_path))
@@ -273,6 +318,9 @@ class ModelApp:
             "pred_method": self.cfg.pred_method,
             "time_col": self.cfg.time_col,
             "target_col": self.cfg.target_col,
+            "endog_cols": self.effective_endog_cols,
+            "hist_exog_cols": self.cfg.hist_exog_cols,
+            "future_exog_cols": self.cfg.future_exog_cols,
             "train_size": int(len(prepared.history_y)),
             "history_size": int(self.cfg.history_size),
             "predict_horizon": int(self.cfg.predict_horizon),
@@ -307,13 +355,16 @@ class ModelApp:
             model_params=self.cfg.model_params,
             target_col=self.cfg.target_col,
             time_col=self.cfg.time_col,
+            endog_cols=self.effective_endog_cols,
+            hist_exog_cols=self.cfg.hist_exog_cols,
+            future_exog_cols=self.cfg.future_exog_cols,
             initial_train_size=self.cfg.backtest_initial_train_size,
             horizon=self.cfg.backtest_horizon,
             step=self.cfg.backtest_step,
             verbose=self.cfg.backtest_verbose,
             progress_every=self.cfg.backtest_progress_every,
         )
-        result = tester.evaluate(df[[self.cfg.time_col, self.cfg.target_col]])
+        result = tester.evaluate(df[[self.cfg.time_col, *self.model_value_cols]].copy())
         # model testing saving
         metrics_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics.csv", result.metrics_df)
         predictions_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_predictions.csv", result.predictions_df)
@@ -368,7 +419,12 @@ class ModelApp:
             model_params=self.cfg.model_params,
             pred_method=self.cfg.pred_method,
         )
-        pred = forecaster.forecast(history=prepared.history_y, horizon=self.cfg.predict_horizon)
+        pred = forecaster.forecast(
+            history=prepared.history_y,
+            horizon=self.cfg.predict_horizon,
+            X_hist=prepared.history_model_input_df,
+            X_future=prepared.future_exog_df,
+        )
         # model forecasting inverse scale
         if prepared.processor.enabled:
             pred = prepared.processor.inverse_forecast(pred)
@@ -395,6 +451,9 @@ class ModelApp:
                 "pred_method": self.cfg.pred_method,
                 "predict_horizon": int(self.cfg.predict_horizon),
                 "target_col": self.cfg.target_col,
+                "endog_cols": self.effective_endog_cols,
+                "hist_exog_cols": self.cfg.hist_exog_cols,
+                "future_exog_cols": self.cfg.future_exog_cols,
                 "time_col": self.cfg.time_col,
                 "last_history_timestamp": prepared.history_time.iloc[-1].isoformat()
                 if not prepared.history_time.empty

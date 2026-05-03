@@ -6,7 +6,22 @@ from models.factory import ModelFactory
 
 def test_factory_supported_models_create():
     factory = ModelFactory()
-    names = ["naive", "arima", "sarima", "ets", "theta", "var", "arch", "garch", "tbats", "prophet", "bayesian_tmt", "rar"]
+    names = [
+        "naive",
+        "arima",
+        "sarima",
+        "ets",
+        "theta",
+        "var",
+        "bayesian_var",
+        "linear_var",
+        "arch",
+        "garch",
+        "tbats",
+        "prophet",
+        "bayesian_tmt",
+        "rar",
+    ]
     for name in names:
         model = factory.create_model(name)
         assert model is not None

@@ -12,12 +12,17 @@
 ## 2. 开发约定
 
 - 预测策略主线：`direct` / `recursive` / `one_step`，统一通过应用层编排与 `rolling_backtest` 验证
-- 新增模型必须接入 `models/factory.py`，并实现统一 `fit / predict` 接口
-- 统计模型主实现位于 `models/statistical/` 包内，按模型家族分文件维护；新增模型不得回退到单文件堆叠
-- ARIMA 阶数搜索 helper 统一内聚在 `models/statistical/arima_family.py`；模型 registry 统一位于 `models/registry.py`
+- 新增模型必须接入 `models/factory.py`，并实现统一 `fit(y, X_hist=None, X_future=None) / predict(horizon, X_future=None)` 接口
+- 统计模型主实现位于 `models/model/` 包内，按模型家族分文件维护；新增模型不得回退到单文件堆叠
+- ARIMA 阶数搜索 helper 统一内聚在 `models/model/arima_family.py`；模型 registry 统一位于 `models/registry.py`
 - 新增 EDA 能力必须接入 `eda/pipeline.py`，并输出结构化结果与可追踪产物路径
 - 趋势去除、去噪、逆变换等可逆预处理统一放在 `data_provider/data_processor.py`
 - CLI 配置统一经由 `config/AppConfig` 与 `run.py` 参数覆盖，不允许平行新增另一套入口参数体系
+- 多源数据主线约定：
+  - `endog_cols` 包含 `target_col` 在内的内生变量列
+  - `hist_exog_cols` 表示历史外生变量列
+  - `future_exog_path` / `future_exog_time_col` / `future_exog_cols` 用于独立未来外生数据
+  - 主线 artifact 仍保持单目标 `target_col -> yhat`
 - 结果目录主约定固定为 `saved_results/checkpoints / results_train / results_test / results_forecast / results_eda`
 - 训练、测试、预测、EDA 结果统一按 `setting={model_name}-{data_name}-{pred_method}` 分组保存；EDA 归属到 `results_eda/{setting}`
 - 新增输出文件时，必须明确归属到上述结果目录命名空间，避免散落输出；测试可使用临时绝对路径
@@ -33,6 +38,7 @@
 - CLI 烟雾验证基线：
   - `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5`
   - `UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false`
+  - `UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --hist_exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4`
 - 若环境未满足上述命令，先修复环境，再继续功能开发；不要跳过验证直接宣称完成
 
 ## 4. 文档同步
@@ -50,18 +56,20 @@
 - 接口行为变更必须补最小必要测试
 - 发现环境、编码、路径、平台兼容问题时，优先修根因，不做静默绕过
 
-## 6. 当前状态（2026-05-02）
+## 6. 当前状态（2026-05-04）
 
 - 主线入口已统一为 `run.py`，CLI 参数名与 `AppConfig` 字段保持一致，如 `--model_name`、`--predict_horizon`、`--do_eda`
 - 运行时 warning 初始化已统一到 `app/runtime.py`，CLI 与最小入口共用
-- `models/statistical.py` 已重构为 `models/statistical/` 包结构，fallback 和公共 helper 已独立；registry 已上移到 `models/registry.py`
+- 统计模型当前按 `models/model/` 家族模块维护，fallback 和公共 helper 已独立；registry 位于 `models/registry.py`
 - EDA 子系统已并入主流程，入口为 `eda/pipeline.py`，产出结构化摘要、诊断表与图表路径
 - 数据预处理已集中到 `data_provider/data_processor.py`，支持去噪、去趋势与预测逆变换
-- `DataLoader` 已将 demo 数据加载从真实 CSV 读取逻辑中拆分
+- `DataLoader` 已支持多源输入：历史内生/外生列保留、独立未来外生文件加载与最小校验
 - `BayesianTMT` / `RAR` 已完成非占位实现，并纳入测试覆盖
+- `BayesianVAR` / `LinearVAR` 已从 `models/models_todo` 抽取核心实现并接入主线模型 registry
 - 分析特征快照输出已更名为 `analysis_feature_snapshot.csv`，以避免与预测主链路混淆
 - 训练、测试、预测、EDA 结果已统一迁移到 `saved_results/` 五类一级目录下，并按 `setting` 自动分组；`eda_output_dir` 真实控制 EDA 落盘根目录
 - 回测结果已扩展为窗口级明细、汇总指标和图形产物；预测阶段已补充 `forecast.csv` 与预测可视化图
+- 主线当前仍只输出单目标 `yhat`，但 `train/test/forecast` 已可向模型透传 `X_hist` / `X_future`
 - `run_auto_arima.sh` 与 `run_sarima.sh` 当前默认采用偏快的日常脚本参数集，并支持终端回测进度输出
 
 ## 7. 当前已知问题

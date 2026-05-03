@@ -52,6 +52,12 @@ def _parse_model_params(value: str | None) -> dict:
     return parsed
 
 
+def _parse_csv_list(value: str | None) -> list[str]:
+    if value is None:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def _load_default_config(config_module: str, config_class: str):
     # config.default.py
     module = importlib.import_module(config_module)
@@ -67,69 +73,79 @@ def _load_default_config(config_module: str, config_class: str):
 
 
 def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
-    if args.project_name is not None:
+    if getattr(args, "project_name", None) is not None:
         cfg.project_name = args.project_name
-    if args.seed is not None:
+    if getattr(args, "seed", None) is not None:
         cfg.seed = args.seed
-    if args.data_path is not None:
+    if getattr(args, "data_path", None) is not None:
         cfg.data_path = args.data_path
-    if args.time_col is not None:
+    if getattr(args, "time_col", None) is not None:
         cfg.time_col = args.time_col
-    if args.target_col is not None:
+    if getattr(args, "target_col", None) is not None:
         cfg.target_col = args.target_col
-    if args.freq is not None:
+    if getattr(args, "freq", None) is not None:
         cfg.freq = args.freq
-    if args.model_name is not None:
+    if getattr(args, "endog_cols", None) is not None:
+        cfg.endog_cols = _parse_csv_list(args.endog_cols)
+    if getattr(args, "hist_exog_cols", None) is not None:
+        cfg.hist_exog_cols = _parse_csv_list(args.hist_exog_cols)
+    if getattr(args, "future_exog_path", None) is not None:
+        cfg.future_exog_path = args.future_exog_path
+    if getattr(args, "future_exog_time_col", None) is not None:
+        cfg.future_exog_time_col = args.future_exog_time_col
+    if getattr(args, "future_exog_cols", None) is not None:
+        cfg.future_exog_cols = _parse_csv_list(args.future_exog_cols)
+    if getattr(args, "model_name", None) is not None:
         cfg.model_name = args.model_name
-    if args.model_params is not None:
+    if getattr(args, "model_params", None) is not None:
         cfg.model_params = _parse_model_params(args.model_params)
-    if args.pred_method is not None:
+    if getattr(args, "pred_method", None) is not None:
         cfg.pred_method = args.pred_method
-    if args.do_train is not None:
+    if getattr(args, "do_train", None) is not None:
         cfg.do_train = _parse_bool(args.do_train)
-    if args.do_test is not None:
+    if getattr(args, "do_test", None) is not None:
         cfg.do_test = _parse_bool(args.do_test)
-    if args.do_forecast is not None:
+    if getattr(args, "do_forecast", None) is not None:
         cfg.do_forecast = _parse_bool(args.do_forecast)
-    if args.do_eda is not None:
+    if getattr(args, "do_eda", None) is not None:
         cfg.do_eda = _parse_bool(args.do_eda)
-    if args.history_size is not None:
+    if getattr(args, "history_size", None) is not None:
         cfg.history_size = args.history_size
-    if args.predict_horizon is not None:
+    if getattr(args, "predict_horizon", None) is not None:
         cfg.predict_horizon = args.predict_horizon
-    if args.backtest_initial_train_size is not None:
+    if getattr(args, "backtest_initial_train_size", None) is not None:
         cfg.backtest_initial_train_size = args.backtest_initial_train_size
-    if args.backtest_horizon is not None:
+    if getattr(args, "backtest_horizon", None) is not None:
         cfg.backtest_horizon = args.backtest_horizon
-    if args.backtest_step is not None:
+    if getattr(args, "backtest_step", None) is not None:
         cfg.backtest_step = args.backtest_step
-    if args.backtest_verbose is not None:
+    if getattr(args, "backtest_verbose", None) is not None:
         cfg.backtest_verbose = _parse_bool(args.backtest_verbose)
-    if args.backtest_progress_every is not None:
+    if getattr(args, "backtest_progress_every", None) is not None:
         cfg.backtest_progress_every = args.backtest_progress_every
-    if args.enable_datetime_features is not None:
+    if getattr(args, "enable_datetime_features", None) is not None:
         cfg.enable_datetime_features = _parse_bool(args.enable_datetime_features)
-    if args.lags is not None:
+    if getattr(args, "lags", None) is not None:
         cfg.lags = [int(v.strip()) for v in args.lags.split(",") if v.strip()]
-    if args.scale is not None:
+    if getattr(args, "scale", None) is not None:
         cfg.scale = _parse_bool(args.scale)
-    if args.scaler_type is not None:
+    if getattr(args, "scaler_type", None) is not None:
         cfg.scaler_type = args.scaler_type
-    if args.denoise_enabled is not None:
+    if getattr(args, "denoise_enabled", None) is not None:
         cfg.denoise_enabled = _parse_bool(args.denoise_enabled)
-    if args.denoise_window is not None:
+    if getattr(args, "denoise_window", None) is not None:
         cfg.denoise_window = args.denoise_window
-    if args.detrend_method is not None:
+    if getattr(args, "detrend_method", None) is not None:
         cfg.detrend_method = args.detrend_method
-    if args.checkpoints_dir is not None:
+    if getattr(args, "checkpoints_dir", None) is not None:
         cfg.checkpoints_dir = args.checkpoints_dir
-    if args.train_results_dir is not None:
+    if getattr(args, "train_results_dir", None) is not None:
         cfg.train_results_dir = args.train_results_dir
-    if args.test_results_dir is not None:
+    if getattr(args, "test_results_dir", None) is not None:
         cfg.test_results_dir = args.test_results_dir
-    if args.forecast_result_dir is not None:
+    if getattr(args, "forecast_result_dir", None) is not None:
         cfg.forecast_result_dir = args.forecast_result_dir
-    if args.eda_output_dir is not None:
+    if getattr(args, "eda_output_dir", None) is not None:
         cfg.eda_output_dir = args.eda_output_dir
     
     return cfg
@@ -150,6 +166,11 @@ def parse_args() -> AppConfig:
     parser.add_argument("--time_col", type=str, default=None)
     parser.add_argument("--target_col", type=str, default=None)
     parser.add_argument("--freq", type=str, default=None)
+    parser.add_argument("--endog_cols", type=str, default=None)
+    parser.add_argument("--hist_exog_cols", type=str, default=None)
+    parser.add_argument("--future_exog_path", type=str, default=None)
+    parser.add_argument("--future_exog_time_col", type=str, default=None)
+    parser.add_argument("--future_exog_cols", type=str, default=None)
 
     parser.add_argument("--model_name", type=str, default=None)
     parser.add_argument("--model_params", type=str, default=None)

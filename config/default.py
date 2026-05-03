@@ -22,6 +22,11 @@ class AppConfig:
     time_col: str = "ds"
     target_col: str = "y"
     freq: str = "D"
+    endog_cols: list[str] = field(default_factory=list)
+    hist_exog_cols: list[str] = field(default_factory=list)
+    future_exog_path: str | None = None
+    future_exog_time_col: str | None = None
+    future_exog_cols: list[str] = field(default_factory=list)
 
     model_name: str = "arima"
     model_params: dict = field(default_factory=dict)
@@ -73,6 +78,12 @@ class AppConfig:
 
         if self.detrend_method not in {"none", "linear", "moving_average"}:
             raise ValueError("detrend_method must be one of {'none', 'linear', 'moving_average'}")
+
+        if self.future_exog_path is None and self.future_exog_cols:
+            raise ValueError("future_exog_cols requires future_exog_path")
+
+        if self.future_exog_path is not None and self.future_exog_cols and self.future_exog_time_col is None:
+            raise ValueError("future_exog_time_col is required when future_exog_path and future_exog_cols are set")
 
         for output_dir in (self.checkpoints_dir, self.train_results_dir, self.test_results_dir, self.forecast_result_dir, self.eda_output_dir):
             if not _is_allowed_output_dir(output_dir):

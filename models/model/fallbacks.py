@@ -29,14 +29,14 @@ class NaiveModel(BaseStatModel):
     def __init__(self):
         self.last_value: float | None = None
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "NaiveModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "NaiveModel":
         series = to_univariate_series(y)
         if len(series) == 0:
             raise ValueError("Input series is empty")
         self.last_value = float(series.iloc[-1])
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         if self.last_value is None:
             raise RuntimeError("Model is not fitted")
         validate_horizon(horizon)
@@ -49,7 +49,7 @@ class TrendFallbackModel(BaseStatModel):
         self._intercept = 0.0
         self._last_index = 0
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "TrendFallbackModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "TrendFallbackModel":
         series = to_univariate_series(y).astype(float)
         x = np.arange(len(series), dtype=float)
         if len(series) < 2:
@@ -60,7 +60,7 @@ class TrendFallbackModel(BaseStatModel):
         self._last_index = len(series) - 1
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
         x_future = np.arange(self._last_index + 1, self._last_index + 1 + horizon, dtype=float)
         y_future = self._coef * x_future + self._intercept

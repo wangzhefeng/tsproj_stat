@@ -22,6 +22,9 @@ def rolling_backtest(
     model,
     target_col: str = "y",
     time_col: str | None = None,
+    endog_cols: list[str] | None = None,
+    hist_exog_cols: list[str] | None = None,
+    future_exog_cols: list[str] | None = None,
     initial_train_size: int = 30,
     horizon: int = 7,
     step: int = 7,
@@ -33,6 +36,14 @@ def rolling_backtest(
         raise ValueError("Not enough data for backtest")
     if progress_every <= 0:
         raise ValueError("progress_every must be > 0")
+    endog_cols = endog_cols or [target_col]
+    hist_exog_cols = hist_exog_cols or []
+    future_exog_cols = future_exog_cols or []
+    feature_cols = []
+    for col in [*endog_cols, *hist_exog_cols]:
+        if col != target_col and col not in feature_cols:
+            feature_cols.append(col)
+    future_cols = [col for col in future_exog_cols if col in df.columns]
 
     metric_rows: list[dict[str, float | int]] = []
     prediction_rows: list[dict[str, object]] = []
@@ -45,10 +56,19 @@ def rolling_backtest(
         window_id += 1
         window_started_at = time.perf_counter()
         train_y = df[target_col].iloc[:start]
+        train_feature_cols = [target_col, *feature_cols]
+        train_x_hist = None
+        if any(col in df.columns for col in train_feature_cols):
+            available_cols = [col for col in train_feature_cols if col in df.columns]
+            if len(available_cols) > 1:
+                train_x_hist = df[available_cols].iloc[:start].reset_index(drop=True)
         test_slice = df.iloc[start : start + horizon].reset_index(drop=True)
         test_y = test_slice[target_col].astype(float)
-        model.fit(train_y)
-        pred = model.predict(horizon).astype(float).reset_index(drop=True)
+        test_x_future = None
+        if future_cols:
+            test_x_future = test_slice[future_cols].reset_index(drop=True)
+        model.fit(train_y, X_hist=train_x_hist, X_future=test_x_future)
+        pred = model.predict(horizon, X_future=test_x_future).astype(float).reset_index(drop=True)
         residual = test_y - pred
 
         metric_rows.append(

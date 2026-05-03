@@ -80,7 +80,7 @@ class ARIMAModel(FallbackMixin, BaseStatModel):
         self._fallback = NaiveModel()
         self._result = None
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "ARIMAModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "ARIMAModel":
         series = to_univariate_series(y).astype(float)
         self._fallback.fit(series)
         try:
@@ -116,7 +116,7 @@ class ARIMAModel(FallbackMixin, BaseStatModel):
             )
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
         if self._result is None:
             return self._fallback_predict(horizon)
@@ -153,7 +153,7 @@ class SARIMAModel(FallbackMixin, BaseStatModel):
         self._fallback = TrendFallbackModel()
         self._result = None
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "SARIMAModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "SARIMAModel":
         series = to_univariate_series(y).astype(float)
         self._fallback.fit(series)
         try:
@@ -188,7 +188,7 @@ class SARIMAModel(FallbackMixin, BaseStatModel):
             )
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
         if self._result is None:
             return self._fallback_predict(horizon)
@@ -232,7 +232,7 @@ class AutoARIMAModel(FallbackMixin, BaseStatModel):
         self._result = None
         self._fallback: ARIMAModel | None = None
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "AutoARIMAModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "AutoARIMAModel":
         series = to_univariate_series(y).astype(float)
         self._result = None
         try:
@@ -266,7 +266,7 @@ class AutoARIMAModel(FallbackMixin, BaseStatModel):
             )
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
         if self._result is None:
             if self._fallback is None:

@@ -17,7 +17,7 @@ class ETSModel(FallbackMixin, BaseStatModel):
         self._fallback = TrendFallbackModel()
         self._result = None
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "ETSModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "ETSModel":
         series = to_univariate_series(y).astype(float)
         self._fallback.fit(series)
         try:
@@ -38,7 +38,7 @@ class ETSModel(FallbackMixin, BaseStatModel):
             )
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
         if self._result is None:
             return self._fallback_predict(horizon)
@@ -52,7 +52,7 @@ class ThetaModel(FallbackMixin, BaseStatModel):
         self._fallback = TrendFallbackModel()
         self._result = None
 
-    def fit(self, y: pd.Series | pd.DataFrame) -> "ThetaModel":
+    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "ThetaModel":
         series = to_univariate_series(y).astype(float)
         self._fallback.fit(series)
         try:
@@ -68,7 +68,7 @@ class ThetaModel(FallbackMixin, BaseStatModel):
             )
         return self
 
-    def predict(self, horizon: int) -> pd.Series:
+    def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
         if self._result is None:
             return self._fallback_predict(horizon)

@@ -169,6 +169,18 @@
 - 原因：`run_sarima.sh` 原参数会触发 `887` 个 expanding-window 回测窗口，且默认无进度日志；实际耗时集中在 `statsmodels.SARIMAX.fit()`，需要同时提升可观测性并收紧拟合成本
 - 影响范围：`models/model/arima_family.py`、`tests/test_arima_auto_order.py`、`scripts/wind_univariate/run_sarima.sh`、README、AGENTS
 
+### 2026-05-04 / Step 26
+
+- 升级主线模型接口为 `fit(y, X_hist=None, X_future=None) / predict(horizon, X_future=None)`，并打通多源时序输入主线
+- 原因：当前 app 只支持单列 `target_col`，无法承接多变量内生、历史外生和独立未来外生输入，也无法把 `models/models_todo` 中有价值的多变量模型吸收到主线
+- 影响范围：`config/default.py`、`run.py`、`data_provider/`、`app/training.py`、`app/testing.py`、`app/forecasting.py`、`app/pipeline.py`、`evaluation/backtest.py`、README、AGENTS
+
+### 2026-05-04 / Step 27
+
+- 将 `BayesianVAR` / `LinearVAR` 从 `models/models_todo/var_models/` 抽取核心算法并重写接入 `models/model/multivariate.py`
+- 原因：原 registry 中 `bayesian_var` / `linear_var` 只是 `VARModel` 空壳别名，不具备独立行为；旧脚本实现有价值但不符合当前仓库接口与质量基线
+- 影响范围：`models/model/multivariate.py`、`tests/test_factory.py`、新增多源模型与 pipeline 测试
+
 ## 待办任务
 
 | ID | 任务 | 优先级 | 完成条件 |
@@ -220,6 +232,8 @@
 | `bash scripts/wind_univariate/run_naive.sh` | 通过 | 新脚本模板可运行，完整 `AppConfig` 参数显式透传，所有结果统一落到 `saved_results/.../{setting}/` |
 | `UV_CACHE_DIR=.uv_cache uv run pytest tests/test_arima_auto_order.py tests/test_backtest_smoke.py tests/test_cli_overrides.py -q` | 通过 | `AutoARIMAModel` 惰性 fallback、参数透传与 backtest 进度日志回归通过 |
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q tests/test_arima_auto_order.py -k sarima_forwards_model_params` | 通过 | `SARIMAModel` 新增拟合参数与 `fit_kwargs` 透传回归通过 |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `64 passed`；多源输入、`bayesian_var`、`linear_var` 接入后全量回归通过 |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /private/tmp/tsproj_multisource_smoke/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --hist_exog_cols temp --future_exog_path /private/tmp/tsproj_multisource_smoke/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --do_eda false --history_size 12 --predict_horizon 4 --backtest_initial_train_size 12 --backtest_horizon 4 --backtest_step 4` | 通过 | 多源 CLI smoke 可运行，结果落盘到 `saved_results/.../linear_var-history-direct/` |
 
 ## 备注
 

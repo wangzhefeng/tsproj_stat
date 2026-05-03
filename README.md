@@ -8,7 +8,7 @@
 .
 |- app/                # 应用编排层（pipeline/training/testing/forecasting）
 |- config/             # dataclass 配置
-|- models/             # 统计模型抽象、工厂与实现（`models/statistical/` 为分族包结构）
+|- models/             # 统计模型抽象、工厂与实现（`models/model/` 为分族包结构）
 |- evaluation/         # 指标与滚动回测
 |- data_provider/      # 数据加载、示例数据与预处理
 |- features/           # 分析特征快照与后续扩展预留层
@@ -60,6 +60,24 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_
 UV_CACHE_DIR=.uv_cache uv run python run.py --denoise_enabled true --denoise_window 5 --detrend_method linear
 ```
 
+多源输入预测（历史内生 + 历史外生 + 独立未来外生）：
+
+```bash
+UV_CACHE_DIR=.uv_cache uv run python run.py \
+  --data_path /abs/path/history.csv \
+  --time_col ds \
+  --target_col y \
+  --model_name linear_var \
+  --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' \
+  --endog_cols y,load \
+  --hist_exog_cols temp \
+  --future_exog_path /abs/path/future_exog.csv \
+  --future_exog_time_col ds \
+  --future_exog_cols temp \
+  --do_train true --do_test true --do_forecast true \
+  --history_size 12 --predict_horizon 4
+```
+
 ## 输出目录
 
 当前结果统一按 `setting = {model_name}-{data_name}-{pred_method}` 落盘，例如 `arima-wind_dataset-direct`。
@@ -85,15 +103,20 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --denoise_enabled true --denoise_win
 
 ## 当前主线说明
 
-- 统计预测主线当前仍是单变量序列建模，统一通过 `fit / predict` 接口接入。
-- 统计模型实现已从单文件 `models/statistical.py` 重构为 `models/statistical/` 包，按 ARIMA、指数平滑、多变量、波动率和扩展模型分组维护。
-- ARIMA 选型 helper 已并入 `models/statistical/arima_family.py`；模型 registry 当前位于 `models/registry.py`，由 `models.statistical` 做兼容导出。
+- 统计预测主线统一通过 `fit(y, X_hist=None, X_future=None) / predict(horizon, X_future=None)` 接口接入。
+- 当前主线默认仍输出单目标 `target_col -> yhat`，但已支持多源输入：
+  - 内生变量：`endog_cols`
+  - 历史外生变量：`hist_exog_cols`
+  - 独立未来外生文件：`future_exog_path` + `future_exog_cols`
+- 统计模型实现按 `models/model/` 家族模块维护，包含 ARIMA、指数平滑、多变量、波动率和扩展模型。
+- ARIMA 选型 helper 位于 `models/model/arima_family.py`；模型 registry 位于 `models/registry.py`。
 - `features/` 当前只用于生成分析型特征快照，不参与模型训练或预测主链路。
 - 训练、测试、预测和 EDA 结果现统一落到 `saved_results/checkpoints / results_train / results_test / results_forecast / results_eda`，并按 `setting` 自动分组。
 - 测试阶段当前会额外输出窗口级明细、汇总指标和三类图：预测对比图、残差图、误差分布图。
 - 无 `data_path` 时会加载内置 demo 序列，用于 smoke/test 场景；真实数据读取仍统一走 `data_provider/data_loader.py`。
-- 通用时序清洗已统一收敛到 `data_provider.prepare_standard_frame()`：主流程消费标准化两列 `DataFrame`，EDA 再在其上做 `Series` 视图转换、`asfreq(freq)` 补频和最小样本校验。
+- 通用时序清洗已统一收敛到 `data_provider.prepare_standard_frame()`：默认保留 `time_col/target_col`；配置多源列后会额外保留并数值化这些输入列。
 - `dataset/wind_dataset.csv` 的单变量脚本已落在 `scripts/wind_univariate/`，当前约定 `DATE` 为时间列、`WIND` 为目标列。
+- `var / bayesian_var / linear_var` 已接入主线；其中 `bayesian_var / linear_var` 当前标记为实验性多变量模型。
 
 ## 数据集脚本
 
@@ -105,7 +128,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --denoise_enabled true --denoise_win
 - 脚本运行后会自动把结果写到 `saved_results/checkpoints|results_train|results_test|results_forecast|results_eda/{setting}/`
 - `run_auto_arima.sh` 当前定位为偏快的日常脚本：默认缩短 `history_size`、增大 `backtest_step`、收紧 `auto_arima` 搜索空间，并开启回测进度日志与 `auto_arima` trace
 - `run_sarima.sh` 当前也定位为偏快的日常脚本：默认缩短 `history_size`、增大 `backtest_step`、开启回测进度日志，并通过 `model_params.fit_kwargs.maxiter` 等参数收紧 `SARIMAX` 拟合成本
-- 当前单变量脚本覆盖所有 `supports_multivariate=False` 的模型；`var / bayesian_var / linear_var` 暂未纳入。
+- 当前 `scripts/wind_univariate/` 只覆盖单变量脚本；多变量/多源输入模型建议直接用 CLI 运行。
 
 ## EDA 能力
 
@@ -142,4 +165,5 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --denoise_enabled true --denoise_win
 UV_CACHE_DIR=.uv_cache uv run pytest -q
 UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5
 UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false
+UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --hist_exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4
 ```
