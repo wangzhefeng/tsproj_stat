@@ -20,7 +20,7 @@ python -u run.py \
   --do_train true \
   --do_test true \
   --do_forecast true \
-  --do_eda false \
+  --do_eda true \
   --history_size 365 \
   --predict_horizon 7 \
   --backtest_initial_train_size 365 \
@@ -36,5 +36,5 @@ python -u run.py \
   --checkpoints_dir saved_results/checkpoints \
   --train_results_dir saved_results/results_train \
   --test_results_dir saved_results/results_test \
-  --pred_results_dir saved_results/results_forecast \
+  --forecast_result_dir saved_results/results_forecast \
   --eda_output_dir saved_results/results_eda

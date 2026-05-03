@@ -44,7 +44,7 @@ def test_cli_override_eda_fields():
         checkpoints_dir=None,
         train_results_dir=None,
         test_results_dir=None,
-        pred_results_dir=None,
+        forecast_result_dir=None,
         eda_output_dir="saved_results/custom_eda",
     )
 
@@ -100,7 +100,7 @@ def test_cli_override_extended_app_config_fields():
         checkpoints_dir="saved_results/custom_ckpt",
         train_results_dir="saved_results/custom_train",
         test_results_dir="saved_results/custom_test",
-        pred_results_dir="saved_results/custom_pred",
+        forecast_result_dir="saved_results/custom_pred",
         eda_output_dir="saved_results/custom_eda",
     )
 
@@ -136,7 +136,7 @@ def test_cli_override_extended_app_config_fields():
     assert updated.checkpoints_dir == "saved_results/custom_ckpt"
     assert updated.train_results_dir == "saved_results/custom_train"
     assert updated.test_results_dir == "saved_results/custom_test"
-    assert updated.pred_results_dir == "saved_results/custom_pred"
+    assert updated.forecast_result_dir == "saved_results/custom_pred"
     assert updated.eda_output_dir == "saved_results/custom_eda"
 
 

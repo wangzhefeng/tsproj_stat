@@ -17,14 +17,19 @@ def run_eda(
     nlags: int = 24,
     save_plots: bool = True,
 ) -> dict[str, str]:
+    # prepare
     series = prepare_series(df, time_col=time_col, target_col=target_col, freq=freq)
+    # diagnostics
     summary, diagnostics = run_diagnostics(series, period=period, nlags=nlags)
-    return save_eda_outputs(
-        series,
-        summary,
-        diagnostics,
-        output_dir=output_dir,
-        save_plots=save_plots,
+    # result
+    result = save_eda_outputs(
+        series=series,
+        summary=summary,
+        diagnostics=diagnostics,
         period=period,
         acf_nlags=nlags,
+        output_dir=output_dir,
+        save_plots=save_plots,
     )
+
+    return result

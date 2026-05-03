@@ -1,16 +1,16 @@
 ﻿from __future__ import annotations
 
+import json
 import argparse
 import importlib
-import json
-from dataclasses import asdict
 from typing import Any
 
+from config import AppConfig, ensure_output_dirs
+from utils.random_seed import set_seed
+from app import ModelApp
+from utils.log_util import logger
 from utils.runtime_env import ensure_mpl_config_dir
 ensure_mpl_config_dir()
-from config import AppConfig
-from app import ModelApp
-from utils.random_seed import set_seed
 
 
 def _parse_bool(value: Any) -> bool:
@@ -127,10 +127,11 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.train_results_dir = args.train_results_dir
     if args.test_results_dir is not None:
         cfg.test_results_dir = args.test_results_dir
-    if args.pred_results_dir is not None:
-        cfg.pred_results_dir = args.pred_results_dir
+    if args.forecast_result_dir is not None:
+        cfg.forecast_result_dir = args.forecast_result_dir
     if args.eda_output_dir is not None:
         cfg.eda_output_dir = args.eda_output_dir
+    
     return cfg
 
 
@@ -144,10 +145,12 @@ def parse_args() -> AppConfig:
 
     parser.add_argument("--project_name", type=str, default=None)
     parser.add_argument("--seed", type=int, default=None)
+
     parser.add_argument("--data_path", type=str, default=None)
     parser.add_argument("--time_col", type=str, default=None)
     parser.add_argument("--target_col", type=str, default=None)
     parser.add_argument("--freq", type=str, default=None)
+
     parser.add_argument("--model_name", type=str, default=None)
     parser.add_argument("--model_params", type=str, default=None)
     parser.add_argument("--pred_method", type=str, default=None)
@@ -159,6 +162,7 @@ def parse_args() -> AppConfig:
 
     parser.add_argument("--history_size", type=int, default=None)
     parser.add_argument("--predict_horizon", type=int, default=None)
+
     parser.add_argument("--backtest_initial_train_size", type=int, default=None)
     parser.add_argument("--backtest_horizon", type=int, default=None)
     parser.add_argument("--backtest_step", type=int, default=None)
@@ -177,7 +181,7 @@ def parse_args() -> AppConfig:
     parser.add_argument("--checkpoints_dir", type=str, default=None)
     parser.add_argument("--train_results_dir", type=str, default=None)
     parser.add_argument("--test_results_dir", type=str, default=None)
-    parser.add_argument("--pred_results_dir", type=str, default=None)
+    parser.add_argument("--forecast_result_dir", type=str, default=None)
     parser.add_argument("--eda_output_dir", type=str, default=None)
     args = parser.parse_args()
     # ------------------------------
@@ -190,7 +194,8 @@ def parse_args() -> AppConfig:
     cfg = _apply_overrides(default_cfg, args)
     # 参数验证
     cfg.validate()
-    print(asdict(cfg))
+    # 创建输出目录
+    ensure_output_dirs(cfg)
     
     return cfg
 
@@ -205,8 +210,8 @@ def main() -> None:
     # Run model
     result = ModelApp(cfg).run()
     # model result
-    print("Run finished")
-    print(result)
+    logger.info("Run finished")
+    logger.info(f"Result: {result}")
 
 if __name__ == "__main__":
     main()

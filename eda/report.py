@@ -18,10 +18,10 @@ def save_eda_outputs(
     series: pd.Series,
     summary: dict,
     diagnostics: pd.DataFrame,
-    output_dir: str,
-    save_plots: bool = True,
     period: int = 7,
     acf_nlags: int = 24,
+    output_dir: str = None,
+    save_plots: bool = True, 
 ) -> dict[str, str]:
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

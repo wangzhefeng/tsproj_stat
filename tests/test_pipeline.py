@@ -13,7 +13,7 @@ def test_pipeline_end_to_end(tmp_path):
         checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
         train_results_dir=str(tmp_path / "saved_results" / "results_train"),
         test_results_dir=str(tmp_path / "saved_results" / "results_test"),
-        pred_results_dir=str(tmp_path / "saved_results" / "results_forecast"),
+        forecast_result_dir=str(tmp_path / "saved_results" / "results_forecast"),
         eda_output_dir=str(eda_root),
         do_train=True,
         do_test=True,
@@ -54,7 +54,7 @@ def test_pipeline_eda_only_mode(tmp_path):
         checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
         train_results_dir=str(tmp_path / "saved_results" / "results_train"),
         test_results_dir=str(tmp_path / "saved_results" / "results_test"),
-        pred_results_dir=str(tmp_path / "saved_results" / "results_forecast"),
+        forecast_result_dir=str(tmp_path / "saved_results" / "results_forecast"),
         eda_output_dir=str(eda_root),
     )
 
@@ -82,7 +82,7 @@ def test_pipeline_forecast_only_mode(tmp_path):
         checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
         train_results_dir=str(tmp_path / "saved_results" / "results_train"),
         test_results_dir=str(tmp_path / "saved_results" / "results_test"),
-        pred_results_dir=str(tmp_path / "saved_results" / "results_forecast"),
+        forecast_result_dir=str(tmp_path / "saved_results" / "results_forecast"),
     )
 
     result = ModelApp(cfg).run()
@@ -104,7 +104,7 @@ def test_pipeline_all_execution_flags_disabled(tmp_path):
         checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
         train_results_dir=str(tmp_path / "saved_results" / "results_train"),
         test_results_dir=str(tmp_path / "saved_results" / "results_test"),
-        pred_results_dir=str(tmp_path / "saved_results" / "results_forecast"),
+        forecast_result_dir=str(tmp_path / "saved_results" / "results_forecast"),
     )
 
     result = ModelApp(cfg).run()

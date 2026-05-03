@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from .metrics import bias, mae, mape, max_error, mse, r2, rmse, smape
+from utils.log_util import logger
 
 
 @dataclass
@@ -85,7 +86,7 @@ def rolling_backtest(
         ):
             elapsed = time.perf_counter() - window_started_at
             total_elapsed = time.perf_counter() - started_at
-            print(
+            logger.info(
                 f"[backtest] window {window_id}/{total_windows} "
                 f"train_end={start} window_seconds={elapsed:.3f} total_seconds={total_elapsed:.3f}"
             )

@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from utils.log_util import logger
+
 
 def generate_model_test_data(
     n_points: int = 240,
@@ -49,7 +51,7 @@ def save_model_test_data(output_path: str | Path, **kwargs) -> Path:
 
 def main() -> None:
     out = save_model_test_data("datasets/simulated_daily.csv")
-    print(f"saved: {out}")
+    logger.info(f"saved: {out}")
 
 
 if __name__ == "__main__":

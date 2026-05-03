@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from dataclasses import asdict, dataclass
 
 import pandas as pd
 
@@ -46,9 +46,10 @@ def prepare_run_artifacts(cfg: AppConfig) -> RunArtifacts:
         checkpoints_dir=Path(cfg.checkpoints_dir) / setting,
         train_results_dir=Path(cfg.train_results_dir) / setting,
         test_results_dir=Path(cfg.test_results_dir) / setting,
-        forecast_results_dir=Path(cfg.pred_results_dir) / setting,
+        forecast_results_dir=Path(cfg.forecast_result_dir) / setting,
         eda_dir=Path(cfg.eda_output_dir) / setting,
     )
+    # 创建特定模型、数据、预测方法结果目录
     for path in (
         artifacts.checkpoints_dir,
         artifacts.train_results_dir,

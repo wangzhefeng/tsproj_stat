@@ -36,5 +36,5 @@ python -u run.py \
   --checkpoints_dir saved_results/checkpoints \
   --train_results_dir saved_results/results_train \
   --test_results_dir saved_results/results_test \
-  --pred_results_dir saved_results/results_forecast \
+  --forecast_result_dir saved_results/results_forecast \
   --eda_output_dir saved_results/results_eda

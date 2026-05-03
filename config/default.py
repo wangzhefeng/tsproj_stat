@@ -25,8 +25,8 @@ class AppConfig:
 
     model_name: str = "arima"
     model_params: dict = field(default_factory=dict)
-
     pred_method: str = "direct"
+
     do_train: bool = True
     do_test: bool = True
     do_forecast: bool = True
@@ -54,7 +54,7 @@ class AppConfig:
     checkpoints_dir: str = "saved_results/checkpoints"
     train_results_dir: str = "saved_results/results_train"
     test_results_dir: str = "saved_results/results_test"
-    pred_results_dir: str = "saved_results/results_forecast"
+    forecast_result_dir: str = "saved_results/results_forecast"
     eda_output_dir: str = "saved_results/results_eda"
 
     def validate(self) -> None:
@@ -74,7 +74,7 @@ class AppConfig:
         if self.detrend_method not in {"none", "linear", "moving_average"}:
             raise ValueError("detrend_method must be one of {'none', 'linear', 'moving_average'}")
 
-        for output_dir in (self.checkpoints_dir, self.train_results_dir, self.test_results_dir, self.pred_results_dir, self.eda_output_dir):
+        for output_dir in (self.checkpoints_dir, self.train_results_dir, self.test_results_dir, self.forecast_result_dir, self.eda_output_dir):
             if not _is_allowed_output_dir(output_dir):
                 raise ValueError("All output directories must remain under the 'saved_results/' namespace")
 
@@ -86,5 +86,5 @@ def ensure_output_dirs(cfg: AppConfig) -> None:
     Path(cfg.checkpoints_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.train_results_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.test_results_dir).mkdir(parents=True, exist_ok=True)
-    Path(cfg.pred_results_dir).mkdir(parents=True, exist_ok=True)
+    Path(cfg.forecast_result_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.eda_output_dir).mkdir(parents=True, exist_ok=True)

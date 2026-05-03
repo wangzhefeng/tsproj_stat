@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 import json
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -7,7 +9,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from config import AppConfig, ensure_output_dirs
+from config import AppConfig
 from data_provider.data_loader import DataLoader
 from data_provider.data_processor import DataProcessor
 from features.feature_engineering import FeatureEngineer
@@ -31,6 +33,11 @@ from app.results import (
     write_json,
 )
 
+# global variable
+LOGGING_LABEL = Path(__file__).name[:-3]
+os.environ['LOG_NAME'] = LOGGING_LABEL
+from utils.log_util import logger
+
 
 @dataclass
 class PrepareResult:
@@ -52,8 +59,6 @@ class FeatureSnapshotResult:
 class ModelApp:
 
     def __init__(self, cfg: AppConfig):
-        cfg.validate()
-        ensure_output_dirs(cfg)
         self.cfg = cfg
         self.artifacts = prepare_run_artifacts(cfg)
         self.loader = DataLoader(

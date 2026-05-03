@@ -18,7 +18,7 @@ def test_app_config_validate_rejects_invalid_pred_method():
 
 
 def test_app_config_validate_rejects_invalid_output_dir_namespace():
-    cfg = AppConfig(pred_results_dir="artifacts/results_forecast")
+    cfg = AppConfig(forecast_result_dir="artifacts/results_forecast")
 
     try:
         cfg.validate()

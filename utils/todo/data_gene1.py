@@ -31,6 +31,8 @@ font_name = ["Arial Unicode MS"]
 mpl.rcParams["font.sans-serif"] = font_name
 mpl.rcParams["axes.unicode_minus"] = False
 
+from utils.log_util import logger
+
 # global variable
 LOGGING_LABEL = Path(__file__).name[:-3]
 
@@ -42,7 +44,7 @@ def white_noise(timesteps: int, is_print: bool = False, is_plot: bool = False):
     white_noise = np.random.standard_normal(size = timesteps)
 
     if is_print:
-        print(white_noise)
+        logger.info(white_noise)
     
     if is_plot:
         plt.figure(figsize = (12, 6))
@@ -64,14 +66,14 @@ def non_white_noise(is_print: bool = False, is_plot: bool = False):
     df = ak.macro_china_gdp()
     df = df.set_index("季度")
     df.index = pd.to_datetime(df.index)
-    print(df.head())
-    print(df.shape)
+    logger.info(df.head())
+    logger.info(df.shape)
     # 原始数据
     gdp = df["国内生产总值-绝对值"][::-1].astype("float")
-    print(gdp)
+    logger.info(gdp)
     # 差分
     gdp_diff = gdp.diff(4)
-    print(gdp_diff)
+    logger.info(gdp_diff)
 
     if is_plot:
         plt.figure(figsize = (12, 6))
@@ -115,7 +117,7 @@ def gen_randomwalk(timesteps, noise, is_print: bool = False, is_plot: bool = Fal
     y = np.random.normal(0, noise, (timesteps,))
     series = y.cumsum()
     if is_print:
-        print(series)
+        logger.info(series)
 
     if is_plot:
         plt.figure(figsize = (12, 6))
@@ -132,7 +134,7 @@ def randomwalk_normal(timesteps, is_print: bool = False, is_plot: bool = False):
     y = np.random.standard_normal(size = timesteps)
     series = np.cumsum(y)
     if is_print:
-        print(series)
+        logger.info(series)
 
     if is_plot:
         plt.figure(figsize = (12, 6))
@@ -150,7 +152,7 @@ def randomwalk_drift(timesteps: int, drift: float,  is_print: bool = False, is_p
     y_cunsum = np.cumsum(drift + y)
     series = np.cumsum(drift * np.ones(len(y_cunsum)))
     if is_print:
-        print(series)
+        logger.info(series)
 
     if is_plot:
         plt.figure(figsize = (12, 6))
@@ -219,7 +221,7 @@ def non_stationarity(is_print: bool = False, is_plot: bool = False):
     close = df["收盘"].astype(float)
     close = close[::-1]
     if is_print:
-        print(close)
+        logger.info(close)
 
     if is_plot:
         plt.figure(figsize = (12, 6))
