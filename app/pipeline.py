@@ -69,10 +69,18 @@ class ModelApp:
         )
 
     def run(self) -> dict[str, str]:
+        # ------------------------------
         # 设置随机种子
+        # ------------------------------
         np.random.seed(self.cfg.seed)
+        # ------------------------------
         # 加载数据
+        # ------------------------------
+        logger.info(f"{'=' * 100}")
+        logger.info(f"Loading data from {self.cfg.data_path}")
+        logger.info(f"{'=' * 100}")
         df = self._load_dataset()
+
         # out
         out: dict[str, str] = {
             "setting": self.artifacts.setting,
@@ -83,18 +91,57 @@ class ModelApp:
             "forecast_results_dir": str(self.artifacts.forecast_results_dir),
             "eda_dir": str(self.artifacts.eda_dir),
         }
+        # ------------------------------
         # EDA result
-        out.update(self.eda(df))
+        # ------------------------------
+        logger.info(f"{'=' * 100}")
+        logger.info(f"Running EDA...")
+        logger.info(f"{'=' * 100}")
+        eda_info = self.eda(df)
+        logger.info(f"EDA info:\n {eda_info}")
+        out.update(eda_info)
+        # ------------------------------
         # 准备目标序列
+        # ------------------------------
+        logger.info(f"{'=' * 100}")
+        logger.info(f"Running _prepare_target_series...")
+        logger.info(f"{'=' * 100}")
         prepared = self._prepare_target_series(df)
+        logger.info(f"Prepare info:\n {prepared.metadata}")
         out.update(prepared.metadata)
+        # ------------------------------
         # training
-        out.update(self.train(prepared))
+        # ------------------------------
+        logger.info(f"{'=' * 100}")
+        logger.info(f"Running train...")
+        logger.info(f"{'=' * 100}")
+        training_info = self.train(prepared)
+        logger.info(f"training info:\n {training_info}")
+        out.update(training_info)
+        # ------------------------------
         # testing
-        out.update(self.test(prepared.df))
+        # ------------------------------
+        logger.info(f"{'=' * 100}")
+        logger.info(f"Running test...")
+        logger.info(f"{'=' * 100}")
+        testing_info = self.test(prepared.df)
+        logger.info(f"testing info:\n {testing_info}")
+        out.update(testing_info)
+        # ------------------------------
         # forecasting
-        out.update(self.forecast(prepared))
+        # ------------------------------
+        logger.info(f"{'=' * 100}")
+        logger.info(f"Running forecast...")
+        logger.info(f"{'=' * 100}")
+        forecasting_info = self.forecast(prepared)
+        logger.info(f"forecasting info:\n {forecasting_info}")
+        out.update(forecasting_info)
+        # ------------------------------
         # 特征工程
+        # ------------------------------
+        logger.info(f"{'=' * 100}")
+        logger.info(f"Running feature_engineering...")
+        logger.info(f"{'=' * 100}")
         feature_snapshot = self._export_feature_snapshot(prepared.df)
         out["analysis_feature_snapshot_path"] = feature_snapshot.path
         out["analysis_feature_columns"] = ",".join(feature_snapshot.feature_columns)
@@ -110,19 +157,25 @@ class ModelApp:
 
     def _prepare_target_series(self, df: pd.DataFrame) -> PrepareResult:
         local_df = df.copy()
+        # ------------------------------
+        # 数据预处理
+        # ------------------------------
+        metadata: dict[str, str] = {}
+
+        # 数据预处理
         processor = DataProcessor(
             detrend_method=self.cfg.detrend_method,
             denoise_enabled=self.cfg.denoise_enabled,
             denoise_window=self.cfg.denoise_window,
-        )
-        metadata: dict[str, str] = {}
-
+        ) 
         if processor.enabled:
             local_df[self.cfg.target_col] = processor.fit_transform(local_df[self.cfg.target_col])
             metadata["processor_applied"] = "true"
             metadata["processor_detrend_method"] = self.cfg.detrend_method
             metadata["processor_denoise_enabled"] = str(self.cfg.denoise_enabled).lower()
-
+            logger.info(f"After data processing, df:\n {local_df}")
+        
+        # 数据分割
         history_df, _future = self.loader.split_history_future(
             df=local_df,
             history_size=self.cfg.history_size,
@@ -130,13 +183,18 @@ class ModelApp:
         )
         history_y = history_df[self.cfg.target_col].astype(float).reset_index(drop=True)
         history_time = pd.to_datetime(history_df[self.cfg.time_col]).reset_index(drop=True)
-
+        logger.info(f"After data split history_df:\n {history_df}")
+        logger.info(f"After data split history_y:\n {history_y}")
+        logger.info(f"After data split history_time:\n {history_time}")
+        
+        # 数据缩放
         if self.cfg.scale:
             scaler = FeatureScaler(self.cfg.scaler_type)
             scaled = scaler.fit_transform(pd.DataFrame({self.cfg.target_col: history_y}))
             history_y = scaled[self.cfg.target_col].reset_index(drop=True)
             metadata["history_scaled"] = "true"
             metadata["history_scaler_type"] = self.cfg.scaler_type
+            logger.info(f"After scale history_y:\n {history_y}")
 
         return PrepareResult(
             df=local_df,
@@ -175,41 +233,46 @@ class ModelApp:
     def eda(self, df: pd.DataFrame) -> dict[str, str]:
         if not self.cfg.do_eda:
             return {}
-        return run_eda(
+        
+        result = run_eda(
             df=df,
             time_col=self.cfg.time_col,
             target_col=self.cfg.target_col,
             freq=self.cfg.freq,
             output_dir=str(self.artifacts.eda_dir),
         )
+        
+        return result
     
     def train(self, prepared: PrepareResult) -> dict[str, str]:
         if not self.cfg.do_train:
             return {}
+        # model training
         trainer = Trainer(self.cfg.model_name, self.cfg.model_params)
         model = trainer.train(prepared.history_y)
+        # model saving
         model_path = self.artifacts.checkpoints_dir / "model.pkl"
         save_model(model, str(model_path))
-
+        # model training data saving
         train_series_path = dataframe_to_csv(
             self.artifacts.train_results_dir / "train_series.csv",
-            pd.DataFrame(
-                {
-                    self.cfg.time_col: prepared.history_time,
-                    self.cfg.target_col: prepared.history_y,
-                }
-            ),
+            pd.DataFrame({
+                self.cfg.time_col: prepared.history_time,
+                self.cfg.target_col: prepared.history_y,
+            }),
         )
+        # model info saving
         model_info_path = write_json(
             self.artifacts.train_results_dir / "model_info.json",
             model_info_payload(model, self.cfg.model_params),
         )
+        # model training summary saving
         train_summary = {
             "model_name": self.cfg.model_name,
             "data_name": self.artifacts.data_name,
             "pred_method": self.cfg.pred_method,
-            "target_col": self.cfg.target_col,
             "time_col": self.cfg.time_col,
+            "target_col": self.cfg.target_col,
             "train_size": int(len(prepared.history_y)),
             "history_size": int(self.cfg.history_size),
             "predict_horizon": int(self.cfg.predict_horizon),
@@ -223,17 +286,22 @@ class ModelApp:
             "checkpoint_path": str(model_path),
             "model_info_path": model_info_path,
         }
-        train_summary_path = write_json(self.artifacts.train_results_dir / "train_summary.json", train_summary)
+        train_summary_path = write_json(
+            self.artifacts.train_results_dir / "train_summary.json", 
+            train_summary
+        )
+        
         return {
             "model_path": str(model_path),
             "train_series_path": train_series_path,
-            "train_summary_path": train_summary_path,
             "model_info_path": model_info_path,
+            "train_summary_path": train_summary_path,
         }
 
     def test(self, df: pd.DataFrame) -> dict[str, str]:
         if not self.cfg.do_test:
             return {}
+        # model testing
         tester = Tester(
             model_name=self.cfg.model_name,
             model_params=self.cfg.model_params,
@@ -246,15 +314,10 @@ class ModelApp:
             progress_every=self.cfg.backtest_progress_every,
         )
         result = tester.evaluate(df[[self.cfg.time_col, self.cfg.target_col]])
+        # model testing saving
         metrics_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics.csv", result.metrics_df)
-        predictions_path = dataframe_to_csv(
-            self.artifacts.test_results_dir / "backtest_predictions.csv",
-            result.predictions_df,
-        )
-        summary_path_csv = dataframe_to_csv(
-            self.artifacts.test_results_dir / "backtest_metrics_summary.csv",
-            result.summary_df,
-        )
+        predictions_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_predictions.csv", result.predictions_df)
+        summary_path_csv = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics_summary.csv", result.summary_df)
         test_summary_path = write_json(
             self.artifacts.test_results_dir / "test_summary.json",
             {
@@ -285,6 +348,7 @@ class ModelApp:
             str(self.artifacts.test_results_dir / "backtest_error_distribution.png"),
             f"Backtest Error Distribution - {plot_title}",
         )
+
         return {
             "test_metrics_path": metrics_path,
             "backtest_predictions_path": predictions_path,
@@ -298,21 +362,22 @@ class ModelApp:
     def forecast(self, prepared: PrepareResult) -> dict[str, str]:
         if not self.cfg.do_forecast:
             return {}
+        # model forecasting
         forecaster = Forecaster(
             model_name=self.cfg.model_name,
             model_params=self.cfg.model_params,
             pred_method=self.cfg.pred_method,
         )
         pred = forecaster.forecast(history=prepared.history_y, horizon=self.cfg.predict_horizon)
+        # model forecasting inverse scale
         if prepared.processor.enabled:
             pred = prepared.processor.inverse_forecast(pred)
-        forecast_df = pd.DataFrame(
-            {
-                "step": range(1, len(pred) + 1),
-                "timestamp": forecast_timestamps(prepared.history_time, len(pred), self.cfg.freq),
-                "yhat": pred.values,
-            }
-        )
+        # model forecasting result saving
+        forecast_df = pd.DataFrame({
+            "step": range(1, len(pred) + 1),
+            "timestamp": forecast_timestamps(prepared.history_time, len(pred), self.cfg.freq),
+            "yhat": pred.values,
+        })
         forecast_path = dataframe_to_csv(self.artifacts.forecast_results_dir / "forecast.csv", forecast_df)
         forecast_plot_path = plot_forecast(
             history_df=prepared.history_df.tail(self.cfg.history_size).copy(),

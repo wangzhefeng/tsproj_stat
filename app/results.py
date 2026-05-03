@@ -63,7 +63,7 @@ def prepare_run_artifacts(cfg: AppConfig) -> RunArtifacts:
 
 
 # ##############################
-# 
+# 模型运行结果保存
 # ##############################
 def write_json(path: Path, payload: dict[str, Any]) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -5,15 +5,10 @@ import copy
 import pandas as pd
 
 from models.factory import ModelFactory
+from data_provider.data_transfer import to_univariate_series
 
 
-def run_inference(
-    model,
-    history: pd.Series | pd.DataFrame,
-    horizon: int,
-    pred_method: str = "direct",
-    model_builder=None,
-) -> pd.Series:
+def run_inference(model, history: pd.Series | pd.DataFrame, horizon: int, pred_method: str = "direct", model_builder=None) -> pd.Series:
     # model forecasting method
     method = pred_method.lower()
     if method not in {"one_step", "recursive", "direct"}:
@@ -27,7 +22,7 @@ def run_inference(
         model.fit(history)
         return model.predict(horizon)
     # recursive forecasting
-    hist = _to_series(history)
+    hist = to_univariate_series(history)
     preds = []
     for _ in range(horizon):
         model_i = model_builder() if model_builder is not None else copy.deepcopy(model)
@@ -37,13 +32,6 @@ def run_inference(
         hist = pd.concat([hist, pd.Series([next_val])], ignore_index=True)
     
     return pd.Series(preds, name="yhat")
-
-
-def _to_series(history: pd.Series | pd.DataFrame) -> pd.Series:
-    if isinstance(history, pd.DataFrame):
-        return history.iloc[:, 0].reset_index(drop=True)
-    
-    return history.reset_index(drop=True)
 
 
 class Forecaster:

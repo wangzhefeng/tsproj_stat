@@ -92,6 +92,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --denoise_enabled true --denoise_win
 - 训练、测试、预测和 EDA 结果现统一落到 `saved_results/checkpoints / results_train / results_test / results_forecast / results_eda`，并按 `setting` 自动分组。
 - 测试阶段当前会额外输出窗口级明细、汇总指标和三类图：预测对比图、残差图、误差分布图。
 - 无 `data_path` 时会加载内置 demo 序列，用于 smoke/test 场景；真实数据读取仍统一走 `data_provider/data_loader.py`。
+- 通用时序清洗已统一收敛到 `data_provider.prepare_standard_frame()`：主流程消费标准化两列 `DataFrame`，EDA 再在其上做 `Series` 视图转换、`asfreq(freq)` 补频和最小样本校验。
 - `dataset/wind_dataset.csv` 的单变量脚本已落在 `scripts/wind_univariate/`，当前约定 `DATE` 为时间列、`WIND` 为目标列。
 
 ## 数据集脚本

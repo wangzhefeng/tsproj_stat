@@ -86,10 +86,12 @@ def rolling_backtest(
         ):
             elapsed = time.perf_counter() - window_started_at
             total_elapsed = time.perf_counter() - started_at
-            logger.info(
+            message = (
                 f"[backtest] window {window_id}/{total_windows} "
                 f"train_end={start} window_seconds={elapsed:.3f} total_seconds={total_elapsed:.3f}"
             )
+            print(message)
+            logger.info(message)
         start += step
 
     metrics_df = pd.DataFrame(metric_rows)

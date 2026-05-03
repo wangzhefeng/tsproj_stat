@@ -15,7 +15,21 @@ from .fallbacks import (
 
 
 def build_order_grid(p_values=(0, 1, 2), d_values=(0, 1), q_values=(0, 1, 2)):
-    return [(p, d, q) for p, d, q in product(p_values, d_values, q_values)]
+    """
+    构建ARIMA模型的参数网格
+
+    Args:
+        p_values (tuple, optional): _description_. Defaults to (0, 1, 2).
+        d_values (tuple, optional): _description_. Defaults to (0, 1).
+        q_values (tuple, optional): _description_. Defaults to (0, 1, 2).
+
+    Returns:
+        _type_: _description_
+    """
+    return [
+        (p, d, q) 
+        for p, d, q in product(p_values, d_values, q_values)
+    ]
 
 
 def select_arima_order(y: pd.Series, order_grid: Iterable[tuple[int, int, int]], ic: str = "aic"):
@@ -55,6 +69,7 @@ def select_arima_order(y: pd.Series, order_grid: Iterable[tuple[int, int, int]],
 
 
 class ARIMAModel(FallbackMixin, BaseStatModel):
+
     def __init__(self, order=(1, 1, 1), auto_order: bool = False, order_grid=None, ic: str = "aic"):
         self.order = order
         self.auto_order = auto_order
@@ -105,13 +120,17 @@ class ARIMAModel(FallbackMixin, BaseStatModel):
         validate_horizon(horizon)
         if self._result is None:
             return self._fallback_predict(horizon)
+        
         forecast = self._result.forecast(steps=horizon)
+        
         if not isinstance(forecast, pd.Series):
             forecast = pd.Series(forecast)
+        
         return forecast.reset_index(drop=True).rename("yhat")
 
 
 class SARIMAModel(FallbackMixin, BaseStatModel):
+    
     def __init__(
         self,
         order=(1, 1, 1),

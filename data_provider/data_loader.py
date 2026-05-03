@@ -3,9 +3,9 @@
 from pathlib import Path
 from dataclasses import dataclass
 
-import numpy as np
 import pandas as pd
 
+from .data_preparation import prepare_standard_frame
 from utils.demo_data import load_demo_series
 from utils.log_util import logger
 
@@ -25,6 +25,12 @@ class DataLoader:
         # ------------------------------
         if self.data_path is None:
             demo_series = load_demo_series(time_col=self.time_col, target_col=self.target_col, freq=self.freq)
+            demo_series = prepare_standard_frame(
+                demo_series,
+                time_col=self.time_col,
+                target_col=self.target_col,
+                freq=self.freq,
+            )
             logger.info(f"Loaded demo series dataset:\n {demo_series.head()}")
             logger.info(f"Loaded demo series dataset shape: {demo_series.shape}")
             return demo_series 
@@ -39,14 +45,14 @@ class DataLoader:
         df = pd.read_csv(path)
         logger.info(f"Loaded raw data:\n {df.head()}")
         logger.info(f"Loaded raw data shape: {df.shape}")
-        # time col 规范化
-        df = self._normalize_time_col(df)
-        logger.info(f"After _normalize_time_col, df:\n {df.head()}")
-        logger.info(f"After _normalize_time_col, df shape: {df.shape}")
-        # 缺失值处理
-        df = self._apply_missing_value_policy(df)
-        logger.info(f"After _apply_missing_value_policy, df:\n {df.head()}")
-        logger.info(f"After _apply_missing_value_policy, df shape: {df.shape}")
+        df = prepare_standard_frame(
+            df,
+            time_col=self.time_col,
+            target_col=self.target_col,
+            freq=self.freq,
+        )
+        logger.info(f"After prepare_standard_frame, df:\n {df.head()}")
+        logger.info(f"After prepare_standard_frame, df shape: {df.shape}")
 
         return df
     
@@ -70,50 +76,7 @@ class DataLoader:
         
         history = df.iloc[-(history_size + horizon):-horizon].reset_index(drop=True)
         future = df.iloc[-horizon:].reset_index(drop=True)
+        logger.info(f"history shape: {history.shape}")
+        logger.info(f"future shape: {future.shape}")
         
         return history, future
-
-    def _normalize_time_col(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        time_col 规范化
-        """
-        out_df = df.copy()
-        if self.time_col not in out_df.columns:
-            # Compatibility fallback for old CSVs that only contain the target column.
-            out_df[self.time_col] = pd.date_range("2000-01-01", periods=len(out_df), freq=self.freq)
-        else:
-            out_df[self.time_col] = pd.to_datetime(out_df[self.time_col])
-        
-        return out_df
-
-    def _normalize_target_col(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        target_col 规范化
-        """
-        out_df = df.copy()
-        if self.target_col not in out_df.columns:
-            raise ValueError(f"target_col '{self.target_col}' not found in data columns {list(df.columns)}")
-        else:
-            out_df[self.target_col] = pd.to_numeric(out_df[self.target_col], errors="coerce").replace([np.inf, -np.inf], np.nan)
-            out_df = out_df[[self.time_col, self.target_col]]
-        
-        return out_df
-
-    def _apply_missing_value_policy(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        缺失值处理 
-        """
-        out_df = df.copy()
-        if isinstance(out_df.index, pd.DatetimeIndex):
-            series = series.asfreq(self.freq)
-            series = series.interpolate(limit_direction="both").dropna()
-            series = series.sort_index()
-        out_df = (
-            df[[self.time_col, self.target_col]]
-            .interpolate(method="linear", limit_direction="both")
-            .dropna(subset=[self.target_col])
-            .sort_values(self.time_col)
-            .reset_index(drop=True)
-        )
-
-        return out_df

@@ -46,6 +46,7 @@ class ETSModel(FallbackMixin, BaseStatModel):
 
 
 class ThetaModel(FallbackMixin, BaseStatModel):
+    
     def __init__(self, period: int = 1):
         self.period = period
         self._fallback = TrendFallbackModel()

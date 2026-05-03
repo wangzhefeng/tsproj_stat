@@ -9,15 +9,12 @@ class DataProcessor:
     Preprocessing for denoising and detrending with reversible transform.
     """
 
-    def __init__(
-        self,
-        detrend_method: str = "none",
-        denoise_enabled: bool = False,
-        denoise_window: int = 3,
-    ):
+    def __init__(self, detrend_method: str = "none", denoise_enabled: bool = False, denoise_window: int = 3):
         valid_methods = {"none", "linear", "moving_average"}
+        
         if detrend_method not in valid_methods:
             raise ValueError(f"detrend_method must be one of {sorted(valid_methods)}")
+        
         if denoise_window < 1:
             raise ValueError("denoise_window must be >= 1")
 

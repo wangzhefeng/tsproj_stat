@@ -5,22 +5,25 @@ import pandas as pd
 from .analyzer import prepare_series
 from .diagnostics import run_diagnostics
 from .report import save_eda_outputs
+from utils.log_util import logger
 
 
-def run_eda(
-    df: pd.DataFrame,
-    time_col: str,
-    target_col: str,
-    freq: str,
-    output_dir: str,
-    period: int = 7,
-    nlags: int = 24,
-    save_plots: bool = True,
-) -> dict[str, str]:
+def run_eda(df: pd.DataFrame,
+            time_col: str,
+            target_col: str,
+            freq: str,
+            output_dir: str,
+            period: int = 7,
+            nlags: int = 24,
+            save_plots: bool = True) -> dict[str, str]:
     # prepare
     series = prepare_series(df, time_col=time_col, target_col=target_col, freq=freq)
+    logger.info(f"EDA series:\n {series.head()}")
+    logger.info(f"EDA series shape: {series.shape}")
+    
     # diagnostics
     summary, diagnostics = run_diagnostics(series, period=period, nlags=nlags)
+    
     # result
     result = save_eda_outputs(
         series=series,
