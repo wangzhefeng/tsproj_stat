@@ -151,6 +151,24 @@
 - 原因：全量测试收集阶段依赖该导出，当前函数已迁移但兼容层未收口，导致 `pytest` 基线直接中断
 - 影响范围：`data_provider/data_transfer.py`、`tests/test_statistical_common.py`
 
+### 2026-05-03 / Step 23
+
+- 优化 `AutoARIMAModel` 成功路径：改为主模型优先拟合，fallback 仅在异常时惰性初始化并训练
+- 原因：原实现中 `auto_arima` 成功路径仍会先触发 `ARIMAModel(auto_order=True)`，在 rolling backtest 中形成显著重复选型成本
+- 影响范围：`models/model/arima_family.py`、`tests/test_arima_auto_order.py`
+
+### 2026-05-03 / Step 24
+
+- 为 rolling backtest 增加可选进度日志，并将 `run_auto_arima.sh` 调整为偏快的日常脚本默认参数
+- 原因：`wind_dataset.csv` 在原参数下会产生 `887` 个回测窗口，终端缺少进度反馈且默认参数对日常运行过重
+- 影响范围：`evaluation/backtest.py`、`app/testing.py`、`config/default.py`、`run.py`、`scripts/wind_univariate/run_auto_arima.sh`、README
+
+### 2026-05-03 / Step 25
+
+- 为 `SARIMAModel` 暴露 `trend`、`enforce_stationarity`、`enforce_invertibility`、`simple_differencing` 与 `fit_kwargs`，并将 `run_sarima.sh` 调整为偏快的日常脚本默认参数
+- 原因：`run_sarima.sh` 原参数会触发 `887` 个 expanding-window 回测窗口，且默认无进度日志；实际耗时集中在 `statsmodels.SARIMAX.fit()`，需要同时提升可观测性并收紧拟合成本
+- 影响范围：`models/model/arima_family.py`、`tests/test_arima_auto_order.py`、`scripts/wind_univariate/run_sarima.sh`、README、AGENTS
+
 ## 待办任务
 
 | ID | 任务 | 优先级 | 完成条件 |
@@ -200,6 +218,8 @@
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | 当前全量回归通过；仍有少量 `ConvergenceWarning` |
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5` | 通过 | 新下划线 CLI 参数可直接运行，EDA 返回目录为 `saved_results/results_eda/{setting}` |
 | `bash scripts/wind_univariate/run_naive.sh` | 通过 | 新脚本模板可运行，完整 `AppConfig` 参数显式透传，所有结果统一落到 `saved_results/.../{setting}/` |
+| `UV_CACHE_DIR=.uv_cache uv run pytest tests/test_arima_auto_order.py tests/test_backtest_smoke.py tests/test_cli_overrides.py -q` | 通过 | `AutoARIMAModel` 惰性 fallback、参数透传与 backtest 进度日志回归通过 |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q tests/test_arima_auto_order.py -k sarima_forwards_model_params` | 通过 | `SARIMAModel` 新增拟合参数与 `fit_kwargs` 透传回归通过 |
 
 ## 备注
 

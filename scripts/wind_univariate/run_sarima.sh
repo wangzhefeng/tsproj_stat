@@ -15,17 +15,19 @@ python -u run.py \
   --target_col WIND \
   --freq D \
   --model_name "$model_name" \
-  --model_params '{}' \
+  --model_params '{"enforce_stationarity": false, "enforce_invertibility": false, "simple_differencing": true, "fit_kwargs": {"disp": false, "maxiter": 20}}' \
   --pred_method direct \
   --do_train true \
   --do_test true \
   --do_forecast true \
   --do_eda false \
-  --history_size 365 \
+  --history_size 180 \
   --predict_horizon 7 \
   --backtest_initial_train_size 365 \
   --backtest_horizon 7 \
-  --backtest_step 7 \
+  --backtest_step 30 \
+  --backtest_verbose true \
+  --backtest_progress_every 10 \
   --enable_datetime_features true \
   --lags 1,2,7,14 \
   --scale false \

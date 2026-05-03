@@ -15,17 +15,19 @@ python -u run.py \
   --target_col WIND \
   --freq D \
   --model_name "$model_name" \
-  --model_params '{}' \
+  --model_params '{"seasonal": false, "m": 1, "stepwise": true, "start_p": 0, "start_q": 0, "max_p": 2, "max_q": 2, "max_order": 4, "maxiter": 20, "information_criterion": "aic", "trace": true, "error_action": "ignore", "suppress_warnings": true}' \
   --pred_method direct \
   --do_train true \
   --do_test true \
   --do_forecast true \
   --do_eda false \
-  --history_size 365 \
+  --history_size 180 \
   --predict_horizon 7 \
   --backtest_initial_train_size 365 \
   --backtest_horizon 7 \
-  --backtest_step 7 \
+  --backtest_step 30 \
+  --backtest_verbose true \
+  --backtest_progress_every 10 \
   --enable_datetime_features true \
   --lags 1,2,7,14 \
   --scale false \

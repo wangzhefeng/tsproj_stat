@@ -17,6 +17,8 @@ class Tester:
         initial_train_size: int = 30,
         horizon: int = 7,
         step: int = 7,
+        verbose: bool = False,
+        progress_every: int = 10,
     ):
         self.model_name = model_name
         self.model_params = model_params or {}
@@ -25,6 +27,8 @@ class Tester:
         self.initial_train_size = initial_train_size
         self.horizon = horizon
         self.step = step
+        self.verbose = verbose
+        self.progress_every = progress_every
         self.factory = ModelFactory()
 
     def evaluate(self, df: pd.DataFrame) -> BacktestResult:
@@ -38,4 +42,6 @@ class Tester:
             initial_train_size=self.initial_train_size,
             horizon=self.horizon,
             step=self.step,
+            verbose=self.verbose,
+            progress_every=self.progress_every,
         )

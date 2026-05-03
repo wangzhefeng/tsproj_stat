@@ -103,6 +103,10 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.backtest_horizon = args.backtest_horizon
     if args.backtest_step is not None:
         cfg.backtest_step = args.backtest_step
+    if args.backtest_verbose is not None:
+        cfg.backtest_verbose = _parse_bool(args.backtest_verbose)
+    if args.backtest_progress_every is not None:
+        cfg.backtest_progress_every = args.backtest_progress_every
     if args.enable_datetime_features is not None:
         cfg.enable_datetime_features = _parse_bool(args.enable_datetime_features)
     if args.lags is not None:
@@ -158,6 +162,8 @@ def parse_args() -> AppConfig:
     parser.add_argument("--backtest_initial_train_size", type=int, default=None)
     parser.add_argument("--backtest_horizon", type=int, default=None)
     parser.add_argument("--backtest_step", type=int, default=None)
+    parser.add_argument("--backtest_verbose", default=None)
+    parser.add_argument("--backtest_progress_every", type=int, default=None)
 
     parser.add_argument("--enable_datetime_features", default=None)
     parser.add_argument("--lags", type=str, default=None)

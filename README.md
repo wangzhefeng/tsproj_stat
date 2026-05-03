@@ -102,6 +102,8 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --denoise_enabled true --denoise_win
   - 其余模型同名脚本位于 `scripts/wind_univariate/`
 - 当前每个脚本都显式传入完整 `AppConfig` 字段，并统一使用 `python -u run.py`、`model_name`、`LOG_NAME`
 - 脚本运行后会自动把结果写到 `saved_results/checkpoints|results_train|results_test|results_forecast|results_eda/{setting}/`
+- `run_auto_arima.sh` 当前定位为偏快的日常脚本：默认缩短 `history_size`、增大 `backtest_step`、收紧 `auto_arima` 搜索空间，并开启回测进度日志与 `auto_arima` trace
+- `run_sarima.sh` 当前也定位为偏快的日常脚本：默认缩短 `history_size`、增大 `backtest_step`、开启回测进度日志，并通过 `model_params.fit_kwargs.maxiter` 等参数收紧 `SARIMAX` 拟合成本
 - 当前单变量脚本覆盖所有 `supports_multivariate=False` 的模型；`var / bayesian_var / linear_var` 暂未纳入。
 
 ## EDA 能力

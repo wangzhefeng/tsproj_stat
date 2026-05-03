@@ -38,6 +38,8 @@ class AppConfig:
     backtest_initial_train_size: int = 30
     backtest_horizon: int = 7
     backtest_step: int = 7
+    backtest_verbose: bool = False
+    backtest_progress_every: int = 10
 
     enable_datetime_features: bool = True
     lags: list[int] = field(default_factory=lambda: [1, 2, 7, 14])
@@ -61,6 +63,7 @@ class AppConfig:
         _ensure_positive(self.backtest_initial_train_size, "backtest_initial_train_size")
         _ensure_positive(self.backtest_horizon, "backtest_horizon")
         _ensure_positive(self.backtest_step, "backtest_step")
+        _ensure_positive(self.backtest_progress_every, "backtest_progress_every")
 
         if self.pred_method not in {"direct", "recursive", "one_step"}:
             raise ValueError("pred_method must be one of {'direct', 'recursive', 'one_step'}")

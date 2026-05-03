@@ -32,6 +32,8 @@ def test_cli_override_eda_fields():
         backtest_initial_train_size=None,
         backtest_horizon=None,
         backtest_step=None,
+        backtest_verbose=None,
+        backtest_progress_every=None,
         enable_datetime_features=None,
         lags=None,
         scale=None,
@@ -86,6 +88,8 @@ def test_cli_override_extended_app_config_fields():
         backtest_initial_train_size=48,
         backtest_horizon=12,
         backtest_step=6,
+        backtest_verbose="true",
+        backtest_progress_every=3,
         enable_datetime_features="false",
         lags="1,3,6,24",
         scale="true",
@@ -120,6 +124,8 @@ def test_cli_override_extended_app_config_fields():
     assert updated.backtest_initial_train_size == 48
     assert updated.backtest_horizon == 12
     assert updated.backtest_step == 6
+    assert updated.backtest_verbose is True
+    assert updated.backtest_progress_every == 3
     assert updated.enable_datetime_features is False
     assert updated.lags == [1, 3, 6, 24]
     assert updated.scale is True

@@ -62,6 +62,7 @@
 - 分析特征快照输出已更名为 `analysis_feature_snapshot.csv`，以避免与预测主链路混淆
 - 训练、测试、预测、EDA 结果已统一迁移到 `saved_results/` 五类一级目录下，并按 `setting` 自动分组；`eda_output_dir` 真实控制 EDA 落盘根目录
 - 回测结果已扩展为窗口级明细、汇总指标和图形产物；预测阶段已补充 `forecast.csv` 与预测可视化图
+- `run_auto_arima.sh` 与 `run_sarima.sh` 当前默认采用偏快的日常脚本参数集，并支持终端回测进度输出
 
 ## 7. 当前已知问题
 

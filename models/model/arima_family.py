@@ -112,9 +112,25 @@ class ARIMAModel(FallbackMixin, BaseStatModel):
 
 
 class SARIMAModel(FallbackMixin, BaseStatModel):
-    def __init__(self, order=(1, 1, 1), seasonal_order=(1, 1, 1, 7)):
+    def __init__(
+        self,
+        order=(1, 1, 1),
+        seasonal_order=(1, 1, 1, 7),
+        trend: str | None = None,
+        enforce_stationarity: bool = True,
+        enforce_invertibility: bool = True,
+        simple_differencing: bool = False,
+        fit_kwargs: dict | None = None,
+    ):
         self.order = order
         self.seasonal_order = seasonal_order
+        self.trend = trend
+        self.enforce_stationarity = enforce_stationarity
+        self.enforce_invertibility = enforce_invertibility
+        self.simple_differencing = simple_differencing
+        self.fit_kwargs = {"disp": False}
+        if fit_kwargs is not None:
+            self.fit_kwargs.update(fit_kwargs)
         self._fallback = TrendFallbackModel()
         self._result = None
 
@@ -135,7 +151,15 @@ class SARIMAModel(FallbackMixin, BaseStatModel):
                     message=".*Non-stationary starting autoregressive parameters found.*",
                     category=UserWarning,
                 )
-                self._result = SARIMAX(series, order=self.order, seasonal_order=self.seasonal_order).fit(disp=False)
+                self._result = SARIMAX(
+                    series,
+                    order=self.order,
+                    seasonal_order=self.seasonal_order,
+                    trend=self.trend,
+                    enforce_stationarity=self.enforce_stationarity,
+                    enforce_invertibility=self.enforce_invertibility,
+                    simple_differencing=self.simple_differencing,
+                ).fit(**self.fit_kwargs)
         except Exception as exc:
             self._result = None
             warn_and_use_fallback(
@@ -153,15 +177,45 @@ class SARIMAModel(FallbackMixin, BaseStatModel):
 
 
 class AutoARIMAModel(FallbackMixin, BaseStatModel):
-    def __init__(self, seasonal: bool = False, m: int = 1):
+    def __init__(
+        self,
+        seasonal: bool = False,
+        m: int = 1,
+        stepwise: bool = True,
+        start_p: int = 2,
+        start_q: int = 2,
+        max_p: int = 5,
+        max_q: int = 5,
+        max_order: int = 5,
+        d: int | None = None,
+        test: str = "kpss",
+        maxiter: int = 50,
+        information_criterion: str = "aic",
+        trace: bool = False,
+        error_action: str = "ignore",
+        suppress_warnings: bool = True,
+    ):
         self.seasonal = seasonal
         self.m = m
+        self.stepwise = stepwise
+        self.start_p = start_p
+        self.start_q = start_q
+        self.max_p = max_p
+        self.max_q = max_q
+        self.max_order = max_order
+        self.d = d
+        self.test = test
+        self.maxiter = maxiter
+        self.information_criterion = information_criterion
+        self.trace = trace
+        self.error_action = error_action
+        self.suppress_warnings = suppress_warnings
         self._result = None
-        self._fallback = ARIMAModel(auto_order=True)
+        self._fallback: ARIMAModel | None = None
 
     def fit(self, y: pd.Series | pd.DataFrame) -> "AutoARIMAModel":
         series = to_univariate_series(y).astype(float)
-        self._fallback.fit(series)
+        self._result = None
         try:
             import pmdarima as pm
 
@@ -169,14 +223,26 @@ class AutoARIMAModel(FallbackMixin, BaseStatModel):
                 series,
                 seasonal=self.seasonal,
                 m=self.m,
-                suppress_warnings=True,
-                error_action="ignore",
+                stepwise=self.stepwise,
+                start_p=self.start_p,
+                start_q=self.start_q,
+                max_p=self.max_p,
+                max_q=self.max_q,
+                max_order=self.max_order,
+                d=self.d,
+                test=self.test,
+                maxiter=self.maxiter,
+                information_criterion=self.information_criterion,
+                trace=self.trace,
+                error_action=self.error_action,
+                suppress_warnings=self.suppress_warnings,
             )
         except Exception as exc:
             self._result = None
+            self._ensure_fallback_fitted(series)
             warn_and_use_fallback(
                 model_name="AutoARIMAModel",
-                fallback_name=type(self._fallback).__name__,
+                fallback_name=type(self._fallback).__name__ if self._fallback is not None else "ARIMAModel",
                 exc=exc,
             )
         return self
@@ -184,5 +250,12 @@ class AutoARIMAModel(FallbackMixin, BaseStatModel):
     def predict(self, horizon: int) -> pd.Series:
         validate_horizon(horizon)
         if self._result is None:
+            if self._fallback is None:
+                raise RuntimeError("Model is not fitted")
             return self._fallback_predict(horizon)
         return pd.Series(self._result.predict(n_periods=horizon), name="yhat")
+
+    def _ensure_fallback_fitted(self, series: pd.Series) -> None:
+        if self._fallback is None:
+            self._fallback = ARIMAModel(auto_order=True)
+        self._fallback.fit(series)

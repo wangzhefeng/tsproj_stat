@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import pandas as pd
@@ -23,18 +24,25 @@ def rolling_backtest(
     initial_train_size: int = 30,
     horizon: int = 7,
     step: int = 7,
+    verbose: bool = False,
+    progress_every: int = 10,
 ) -> BacktestResult:
     n = len(df)
     if initial_train_size + horizon > n:
         raise ValueError("Not enough data for backtest")
+    if progress_every <= 0:
+        raise ValueError("progress_every must be > 0")
 
     metric_rows: list[dict[str, float | int]] = []
     prediction_rows: list[dict[str, object]] = []
     start = initial_train_size
     window_id = 0
+    total_windows = ((n - initial_train_size - horizon) // step) + 1
+    started_at = time.perf_counter()
 
     while start + horizon <= n:
         window_id += 1
+        window_started_at = time.perf_counter()
         train_y = df[target_col].iloc[:start]
         test_slice = df.iloc[start : start + horizon].reset_index(drop=True)
         test_y = test_slice[target_col].astype(float)
@@ -70,6 +78,17 @@ def rolling_backtest(
             if time_col is not None and time_col in test_slice.columns:
                 row["timestamp"] = test_slice[time_col].iloc[idx]
             prediction_rows.append(row)
+        if verbose and (
+            window_id == 1
+            or window_id == total_windows
+            or window_id % progress_every == 0
+        ):
+            elapsed = time.perf_counter() - window_started_at
+            total_elapsed = time.perf_counter() - started_at
+            print(
+                f"[backtest] window {window_id}/{total_windows} "
+                f"train_end={start} window_seconds={elapsed:.3f} total_seconds={total_elapsed:.3f}"
+            )
         start += step
 
     metrics_df = pd.DataFrame(metric_rows)

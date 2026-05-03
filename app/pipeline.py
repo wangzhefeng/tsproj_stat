@@ -237,6 +237,8 @@ class ModelApp:
             initial_train_size=self.cfg.backtest_initial_train_size,
             horizon=self.cfg.backtest_horizon,
             step=self.cfg.backtest_step,
+            verbose=self.cfg.backtest_verbose,
+            progress_every=self.cfg.backtest_progress_every,
         )
         result = tester.evaluate(df[[self.cfg.time_col, self.cfg.target_col]])
         metrics_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics.csv", result.metrics_df)
