@@ -1,10 +1,12 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from pathlib import Path
 
 import matplotlib
+import numpy as np
 import pandas as pd
+from scipy.signal import periodogram
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.tsa.seasonal import STL
 
@@ -21,7 +23,7 @@ def save_eda_outputs(
     period: int = 7,
     acf_nlags: int = 24,
     output_dir: str = None,
-    save_plots: bool = True, 
+    save_plots: bool = True,
 ) -> dict[str, str]:
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -54,6 +56,32 @@ def save_eda_outputs(
         diff_path = plots_dir / "difference.png"
         fig.savefig(diff_path, dpi=150)
         plt.close(fig)
+
+        # Distribution: histogram + KDE
+        fig, ax = plt.subplots(figsize=(8, 4))
+        series.plot.hist(ax=ax, bins=30, density=True, alpha=0.6, label="Histogram")
+        series.plot.kde(ax=ax, label="KDE")
+        ax.set_title("Distribution")
+        ax.legend()
+        fig.tight_layout()
+        dist_path = plots_dir / "distribution.png"
+        fig.savefig(dist_path, dpi=150)
+        plt.close(fig)
+        out["eda_distribution_plot_path"] = str(dist_path)
+
+        # FFT Periodogram
+        freq, power = periodogram(series.values)
+        if len(freq) > 1:
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(1.0 / freq[1:], power[1:])
+            ax.set_xlabel("Period")
+            ax.set_ylabel("Power")
+            ax.set_title("FFT Periodogram")
+            fig.tight_layout()
+            peri_path = plots_dir / "periodogram.png"
+            fig.savefig(peri_path, dpi=150)
+            plt.close(fig)
+            out["eda_periodogram_plot_path"] = str(peri_path)
 
         if len(series) >= period * 2:
             stl = STL(series, period=period, robust=True).fit()

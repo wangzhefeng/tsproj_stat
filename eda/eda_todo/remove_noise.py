@@ -38,7 +38,7 @@ def remove_noise(df: pd.DataFrame, window: int = 3):
     Returns:
         _type_: _description_
     """
-    df_smooth = df.values.rolling(window = window).mean()
+    df_smooth = df.rolling(window=window).mean()
 
     return df_smooth
 
