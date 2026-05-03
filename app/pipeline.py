@@ -89,6 +89,19 @@ class ModelApp:
                 cols.append(col)
         return cols
 
+    @property
+    def resolved_model_params(self) -> dict:
+        params = dict(self.cfg.model_params)
+        if self.cfg.model_name == "ets":
+            params.setdefault("tune_smoothing_params", self.cfg.ets_tune_smoothing_params)
+            params.setdefault("smoothing_grid_level", self.cfg.ets_smoothing_grid_level)
+            params.setdefault("smoothing_grid_trend", self.cfg.ets_smoothing_grid_trend)
+            params.setdefault("smoothing_grid_seasonal", self.cfg.ets_smoothing_grid_seasonal)
+            params.setdefault("validation_size", self.cfg.ets_validation_size)
+            if self.cfg.seasonal_period is not None:
+                params.setdefault("seasonal_periods", self.cfg.seasonal_period)
+        return params
+
     def run(self) -> dict[str, str]:
         # ------------------------------
         # 设置随机种子
@@ -187,13 +200,23 @@ class ModelApp:
         processor = DataProcessor(
             detrend_method=self.cfg.detrend_method,
             denoise_enabled=self.cfg.denoise_enabled,
+            denoise_method=self.cfg.denoise_method,
             denoise_window=self.cfg.denoise_window,
+            seasonal_period=self.cfg.seasonal_period,
+            decomposition_method=self.cfg.decomposition_method,
+            decomposition_target=self.cfg.decomposition_target,
+            decomposition_model=self.cfg.decomposition_model,
+            acf_max_lag=self.cfg.acf_max_lag,
+            seasonality_strength_threshold=self.cfg.seasonality_strength_threshold,
         ) 
         if processor.enabled:
             local_df[self.cfg.target_col] = processor.fit_transform(local_df[self.cfg.target_col])
             metadata["processor_applied"] = "true"
             metadata["processor_detrend_method"] = self.cfg.detrend_method
-            metadata["processor_denoise_enabled"] = str(self.cfg.denoise_enabled).lower()
+            metadata["processor_denoise_enabled"] = str(processor.denoise_enabled).lower()
+            metadata["processor_denoise_method"] = processor.denoise_method
+            metadata["processor_decomposition_method"] = self.cfg.decomposition_method
+            metadata["processor_decomposition_target"] = self.cfg.decomposition_target
             logger.info(f"After data processing, df:\n {local_df}")
         
         # 数据分割
@@ -289,7 +312,7 @@ class ModelApp:
         if not self.cfg.do_train:
             return {}
         # model training
-        trainer = Trainer(self.cfg.model_name, self.cfg.model_params)
+        trainer = Trainer(self.cfg.model_name, self.resolved_model_params)
         model = trainer.train(
             prepared.history_y,
             X_hist=prepared.history_model_input_df,
@@ -309,7 +332,7 @@ class ModelApp:
         # model info saving
         model_info_path = write_json(
             self.artifacts.train_results_dir / "model_info.json",
-            model_info_payload(model, self.cfg.model_params),
+            model_info_payload(model, self.resolved_model_params),
         )
         # model training summary saving
         train_summary = {
@@ -324,11 +347,16 @@ class ModelApp:
             "train_size": int(len(prepared.history_y)),
             "history_size": int(self.cfg.history_size),
             "predict_horizon": int(self.cfg.predict_horizon),
-            "model_params": self.cfg.model_params,
+            "model_params": self.resolved_model_params,
             "scale": bool(self.cfg.scale),
             "scaler_type": self.cfg.scaler_type,
             "detrend_method": self.cfg.detrend_method,
-            "denoise_enabled": bool(self.cfg.denoise_enabled),
+            "denoise_enabled": bool(prepared.processor.denoise_enabled),
+            "denoise_method": self.cfg.denoise_method,
+            "seasonal_period": self.cfg.seasonal_period,
+            "decomposition_method": self.cfg.decomposition_method,
+            "decomposition_target": self.cfg.decomposition_target,
+            "decomposition_model": self.cfg.decomposition_model,
             "processor_applied": prepared.processor.enabled,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "checkpoint_path": str(model_path),
@@ -352,7 +380,7 @@ class ModelApp:
         # model testing
         tester = Tester(
             model_name=self.cfg.model_name,
-            model_params=self.cfg.model_params,
+            model_params=self.resolved_model_params,
             target_col=self.cfg.target_col,
             time_col=self.cfg.time_col,
             endog_cols=self.effective_endog_cols,
@@ -416,7 +444,7 @@ class ModelApp:
         # model forecasting
         forecaster = Forecaster(
             model_name=self.cfg.model_name,
-            model_params=self.cfg.model_params,
+            model_params=self.resolved_model_params,
             pred_method=self.cfg.pred_method,
         )
         pred = forecaster.forecast(

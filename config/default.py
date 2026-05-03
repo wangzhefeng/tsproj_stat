@@ -53,8 +53,20 @@ class AppConfig:
 
     # Data preprocessing
     denoise_enabled: bool = False
+    denoise_method: str = "none"
     denoise_window: int = 3
     detrend_method: str = "none"
+    seasonal_period: int | None = None
+    decomposition_method: str = "none"
+    decomposition_target: str = "trend_resid"
+    decomposition_model: str = "additive"
+    acf_max_lag: int = 48
+    seasonality_strength_threshold: float = 0.3
+    ets_tune_smoothing_params: bool = False
+    ets_smoothing_grid_level: list[float] | None = None
+    ets_smoothing_grid_trend: list[float] | None = None
+    ets_smoothing_grid_seasonal: list[float] | None = None
+    ets_validation_size: int | None = None
 
     checkpoints_dir: str = "saved_results/checkpoints"
     train_results_dir: str = "saved_results/results_train"
@@ -78,6 +90,33 @@ class AppConfig:
 
         if self.detrend_method not in {"none", "linear", "moving_average"}:
             raise ValueError("detrend_method must be one of {'none', 'linear', 'moving_average'}")
+        if self.denoise_method not in {"none", "moving_average", "moving_median"}:
+            raise ValueError("denoise_method must be one of {'none', 'moving_average', 'moving_median'}")
+        if self.seasonal_period is not None and self.seasonal_period <= 1:
+            raise ValueError("seasonal_period must be > 1 when provided")
+        if self.decomposition_method not in {"none", "seasonal_decompose", "stl"}:
+            raise ValueError("decomposition_method must be one of {'none', 'seasonal_decompose', 'stl'}")
+        if self.decomposition_target not in {"trend_resid", "resid_only"}:
+            raise ValueError("decomposition_target must be one of {'trend_resid', 'resid_only'}")
+        if self.decomposition_model not in {"additive", "multiplicative"}:
+            raise ValueError("decomposition_model must be one of {'additive', 'multiplicative'}")
+        if self.acf_max_lag <= 1:
+            raise ValueError("acf_max_lag must be > 1")
+        if not 0.0 <= self.seasonality_strength_threshold <= 1.0:
+            raise ValueError("seasonality_strength_threshold must be in [0, 1]")
+        for field_name, values in {
+            "ets_smoothing_grid_level": self.ets_smoothing_grid_level,
+            "ets_smoothing_grid_trend": self.ets_smoothing_grid_trend,
+            "ets_smoothing_grid_seasonal": self.ets_smoothing_grid_seasonal,
+        }.items():
+            if values is None:
+                continue
+            if len(values) == 0:
+                raise ValueError(f"{field_name} must not be empty when provided")
+            if not all(0.0 < float(value) <= 1.0 for value in values):
+                raise ValueError(f"{field_name} values must be in (0, 1]")
+        if self.ets_validation_size is not None and self.ets_validation_size <= 0:
+            raise ValueError("ets_validation_size must be > 0 when provided")
 
         if self.future_exog_path is None and self.future_exog_cols:
             raise ValueError("future_exog_cols requires future_exog_path")

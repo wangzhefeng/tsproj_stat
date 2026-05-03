@@ -181,6 +181,30 @@
 - 原因：原 registry 中 `bayesian_var` / `linear_var` 只是 `VARModel` 空壳别名，不具备独立行为；旧脚本实现有价值但不符合当前仓库接口与质量基线
 - 影响范围：`models/model/multivariate.py`、`tests/test_factory.py`、新增多源模型与 pipeline 测试
 
+### 2026-05-04 / Step 28
+
+- 整理 `models/models_todo/arima_models` 的方法流程，并将 `ar / ma / arma` 收口进主线 `models/model/arima_family.py`
+- 原因：当前主线只有 `arima / sarima / auto_arima` 最小实现，而旧 `arima_models` 的有效价值主要是 ACF/PACF、差分与滚动预测流程，不是脚本本身
+- 影响范围：`models/model/arima_family.py`、`models/registry.py`、`tests/test_arima_smoke.py`、`tests/test_statistical_arima_family.py`、README、AGENTS
+
+### 2026-05-04 / Step 29
+
+- 将 `data_provider/data_processor.py` 扩展为支持自动周期推断与 `seasonal_decompose / stl` 的可逆分解预处理
+- 原因：原主线只有去噪和粗粒度 detrend，无法稳定承接 ARIMA 家族对趋势项、季节项分离建模再重组的流程
+- 影响范围：`data_provider/data_processor.py`、`config/default.py`、`run.py`、`app/pipeline.py`、`tests/test_data_processor.py`、`tests/test_cli_overrides.py`、`tests/test_pipeline.py`
+
+### 2026-05-04 / Step 30
+
+- 将 `ExponentialSmoothing.py` 与 `smoothing.py` 的有效方法知识收口到主线 `ETSModel` 与 `DataProcessor`
+- 原因：旧脚本的价值主要是 `SES / DES / TES` 分层、smoothing grid 调参思路，以及 `moving_average / moving_median` 轻量去噪方法；脚本本身不符合当前主线接口与质量基线
+- 影响范围：`models/model/exponential_family.py`、`data_provider/data_processor.py`、`config/default.py`、`run.py`、`app/pipeline.py`、`tests/test_exponential_family.py`、`tests/test_data_processor.py`、`tests/test_cli_overrides.py`、`tests/test_pipeline.py`、README、AGENTS
+
+### 2026-05-04 / Step 31
+
+- 吸收 `forecast_stats / prophet_models / var_models` 的有效模型信息，并扩充主线统计基线与扩展模型
+- 原因：旧目录的核心价值是模型候选、适用场景、参数经验与约束条件，不是脚本本身；需要把这些信息收口到当前 `models/model/` 家族实现、registry metadata、README 与测试
+- 影响范围：`models/model/baseline_models.py`、`models/model/extended_models.py`、`models/model/multivariate.py`、`models/registry.py`、`pyproject.toml`、`uv.lock`、`tests/test_model_expansion.py`、`tests/test_factory.py`、`tests/test_pipeline.py`、README、AGENTS
+
 ## 待办任务
 
 | ID | 任务 | 优先级 | 完成条件 |
@@ -234,6 +258,11 @@
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q tests/test_arima_auto_order.py -k sarima_forwards_model_params` | 通过 | `SARIMAModel` 新增拟合参数与 `fit_kwargs` 透传回归通过 |
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `64 passed`；多源输入、`bayesian_var`、`linear_var` 接入后全量回归通过 |
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /private/tmp/tsproj_multisource_smoke/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --hist_exog_cols temp --future_exog_path /private/tmp/tsproj_multisource_smoke/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --do_eda false --history_size 12 --predict_horizon 4 --backtest_initial_train_size 12 --backtest_horizon 4 --backtest_step 4` | 通过 | 多源 CLI smoke 可运行，结果落盘到 `saved_results/.../linear_var-history-direct/` |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `75 passed`；AR/MA/ARMA 与可逆分解预处理接入后全量回归通过 |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name ar --model_params '{"p":2}' --decomposition_method seasonal_decompose --decomposition_target resid_only --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4` | 通过 | `ar` + 分解预处理 smoke 可运行，结果落盘到 `saved_results/.../ar-demo_series-direct/` |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name auto_arima --model_params '{"seasonal":false,"max_p":2,"max_q":2,"max_order":4,"maxiter":10}' --decomposition_method stl --decomposition_target trend_resid --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4` | 通过 | `auto_arima` + STL 分解预处理 smoke 可运行，结果落盘到 `saved_results/.../auto_arima-demo_series-direct/` |
+| `UV_CACHE_DIR=.uv_cache uv add statsforecast neuralprophet` | 通过 | 已新增可选依赖；当前环境下 `neuralprophet` 仍存在上游依赖兼容问题，主线按 optional fallback 处理 |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q tests/test_factory.py tests/test_model_expansion.py tests/test_pipeline.py` | 通过 | `21 passed`；新增基线模型、扩展模型与 pipeline smoke 回归通过 |
 
 ## 备注
 

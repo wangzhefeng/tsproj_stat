@@ -5,7 +5,15 @@ from dataclasses import dataclass
 from difflib import get_close_matches
 
 from models.base import BaseStatModel
-from models.model.arima_family import ARIMAModel, AutoARIMAModel, SARIMAModel
+from models.model.arima_family import ARMAModel, ARIMAModel, ARModel, AutoARIMAModel, MAModel, SARIMAModel
+from models.model.baseline_models import (
+    AutoETSModel,
+    AutoThetaModel,
+    CrostonModel,
+    DynamicThetaModel,
+    HistoricAverageModel,
+    SeasonalNaiveModel,
+)
 from models.model.exponential_family import ETSModel, ThetaModel
 from models.model.extended_models import BayesianTMTModel, NeuralProphetModel, ProphetModel, RARModel, TBATSModel
 from models.model.fallbacks import NaiveModel
@@ -24,11 +32,20 @@ class ModelSpec:
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
     "naive": ModelSpec(NaiveModel, {}, "fallbacks", "stable", False),
+    "seasonal_naive": ModelSpec(SeasonalNaiveModel, {"season_length": 7}, "baseline_models", "stable", False),
+    "historic_average": ModelSpec(HistoricAverageModel, {}, "baseline_models", "stable", False),
+    "croston": ModelSpec(CrostonModel, {}, "baseline_models", "experimental", False),
+    "ar": ModelSpec(ARModel, {"p": 1}, "arima_family", "stable", False),
+    "ma": ModelSpec(MAModel, {"q": 1}, "arima_family", "stable", False),
+    "arma": ModelSpec(ARMAModel, {"p": 1, "q": 1}, "arima_family", "stable", False),
     "arima": ModelSpec(ARIMAModel, {"order": (1, 1, 1)}, "arima_family", "stable", False),
     "auto_arima": ModelSpec(AutoARIMAModel, {}, "arima_family", "stable", False),
     "sarima": ModelSpec(SARIMAModel, {"order": (1, 1, 1), "seasonal_order": (1, 1, 1, 7)}, "arima_family", "stable", False),
     "ets": ModelSpec(ETSModel, {}, "exponential_family", "stable", False),
     "theta": ModelSpec(ThetaModel, {}, "exponential_family", "stable", False),
+    "dynamic_theta": ModelSpec(DynamicThetaModel, {"season_length": 1}, "baseline_models", "optional", False),
+    "auto_ets": ModelSpec(AutoETSModel, {"season_length": 1}, "baseline_models", "optional", False),
+    "auto_theta": ModelSpec(AutoThetaModel, {"season_length": 1}, "baseline_models", "optional", False),
     "var": ModelSpec(VARModel, {}, "multivariate", "stable", True),
     "bayesian_var": ModelSpec(BayesianVARModel, {}, "multivariate", "experimental", True),
     "linear_var": ModelSpec(LinearVARModel, {}, "multivariate", "experimental", True),

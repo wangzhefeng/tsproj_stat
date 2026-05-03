@@ -58,6 +58,15 @@ def _parse_csv_list(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _parse_csv_float_list(value: str | None) -> list[float] | None:
+    if value is None:
+        return None
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    if not items:
+        return []
+    return [float(item) for item in items]
+
+
 def _load_default_config(config_module: str, config_class: str):
     # config.default.py
     module = importlib.import_module(config_module)
@@ -133,10 +142,34 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.scaler_type = args.scaler_type
     if getattr(args, "denoise_enabled", None) is not None:
         cfg.denoise_enabled = _parse_bool(args.denoise_enabled)
+    if getattr(args, "denoise_method", None) is not None:
+        cfg.denoise_method = args.denoise_method
     if getattr(args, "denoise_window", None) is not None:
         cfg.denoise_window = args.denoise_window
     if getattr(args, "detrend_method", None) is not None:
         cfg.detrend_method = args.detrend_method
+    if getattr(args, "seasonal_period", None) is not None:
+        cfg.seasonal_period = args.seasonal_period
+    if getattr(args, "decomposition_method", None) is not None:
+        cfg.decomposition_method = args.decomposition_method
+    if getattr(args, "decomposition_target", None) is not None:
+        cfg.decomposition_target = args.decomposition_target
+    if getattr(args, "decomposition_model", None) is not None:
+        cfg.decomposition_model = args.decomposition_model
+    if getattr(args, "acf_max_lag", None) is not None:
+        cfg.acf_max_lag = args.acf_max_lag
+    if getattr(args, "seasonality_strength_threshold", None) is not None:
+        cfg.seasonality_strength_threshold = args.seasonality_strength_threshold
+    if getattr(args, "ets_tune_smoothing_params", None) is not None:
+        cfg.ets_tune_smoothing_params = _parse_bool(args.ets_tune_smoothing_params)
+    if getattr(args, "ets_smoothing_grid_level", None) is not None:
+        cfg.ets_smoothing_grid_level = _parse_csv_float_list(args.ets_smoothing_grid_level)
+    if getattr(args, "ets_smoothing_grid_trend", None) is not None:
+        cfg.ets_smoothing_grid_trend = _parse_csv_float_list(args.ets_smoothing_grid_trend)
+    if getattr(args, "ets_smoothing_grid_seasonal", None) is not None:
+        cfg.ets_smoothing_grid_seasonal = _parse_csv_float_list(args.ets_smoothing_grid_seasonal)
+    if getattr(args, "ets_validation_size", None) is not None:
+        cfg.ets_validation_size = args.ets_validation_size
     if getattr(args, "checkpoints_dir", None) is not None:
         cfg.checkpoints_dir = args.checkpoints_dir
     if getattr(args, "train_results_dir", None) is not None:
@@ -196,8 +229,20 @@ def parse_args() -> AppConfig:
     parser.add_argument("--scaler_type", type=str, default=None)
 
     parser.add_argument("--denoise_enabled", default=None)
+    parser.add_argument("--denoise_method", type=str, default=None)
     parser.add_argument("--denoise_window", type=int, default=None)
     parser.add_argument("--detrend_method", type=str, default=None)
+    parser.add_argument("--seasonal_period", type=int, default=None)
+    parser.add_argument("--decomposition_method", type=str, default=None)
+    parser.add_argument("--decomposition_target", type=str, default=None)
+    parser.add_argument("--decomposition_model", type=str, default=None)
+    parser.add_argument("--acf_max_lag", type=int, default=None)
+    parser.add_argument("--seasonality_strength_threshold", type=float, default=None)
+    parser.add_argument("--ets_tune_smoothing_params", default=None)
+    parser.add_argument("--ets_smoothing_grid_level", type=str, default=None)
+    parser.add_argument("--ets_smoothing_grid_trend", type=str, default=None)
+    parser.add_argument("--ets_smoothing_grid_seasonal", type=str, default=None)
+    parser.add_argument("--ets_validation_size", type=int, default=None)
 
     parser.add_argument("--checkpoints_dir", type=str, default=None)
     parser.add_argument("--train_results_dir", type=str, default=None)

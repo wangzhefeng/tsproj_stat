@@ -1,6 +1,33 @@
-﻿import pandas as pd
+import pandas as pd
 
 from models.factory import ModelFactory
+
+
+def test_ar_smoke():
+    y = pd.Series([1.0, 1.2, 1.1, 1.3, 1.6, 1.8, 2.0, 2.2, 2.1, 2.4])
+    model = ModelFactory().create_model("ar", {"p": 2})
+    model.fit(y)
+    pred = model.predict(3)
+
+    assert len(pred) == 3
+
+
+def test_ma_smoke():
+    y = pd.Series([1.0, 1.2, 1.1, 1.3, 1.6, 1.8, 2.0, 2.2, 2.1, 2.4])
+    model = ModelFactory().create_model("ma", {"q": 2})
+    model.fit(y)
+    pred = model.predict(3)
+
+    assert len(pred) == 3
+
+
+def test_arma_smoke():
+    y = pd.Series([1.0, 1.2, 1.1, 1.3, 1.6, 1.8, 2.0, 2.2, 2.1, 2.4])
+    model = ModelFactory().create_model("arma", {"p": 2, "q": 1})
+    model.fit(y)
+    pred = model.predict(3)
+
+    assert len(pred) == 3
 
 
 def test_arima_smoke():

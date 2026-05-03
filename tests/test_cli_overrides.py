@@ -39,8 +39,25 @@ def test_cli_override_eda_fields():
         scale=None,
         scaler_type=None,
         denoise_enabled="true",
+        denoise_method="moving_median",
         denoise_window=5,
         detrend_method="linear",
+        seasonal_period=None,
+        decomposition_method=None,
+        decomposition_target=None,
+        decomposition_model=None,
+        acf_max_lag=None,
+        seasonality_strength_threshold=None,
+        ets_tune_smoothing_params="true",
+        ets_smoothing_grid_level="0.2,0.5",
+        ets_smoothing_grid_trend=None,
+        ets_smoothing_grid_seasonal=None,
+        ets_validation_size=8,
+        endog_cols=None,
+        hist_exog_cols=None,
+        future_exog_path=None,
+        future_exog_time_col=None,
+        future_exog_cols=None,
         checkpoints_dir=None,
         train_results_dir=None,
         test_results_dir=None,
@@ -52,8 +69,12 @@ def test_cli_override_eda_fields():
     assert updated.do_eda is True
     assert updated.eda_output_dir == "saved_results/custom_eda"
     assert updated.denoise_enabled is True
+    assert updated.denoise_method == "moving_median"
     assert updated.denoise_window == 5
     assert updated.detrend_method == "linear"
+    assert updated.ets_tune_smoothing_params is True
+    assert updated.ets_smoothing_grid_level == [0.2, 0.5]
+    assert updated.ets_validation_size == 8
 
 
 def test_parse_args_exposes_config_module_and_class(monkeypatch):
@@ -95,8 +116,25 @@ def test_cli_override_extended_app_config_fields():
         scale="true",
         scaler_type="minmax",
         denoise_enabled="true",
+        denoise_method="moving_average",
         denoise_window=5,
         detrend_method="moving_average",
+        seasonal_period=None,
+        decomposition_method=None,
+        decomposition_target=None,
+        decomposition_model=None,
+        acf_max_lag=None,
+        seasonality_strength_threshold=None,
+        ets_tune_smoothing_params="false",
+        ets_smoothing_grid_level="0.2,0.4",
+        ets_smoothing_grid_trend="0.1,0.3",
+        ets_smoothing_grid_seasonal="0.2,0.6",
+        ets_validation_size=12,
+        endog_cols=None,
+        hist_exog_cols=None,
+        future_exog_path=None,
+        future_exog_time_col=None,
+        future_exog_cols=None,
         checkpoints_dir="saved_results/custom_ckpt",
         train_results_dir="saved_results/custom_train",
         test_results_dir="saved_results/custom_test",
@@ -131,8 +169,14 @@ def test_cli_override_extended_app_config_fields():
     assert updated.scale is True
     assert updated.scaler_type == "minmax"
     assert updated.denoise_enabled is True
+    assert updated.denoise_method == "moving_average"
     assert updated.denoise_window == 5
     assert updated.detrend_method == "moving_average"
+    assert updated.ets_tune_smoothing_params is False
+    assert updated.ets_smoothing_grid_level == [0.2, 0.4]
+    assert updated.ets_smoothing_grid_trend == [0.1, 0.3]
+    assert updated.ets_smoothing_grid_seasonal == [0.2, 0.6]
+    assert updated.ets_validation_size == 12
     assert updated.checkpoints_dir == "saved_results/custom_ckpt"
     assert updated.train_results_dir == "saved_results/custom_train"
     assert updated.test_results_dir == "saved_results/custom_test"
@@ -212,3 +256,62 @@ def test_parse_model_params_non_object_message():
     with pytest.raises(ValueError, match="model_params must be a JSON object"):
         _parse_model_params(json.dumps([1, 2, 3]))
 
+
+def test_cli_override_arima_decomposition_fields():
+    cfg = AppConfig()
+    args = argparse.Namespace(
+        config_module="config.default",
+        config_class="AppConfig",
+        project_name=None,
+        seed=None,
+        data_path=None,
+        time_col=None,
+        target_col=None,
+        freq=None,
+        endog_cols=None,
+        hist_exog_cols=None,
+        future_exog_path=None,
+        future_exog_time_col=None,
+        future_exog_cols=None,
+        model_name=None,
+        model_params=None,
+        pred_method=None,
+        do_train=None,
+        do_test=None,
+        do_forecast=None,
+        do_eda=None,
+        history_size=None,
+        predict_horizon=None,
+        backtest_initial_train_size=None,
+        backtest_horizon=None,
+        backtest_step=None,
+        backtest_verbose=None,
+        backtest_progress_every=None,
+        enable_datetime_features=None,
+        lags=None,
+        scale=None,
+        scaler_type=None,
+        denoise_enabled=None,
+        denoise_window=None,
+        detrend_method=None,
+        seasonal_period=24,
+        decomposition_method="stl",
+        decomposition_target="resid_only",
+        decomposition_model="additive",
+        acf_max_lag=48,
+        seasonality_strength_threshold=0.35,
+        checkpoints_dir=None,
+        train_results_dir=None,
+        test_results_dir=None,
+        forecast_result_dir=None,
+        eda_output_dir=None,
+    )
+
+    updated = _apply_overrides(cfg, args)
+
+    assert updated.seasonal_period == 24
+    assert updated.decomposition_method == "stl"
+    assert updated.decomposition_target == "resid_only"
+    assert updated.decomposition_model == "additive"
+    assert updated.acf_max_lag == 48
+    assert updated.seasonality_strength_threshold == 0.35

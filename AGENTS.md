@@ -15,8 +15,15 @@
 - 新增模型必须接入 `models/factory.py`，并实现统一 `fit(y, X_hist=None, X_future=None) / predict(horizon, X_future=None)` 接口
 - 统计模型主实现位于 `models/model/` 包内，按模型家族分文件维护；新增模型不得回退到单文件堆叠
 - ARIMA 阶数搜索 helper 统一内聚在 `models/model/arima_family.py`；模型 registry 统一位于 `models/registry.py`
+- ARIMA 家族主线模型名约定为 `ar / ma / arma / arima / sarima / auto_arima`；若只是在参数层包装，不得再平行新增脚本式入口
+- 轻量统计基线主线模型名约定为 `seasonal_naive / historic_average / croston`；自动统计模型扩展当前约定为 `dynamic_theta / auto_ets / auto_theta`
 - 新增 EDA 能力必须接入 `eda/pipeline.py`，并输出结构化结果与可追踪产物路径
 - 趋势去除、去噪、逆变换等可逆预处理统一放在 `data_provider/data_processor.py`
+- 去噪主线约定当前只保留轻量方法：`moving_average / moving_median`；`LOWESS / Kalman / OnOff` 不得直接混入主线
+- 若处理趋势项、季节项或分解，必须通过 `DataProcessor` 主线完成，不允许让 ARIMA 类模型各自再维护一套分解/重组逻辑
+- `ETSModel` 作为统一指数平滑入口维护 `SES / DES / TES`，不得再平行拆出脚本式 `ses/des/tes` 入口
+- `prophet / tbats / neuralprophet` 统一归入 `models/model/extended_models.py` 维护；若依赖缺失或运行时不兼容，必须显式 fallback 或报可读错误
+- `bayesian_tmt` 名称沿用历史 registry，但当前只允许表示“实验性单序列贝叶斯滞后回归近似”；不得把旧 `BayesianTMT.py` 的矩阵分解算法混入现有单目标接口
 - CLI 配置统一经由 `config/AppConfig` 与 `run.py` 参数覆盖，不允许平行新增另一套入口参数体系
 - 多源数据主线约定：
   - `endog_cols` 包含 `target_col` 在内的内生变量列
@@ -63,9 +70,18 @@
 - 统计模型当前按 `models/model/` 家族模块维护，fallback 和公共 helper 已独立；registry 位于 `models/registry.py`
 - EDA 子系统已并入主流程，入口为 `eda/pipeline.py`，产出结构化摘要、诊断表与图表路径
 - 数据预处理已集中到 `data_provider/data_processor.py`，支持去噪、去趋势与预测逆变换
+- `DataProcessor` 已补充自动季节周期推断与 `seasonal_decompose / stl` 可逆分解；主线可对 `trend_resid / resid_only` 序列建模后再重组趋势项与季节项
+- `DataProcessor` 当前去噪策略统一为 `denoise_method=none|moving_average|moving_median`；`denoise_enabled` 仅作为兼容旧 CLI 的开关
 - `DataLoader` 已支持多源输入：历史内生/外生列保留、独立未来外生文件加载与最小校验
 - `BayesianTMT` / `RAR` 已完成非占位实现，并纳入测试覆盖
 - `BayesianVAR` / `LinearVAR` 已从 `models/models_todo` 抽取核心实现并接入主线模型 registry
+- `forecast_stats`、`prophet_models`、`var_models` 当前都只作为历史研究与方法信息来源；有效内容应沉淀到主线实现、registry metadata、README 与测试，不继续维护脚本式 demo
+- `models/models_todo/arima_models` 当前保留为历史研究材料；有效方法流程已收口到 ARIMA family 与测试，不再要求脚本可直接运行
+- `ETSModel` 当前支持可选 smoothing grid 调参；若启用季节项但未显式提供周期，会先尝试统一周期推断，失败后直接报错
+- 主线现有模型稳定性分层约定：
+  - `stable`：默认基线与常规统计模型
+  - `optional`：依赖额外库，如 `statsforecast`、`prophet`、`tbats`
+  - `experimental`：已接入但需要额外验证的模型，如 `croston`、`neuralprophet`、`bayesian_tmt`、`bayesian_var`、`linear_var`
 - 分析特征快照输出已更名为 `analysis_feature_snapshot.csv`，以避免与预测主链路混淆
 - 训练、测试、预测、EDA 结果已统一迁移到 `saved_results/` 五类一级目录下，并按 `setting` 自动分组；`eda_output_dir` 真实控制 EDA 落盘根目录
 - 回测结果已扩展为窗口级明细、汇总指标和图形产物；预测阶段已补充 `forecast.csv` 与预测可视化图

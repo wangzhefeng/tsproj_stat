@@ -114,3 +114,105 @@ def test_pipeline_all_execution_flags_disabled(tmp_path):
     assert "model_path" not in result
     assert "prediction_path" not in result
     assert "test_metrics_path" not in result
+
+
+def test_pipeline_ar_with_decomposition_forecast_only(tmp_path):
+    cfg = AppConfig(
+        data_path=None,
+        model_name="ar",
+        model_params={"p": 2},
+        do_eda=False,
+        do_train=False,
+        do_test=False,
+        do_forecast=True,
+        history_size=60,
+        predict_horizon=4,
+        seasonal_period=5,
+        decomposition_method="seasonal_decompose",
+        decomposition_target="resid_only",
+        checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
+        train_results_dir=str(tmp_path / "saved_results" / "results_train"),
+        test_results_dir=str(tmp_path / "saved_results" / "results_test"),
+        forecast_result_dir=str(tmp_path / "saved_results" / "results_forecast"),
+    )
+
+    result = ModelApp(cfg).run()
+
+    assert "prediction_path" in result
+    assert "forecast_summary_path" in result
+    assert "forecast_plot_path" in result
+
+
+def test_pipeline_ets_with_decomposition_and_median_denoise(tmp_path):
+    cfg = AppConfig(
+        data_path=None,
+        model_name="ets",
+        model_params={"trend": "add", "seasonal": "add"},
+        do_eda=False,
+        do_train=False,
+        do_test=False,
+        do_forecast=True,
+        history_size=60,
+        predict_horizon=4,
+        seasonal_period=5,
+        denoise_method="moving_median",
+        denoise_window=3,
+        decomposition_method="seasonal_decompose",
+        decomposition_target="trend_resid",
+        checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
+        train_results_dir=str(tmp_path / "saved_results" / "results_train"),
+        test_results_dir=str(tmp_path / "saved_results" / "results_test"),
+        forecast_result_dir=str(tmp_path / "saved_results" / "results_forecast"),
+    )
+
+    result = ModelApp(cfg).run()
+
+    assert "prediction_path" in result
+    assert "forecast_summary_path" in result
+    assert "forecast_plot_path" in result
+
+
+def test_pipeline_seasonal_naive_forecast_only(tmp_path):
+    cfg = AppConfig(
+        data_path=None,
+        model_name="seasonal_naive",
+        model_params={"season_length": 7},
+        do_eda=False,
+        do_train=False,
+        do_test=False,
+        do_forecast=True,
+        history_size=60,
+        predict_horizon=4,
+        checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
+        train_results_dir=str(tmp_path / "saved_results" / "results_train"),
+        test_results_dir=str(tmp_path / "saved_results" / "results_test"),
+        forecast_result_dir=str(tmp_path / "saved_results" / "results_forecast"),
+    )
+
+    result = ModelApp(cfg).run()
+
+    assert "prediction_path" in result
+    assert "forecast_summary_path" in result
+
+
+def test_pipeline_croston_forecast_only(tmp_path):
+    cfg = AppConfig(
+        data_path=None,
+        model_name="croston",
+        model_params={"alpha": 0.2},
+        do_eda=False,
+        do_train=False,
+        do_test=False,
+        do_forecast=True,
+        history_size=60,
+        predict_horizon=4,
+        checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
+        train_results_dir=str(tmp_path / "saved_results" / "results_train"),
+        test_results_dir=str(tmp_path / "saved_results" / "results_test"),
+        forecast_result_dir=str(tmp_path / "saved_results" / "results_forecast"),
+    )
+
+    result = ModelApp(cfg).run()
+
+    assert "prediction_path" in result
+    assert "forecast_summary_path" in result

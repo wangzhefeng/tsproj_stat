@@ -24,8 +24,9 @@ def _require_multivariate_frame(
 
 
 class VARModel(FallbackMixin, BaseStatModel):
-    def __init__(self, maxlags: int | None = None):
+    def __init__(self, maxlags: int | None = None, ic: str | None = None):
         self.maxlags = maxlags
+        self.ic = ic
         self._result = None
         self._frame: pd.DataFrame | None = None
         self._target_col: str | None = None
@@ -44,13 +45,13 @@ class VARModel(FallbackMixin, BaseStatModel):
         try:
             from statsmodels.tsa.api import VAR
 
-            self._result = VAR(frame).fit(maxlags=self.maxlags)
+            self._result = VAR(frame).fit(maxlags=self.maxlags, ic=self.ic)
         except Exception as exc:
             self._result = None
             warn_and_use_fallback(
                 model_name="VARModel",
                 fallback_name=type(self._fallback).__name__,
-                exc=exc,
+                exc=RuntimeError(f"{exc}. VAR typically expects approximately stationary multivariate input."),
             )
         return self
 

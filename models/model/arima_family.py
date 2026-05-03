@@ -6,30 +6,43 @@ from typing import Iterable
 
 import pandas as pd
 
-from models.base import BaseStatModel
 from data_provider.data_transfer import to_univariate_series
+from models.base import BaseStatModel
 from .fallbacks import (
-    NaiveModel, TrendFallbackModel,
-    FallbackMixin, validate_horizon, warn_and_use_fallback
+    FallbackMixin,
+    NaiveModel,
+    TrendFallbackModel,
+    validate_horizon,
+    warn_and_use_fallback,
 )
 
 
-def build_order_grid(p_values=(0, 1, 2), d_values=(0, 1), q_values=(0, 1, 2)):
-    """
-    构建ARIMA模型的参数网格
+def _normalize_order(order: tuple[int, int, int] | list[int]) -> tuple[int, int, int]:
+    if len(order) != 3:
+        raise ValueError("order must contain exactly three integers: (p, d, q)")
+    normalized = tuple(int(value) for value in order)
+    if any(value < 0 for value in normalized):
+        raise ValueError("order values must be non-negative")
+    return normalized
 
-    Args:
-        p_values (tuple, optional): _description_. Defaults to (0, 1, 2).
-        d_values (tuple, optional): _description_. Defaults to (0, 1).
-        q_values (tuple, optional): _description_. Defaults to (0, 1, 2).
 
-    Returns:
-        _type_: _description_
-    """
-    return [
-        (p, d, q) 
-        for p, d, q in product(p_values, d_values, q_values)
-    ]
+def _normalize_seasonal_order(order: tuple[int, int, int, int] | list[int]) -> tuple[int, int, int, int]:
+    if len(order) != 4:
+        raise ValueError("seasonal_order must contain exactly four integers: (P, D, Q, m)")
+    normalized = tuple(int(value) for value in order)
+    if any(value < 0 for value in normalized[:3]):
+        raise ValueError("seasonal_order values P, D, Q must be non-negative")
+    if normalized[3] <= 1:
+        raise ValueError("seasonal_order period m must be > 1")
+    return normalized
+
+
+def build_order_grid(
+    p_values: Iterable[int] = (0, 1, 2),
+    d_values: Iterable[int] = (0, 1),
+    q_values: Iterable[int] = (0, 1, 2),
+) -> list[tuple[int, int, int]]:
+    return [(int(p), int(d), int(q)) for p, d, q in product(p_values, d_values, q_values)]
 
 
 def select_arima_order(y: pd.Series, order_grid: Iterable[tuple[int, int, int]], ic: str = "aic"):
@@ -42,23 +55,14 @@ def select_arima_order(y: pd.Series, order_grid: Iterable[tuple[int, int, int]],
     best_score = float("inf")
 
     for order in order_grid:
+        normalized_order = _normalize_order(order)
         try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message=".*Non-invertible starting MA parameters found.*",
-                    category=UserWarning,
-                )
-                warnings.filterwarnings(
-                    "ignore",
-                    message=".*Non-stationary starting autoregressive parameters found.*",
-                    category=UserWarning,
-                )
-                result = ARIMA(y.astype(float), order=order).fit()
+            with _fit_warning_context():
+                result = ARIMA(y.astype(float), order=normalized_order).fit()
             score = float(getattr(result, ic))
             if score < best_score:
                 best_score = score
-                best_order = order
+                best_order = normalized_order
         except Exception:
             continue
 
@@ -68,19 +72,49 @@ def select_arima_order(y: pd.Series, order_grid: Iterable[tuple[int, int, int]],
     return best_order, best_score
 
 
-class ARIMAModel(FallbackMixin, BaseStatModel):
+class _fit_warning_context:
+    def __enter__(self):
+        self._ctx = warnings.catch_warnings()
+        self._ctx.__enter__()
+        warnings.filterwarnings(
+            "ignore",
+            message=".*Non-invertible starting MA parameters found.*",
+            category=UserWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message=".*Non-stationary starting autoregressive parameters found.*",
+            category=UserWarning,
+        )
+        return self
 
-    def __init__(self, order=(1, 1, 1), auto_order: bool = False, order_grid=None, ic: str = "aic"):
-        self.order = order
+    def __exit__(self, exc_type, exc, tb):
+        return self._ctx.__exit__(exc_type, exc, tb)
+
+
+class ARIMAModel(FallbackMixin, BaseStatModel):
+    def __init__(
+        self,
+        order: tuple[int, int, int] | list[int] = (1, 1, 1),
+        auto_order: bool = False,
+        order_grid: Iterable[tuple[int, int, int]] | None = None,
+        ic: str = "aic",
+    ):
+        self.order = _normalize_order(order)
         self.auto_order = auto_order
         self.order_grid = list(order_grid) if order_grid is not None else build_order_grid()
         self.ic = ic
-        self.selected_order = order
+        self.selected_order = self.order
         self.selected_score = None
         self._fallback = NaiveModel()
         self._result = None
 
-    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "ARIMAModel":
+    def fit(
+        self,
+        y: pd.Series | pd.DataFrame,
+        X_hist: pd.DataFrame | None = None,
+        X_future: pd.DataFrame | None = None,
+    ) -> "ARIMAModel":
         series = to_univariate_series(y).astype(float)
         self._fallback.fit(series)
         try:
@@ -95,22 +129,12 @@ class ARIMAModel(FallbackMixin, BaseStatModel):
                 self.selected_order = self.order
                 self.selected_score = None
 
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message=".*Non-invertible starting MA parameters found.*",
-                    category=UserWarning,
-                )
-                warnings.filterwarnings(
-                    "ignore",
-                    message=".*Non-stationary starting autoregressive parameters found.*",
-                    category=UserWarning,
-                )
+            with _fit_warning_context():
                 self._result = ARIMA(series, order=fit_order).fit()
         except Exception as exc:
             self._result = None
             warn_and_use_fallback(
-                model_name="ARIMAModel",
+                model_name=type(self).__name__,
                 fallback_name=type(self._fallback).__name__,
                 exc=exc,
             )
@@ -120,29 +144,50 @@ class ARIMAModel(FallbackMixin, BaseStatModel):
         validate_horizon(horizon)
         if self._result is None:
             return self._fallback_predict(horizon)
-        
         forecast = self._result.forecast(steps=horizon)
-        
         if not isinstance(forecast, pd.Series):
             forecast = pd.Series(forecast)
-        
         return forecast.reset_index(drop=True).rename("yhat")
 
 
+class ARModel(ARIMAModel):
+    def __init__(self, p: int = 1):
+        if p < 0:
+            raise ValueError("p must be non-negative")
+        super().__init__(order=(p, 0, 0))
+        self.p = p
+
+
+class MAModel(ARIMAModel):
+    def __init__(self, q: int = 1):
+        if q < 0:
+            raise ValueError("q must be non-negative")
+        super().__init__(order=(0, 0, q))
+        self.q = q
+
+
+class ARMAModel(ARIMAModel):
+    def __init__(self, p: int = 1, q: int = 1):
+        if p < 0 or q < 0:
+            raise ValueError("p and q must be non-negative")
+        super().__init__(order=(p, 0, q))
+        self.p = p
+        self.q = q
+
+
 class SARIMAModel(FallbackMixin, BaseStatModel):
-    
     def __init__(
         self,
-        order=(1, 1, 1),
-        seasonal_order=(1, 1, 1, 7),
+        order: tuple[int, int, int] | list[int] = (1, 1, 1),
+        seasonal_order: tuple[int, int, int, int] | list[int] = (1, 1, 1, 7),
         trend: str | None = None,
         enforce_stationarity: bool = True,
         enforce_invertibility: bool = True,
         simple_differencing: bool = False,
         fit_kwargs: dict | None = None,
     ):
-        self.order = order
-        self.seasonal_order = seasonal_order
+        self.order = _normalize_order(order)
+        self.seasonal_order = _normalize_seasonal_order(seasonal_order)
         self.trend = trend
         self.enforce_stationarity = enforce_stationarity
         self.enforce_invertibility = enforce_invertibility
@@ -153,23 +198,18 @@ class SARIMAModel(FallbackMixin, BaseStatModel):
         self._fallback = TrendFallbackModel()
         self._result = None
 
-    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "SARIMAModel":
+    def fit(
+        self,
+        y: pd.Series | pd.DataFrame,
+        X_hist: pd.DataFrame | None = None,
+        X_future: pd.DataFrame | None = None,
+    ) -> "SARIMAModel":
         series = to_univariate_series(y).astype(float)
         self._fallback.fit(series)
         try:
             from statsmodels.tsa.statespace.sarimax import SARIMAX
 
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message=".*Non-invertible starting MA parameters found.*",
-                    category=UserWarning,
-                )
-                warnings.filterwarnings(
-                    "ignore",
-                    message=".*Non-stationary starting autoregressive parameters found.*",
-                    category=UserWarning,
-                )
+            with _fit_warning_context():
                 self._result = SARIMAX(
                     series,
                     order=self.order,
@@ -232,7 +272,12 @@ class AutoARIMAModel(FallbackMixin, BaseStatModel):
         self._result = None
         self._fallback: ARIMAModel | None = None
 
-    def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "AutoARIMAModel":
+    def fit(
+        self,
+        y: pd.Series | pd.DataFrame,
+        X_hist: pd.DataFrame | None = None,
+        X_future: pd.DataFrame | None = None,
+    ) -> "AutoARIMAModel":
         series = to_univariate_series(y).astype(float)
         self._result = None
         try:
