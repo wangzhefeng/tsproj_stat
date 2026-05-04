@@ -239,9 +239,9 @@ def parse_args() -> AppConfig:
     parser.add_argument("--history_size", type=int, default=None)
     parser.add_argument("--predict_horizon", type=int, default=None)
     # 模型测试
-    parser.add_argument("--backtest_initial_train_size", type=int, default=None)  # TODO 加注释
-    parser.add_argument("--backtest_horizon", type=int, default=None)             # TODO 加注释
-    parser.add_argument("--backtest_step", type=int, default=None)                # TODO 加注释
+    parser.add_argument("--backtest_initial_train_size", type=int, default=None)  # 模型测试历史数据长度
+    parser.add_argument("--backtest_horizon", type=int, default=None)             # 模型测试未来数据长度
+    parser.add_argument("--backtest_step", type=int, default=None)                # 模型测试窗滑动步长
     parser.add_argument("--backtest_verbose", default=None)                       # TODO 加注释
     parser.add_argument("--backtest_progress_every", type=int, default=None)      # TODO 加注释
     parser.add_argument("--backtest_n_jobs", type=int, default=None)              # TODO 加注释
