@@ -19,6 +19,7 @@ from statsmodels.tsa.stattools import acf, adfuller, kpss, pacf
 
 
 def _safe_stat(fn_name: str, fn) -> dict:
+    """运行单个统计检验；失败时返回结构化错误而不是中断整套 EDA。"""
     try:
         statistic, pvalue, *_ = fn()
         return {"name": fn_name, "statistic": float(statistic), "pvalue": float(pvalue), "ok": True}
@@ -27,6 +28,7 @@ def _safe_stat(fn_name: str, fn) -> dict:
 
 
 def stationarity_report(series: pd.Series) -> list[dict]:
+    """输出 ADF/KPSS/PP 平稳性检验结果。"""
     out = [
         _safe_stat("adf", lambda: adfuller(series, autolag="AIC")),
         _safe_stat("kpss", lambda: _run_kpss(series)),
@@ -48,6 +50,7 @@ def _run_kpss(series: pd.Series):
 
 
 def acf_pacf_report(series: pd.Series, nlags: int = 24) -> dict:
+    """输出 ACF/PACF 数值，供报告和后续阶数判断使用。"""
     lags = min(nlags, max(1, len(series) // 2 - 1))
     return {
         "acf": list(np.asarray(acf(series, nlags=lags, fft=True), dtype=float)),
@@ -56,6 +59,7 @@ def acf_pacf_report(series: pd.Series, nlags: int = 24) -> dict:
 
 
 def decomposition_report(series: pd.Series, period: int = 7) -> dict:
+    """用 STL 估计趋势强度、季节强度和残差波动。"""
     if len(series) < period * 2:
         return {
             "period": period,
@@ -81,6 +85,7 @@ def decomposition_report(series: pd.Series, period: int = 7) -> dict:
 
 
 def cycle_report(series: pd.Series, nlags: int = 36) -> dict:
+    """从 FFT 主频和 ACF 峰值中提取周期候选。"""
     freq, power = periodogram(series.values)
     dominant_period = math.nan
     if len(freq) > 1 and np.any(power[1:] > 0):
@@ -99,6 +104,7 @@ def cycle_report(series: pd.Series, nlags: int = 36) -> dict:
 
 
 def seasonal_diff_report(series: pd.Series, seasonal_periods: int = 7) -> dict:
+    """输出 CH/OCSB 两类季节差分建议。"""
     try:
         d_ch = int(nsdiffs(series, m=seasonal_periods, max_D=2, test="ch"))
     except Exception:
@@ -115,6 +121,7 @@ def seasonal_diff_report(series: pd.Series, seasonal_periods: int = 7) -> dict:
 
 
 def heteroskedasticity_report(series: pd.Series) -> dict:
+    """输出异方差相关检验，重点关注 ARCH-LM。"""
     ret = series.diff().dropna()
     result: dict = {"arch_lm_stat": math.nan, "arch_lm_pvalue": math.nan,
                     "white_pvalue": math.nan, "bp_pvalue": math.nan}

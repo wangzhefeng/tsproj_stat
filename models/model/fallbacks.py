@@ -1,3 +1,8 @@
+"""模型 fallback 实现。
+
+复杂模型拟合失败时使用这些简单模型保证流程可继续，并在 model_info 中记录原因。
+"""
+
 from __future__ import annotations
 import warnings
 
@@ -18,6 +23,7 @@ def warn_and_use_fallback(*, model_name: str, fallback_name: str, exc: Exception
 
 
 class FallbackMixin:
+    """为模型类提供统一 fallback predict 入口。"""
     _fallback: BaseStatModel
 
     def _fallback_predict(self, horizon: int) -> pd.Series:
@@ -26,6 +32,7 @@ class FallbackMixin:
 
 
 class NaiveModel(BaseStatModel):
+    """最后值延续模型，作为最稳健的预测兜底。"""
     def __init__(self):
         self.last_value: float | None = None
 
@@ -44,6 +51,7 @@ class NaiveModel(BaseStatModel):
 
 
 class TrendFallbackModel(BaseStatModel):
+    """线性趋势外推兜底，适用于保留趋势信息的单变量序列。"""
     def __init__(self):
         self._coef = 0.0
         self._intercept = 0.0

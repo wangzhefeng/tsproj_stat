@@ -14,11 +14,14 @@ def prepare_standard_frame(
     value_cols: list[str] | None = None,
 ) -> pd.DataFrame:
     """
-    timeseries prepare
+    标准化历史时间序列数据。
+
+    这是 DataLoader 与 EDA 共用的清洗入口：统一处理时间列、目标列、
+    多源 value_cols、排序、数值化、inf/NaN 和线性插值。
     """
     local_df = df.copy()
 
-    # time_col check
+    # 时间列缺失时生成规则时间索引，支持 demo/smoke 数据快速运行。
     if time_col not in local_df.columns:
         local_df[time_col] = pd.date_range("2000-01-01", periods=len(local_df), freq=freq)
     else:
@@ -26,7 +29,7 @@ def prepare_standard_frame(
     logger.info(f"After time_col check, df:\n {local_df.head()}")
     logger.info(f"After time_col check, df shape: {local_df.shape}")
     
-    # target_col check
+    # 目标列是单目标 yhat 契约的核心字段，缺失时必须直接失败。
     if target_col not in local_df.columns:
         raise ValueError(f"target_col '{target_col}' not found in data columns {list(df.columns)}")
     else:
@@ -36,6 +39,7 @@ def prepare_standard_frame(
     
     selected_value_cols = [target_col]
     if value_cols is not None:
+        # 多源输入场景下保留配置指定的内生/外生列，但仍强制包含 target_col。
         selected_value_cols = []
         for col in value_cols:
             if col not in local_df.columns:
@@ -44,7 +48,7 @@ def prepare_standard_frame(
         if target_col not in selected_value_cols:
             selected_value_cols = [target_col, *selected_value_cols]
 
-    # feature filter
+    # 只保留主线需要的 canonical 列，避免无关原始字段进入模型输入。
     local_df = local_df[[time_col, *selected_value_cols]].sort_values(time_col).reset_index(drop=True)
     logger.info(f"After feature filter, df:\n {local_df.head()}")
     logger.info(f"After feature filter, df shape: {local_df.shape}")
@@ -64,6 +68,10 @@ def prepare_standard_frame(
 
 
 def prepare_future_exog_frame(df: pd.DataFrame, time_col: str, value_cols: list[str]) -> pd.DataFrame:
+    """标准化独立未来外生变量文件。
+
+    未来外生数据只负责提供预测期已知变量，不要求包含 target_col。
+    """
     local_df = df.copy()
     if time_col not in local_df.columns:
         raise ValueError(f"future time column '{time_col}' not found in data columns {list(df.columns)}")

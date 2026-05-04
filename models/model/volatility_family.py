@@ -1,3 +1,9 @@
+"""波动率模型。
+
+ARCH/GARCH 作为 optional 模型接入统一 fit/predict 契约；
+依赖不可用或拟合失败时回退到简单预测，避免主流程异常中断。
+"""
+
 from __future__ import annotations
 
 import numpy as np

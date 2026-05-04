@@ -4,6 +4,11 @@ import pandas as pd
 
 
 class FeatureEngineer:
+    """分析型特征构造器。
+
+    当前 features/ 只导出快照用于检查时间特征、lag 特征和监督学习标签形态，
+    不直接参与统计模型训练输入。
+    """
 
     def __init__(self, time_col: str = "ds", target_col: str = "y"):
         self.time_col = time_col
@@ -16,6 +21,7 @@ class FeatureEngineer:
         lags: list[int] | None = None,
         horizon: int = 1,
     ) -> tuple[pd.DataFrame, list[str], list[str]]:
+        """创建时间特征、滞后特征和未来 target shift 列。"""
         lags = lags or []
         out = df.copy()
 

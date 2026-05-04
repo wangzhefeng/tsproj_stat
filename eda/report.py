@@ -10,8 +10,7 @@ from scipy.signal import periodogram
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.tsa.seasonal import STL
 
-# Force a non-interactive backend so EDA plots work in tests and CLI runs
-# without requiring a GUI session.
+# 固定非交互式后端，保证 CLI、测试和无 GUI 环境都能生成 EDA 图。
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -25,6 +24,10 @@ def save_eda_outputs(
     output_dir: str = None,
     save_plots: bool = True,
 ) -> dict[str, str]:
+    """保存 EDA 结构化结果和可选图表。
+
+    summary/diagnostics 是后续决策和测试更稳定的接口；plots 主要用于人工检查。
+    """
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -57,7 +60,7 @@ def save_eda_outputs(
         fig.savefig(diff_path, dpi=150)
         plt.close(fig)
 
-        # Distribution: histogram + KDE
+        # 分布图：直方图 + KDE，用于快速检查偏态、厚尾和异常值。
         fig, ax = plt.subplots(figsize=(8, 4))
         series.plot.hist(ax=ax, bins=30, density=True, alpha=0.6, label="Histogram")
         series.plot.kde(ax=ax, label="KDE")
@@ -69,7 +72,7 @@ def save_eda_outputs(
         plt.close(fig)
         out["eda_distribution_plot_path"] = str(dist_path)
 
-        # FFT Periodogram
+        # 频域周期图：辅助判断主周期候选。
         freq, power = periodogram(series.values)
         if len(freq) > 1:
             fig, ax = plt.subplots(figsize=(10, 4))

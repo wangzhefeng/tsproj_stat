@@ -12,6 +12,7 @@ def load_demo_series(
     freq: str = "D",
     n_points: int = 200,
 ) -> pd.DataFrame:
+    """生成带轻微趋势和周期波动的内置 demo 序列，用于 smoke/test 场景。"""
     x = np.arange(n_points)
     y = 10 + 0.15 * x + np.sin(x / 8)
     df = pd.DataFrame({

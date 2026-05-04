@@ -23,6 +23,11 @@ from models.model.volatility_family import ARCHModel, GARCHModel
 
 @dataclass
 class ModelSpec:
+    """模型注册元信息。
+
+    stability 用于区分 stable/optional/experimental；supports_* 字段描述模型能力，
+    便于后续自动选择、文档生成或更严格的运行前校验。
+    """
     cls: type[BaseStatModel]
     default_params: dict
     family: str
@@ -63,6 +68,11 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
 
 
 def create_stat_model(name: str, params: dict | None = None) -> BaseStatModel:
+    """从 registry 创建模型实例。
+
+    默认参数先由 ModelSpec 提供，再由用户 model_params 覆盖；
+    实例化前会对 __init__ 签名做参数名校验，避免拼错参数被静默忽略。
+    """
     model_name = name.lower().strip()
     if model_name not in MODEL_REGISTRY:
         supported = ", ".join(sorted(MODEL_REGISTRY))

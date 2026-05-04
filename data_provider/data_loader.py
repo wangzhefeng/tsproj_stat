@@ -12,6 +12,7 @@ from utils.log_util import logger
 
 @dataclass
 class DataQualityReport:
+    """清洗后数据质量摘要，用于日志与 data_quality.json。"""
     total_rows: int
     missing_rows: int
     missing_ratio: float
@@ -52,8 +53,10 @@ def check_data_quality(
     validate_freq: bool = True,
 ) -> DataQualityReport:
     """
-    检查数据质量，超过 max_missing_ratio 则抛出 ValueError。
-    返回 DataQualityReport 供后续写入 JSON。
+    检查建模前数据质量。
+
+    缺失率超过 max_missing_ratio 直接失败；重复时间戳和频率不规则先记录告警，
+    交给调用方决定是否继续。返回值会写入 data_quality.json 作为运行证据。
     """
     total = len(df)
     missing = int(df[target_col].isna().sum())
@@ -102,6 +105,10 @@ def check_data_quality(
 
 @dataclass
 class DataLoader:
+    """历史数据与未来外生数据加载器。
+
+    该类只负责读取、标准清洗和质量检查；不承担预处理、特征工程或模型切分逻辑。
+    """
 
     def __init__(
         self,
@@ -173,6 +180,7 @@ class DataLoader:
         return df
 
     def load_future_exog(self, future_exog_cols: list[str], horizon: int) -> pd.DataFrame | None:
+        """读取预测期外生变量，并截取到预测 horizon 长度。"""
         if self.future_exog_path is None:
             return None
         if not future_exog_cols:
@@ -196,18 +204,18 @@ class DataLoader:
     
     def split_history_future(self, df: pd.DataFrame, history_size: int, horizon: int) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
-        split history and future 
+        从序列尾部切出训练历史窗口和未来评估窗口。
 
         Args:
-            df (pd.DataFrame): _description_
-            history_size (int): _description_
-            horizon (int): _description_
+            df: 已完成标准清洗和可选预处理的数据。
+            history_size: 预测阶段使用的历史窗口长度。
+            horizon: 预测未来步数，也是尾部保留的未来窗口长度。
 
         Raises:
-            ValueError: _description_
+            ValueError: 数据长度不足以同时覆盖 history_size 与 horizon。
 
         Returns:
-            tuple[pd.DataFrame, pd.DataFrame]: _description_
+            tuple[pd.DataFrame, pd.DataFrame]: history_df 与 future_df，均已重置索引。
         """
         if len(df) < history_size + horizon:
             raise ValueError("Not enough samples for requested history_size + horizon")

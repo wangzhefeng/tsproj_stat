@@ -13,6 +13,11 @@ from utils.log_util import logger
 
 
 class Trainer:
+    """训练阶段薄封装。
+
+    只负责通过 ModelFactory 创建模型并调用统一 fit 契约；训练失败时回退到 NaiveModel，
+    让后续产物仍能明确记录 fallback 原因。
+    """
 
     def __init__(self, model_name: str, model_params: dict | None = None):
         self.model_name = model_name
@@ -25,6 +30,7 @@ class Trainer:
         X_hist: pd.DataFrame | None = None,
         X_future: pd.DataFrame | None = None,
     ):
+        """拟合模型；异常时返回带 fallback 标记的 NaiveModel。"""
         model = self.factory.create_model(self.model_name, self.model_params)
         try:
             model.fit(y=y, X_hist=X_hist, X_future=X_future)

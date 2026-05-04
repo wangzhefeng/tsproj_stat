@@ -17,12 +17,12 @@ from utils.log_util import logger
 
 
 class ModelMonitor:
-    """Track rolling forecast quality and detect model degradation.
+    """记录线上/离线预测质量，用于发现模型退化。
 
-    Directory layout under monitor_dir/setting/:
-        predictions_log.csv   — one row per forecast step logged
-        actuals_log.csv       — actual values backfilled offline
-        metrics_history.csv   — aggregated metrics snapshots
+    monitor_dir/setting/ 下的文件约定：
+        predictions_log.csv   — 每个预测步一行
+        actuals_log.csv       — 后续回填的真实值
+        metrics_history.csv   — 滚动指标快照
     """
 
     _PRED_COLS = ["run_id", "forecast_ts", "horizon_step", "yhat", "yhat_lower", "yhat_upper"]
@@ -32,9 +32,9 @@ class ModelMonitor:
     def __init__(self, monitor_dir: str | Path, setting: str, window: int = 30):
         """
         Args:
-            monitor_dir: root directory for monitor files
-            setting: subdirectory name (typically model-data-pred_method)
-            window: number of most recent matched actuals to use for rolling metrics
+            monitor_dir: 监控文件根目录。
+            setting: 子目录名，通常与 model-data-strategy setting 一致。
+            window: 计算滚动指标时使用的最近匹配样本数。
         """
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -58,7 +58,7 @@ class ModelMonitor:
         yhat_upper: pd.Series | None = None,
         forecast_ts: str | None = None,
     ) -> None:
-        """Append a forecast to predictions_log.csv."""
+        """将一次预测结果追加写入 predictions_log.csv。"""
         ts = forecast_ts or datetime.utcnow().isoformat(timespec="seconds") + "Z"
         rows = []
         for step, val in enumerate(yhat, start=1):
@@ -74,12 +74,12 @@ class ModelMonitor:
         logger.info(f"[Monitor] logged {len(rows)} forecast steps for run_id={run_id!r}")
 
     def fill_actuals(self, actuals: pd.Series, forecast_ts: str, horizon_step_offset: int = 1) -> None:
-        """Backfill actual values for a given forecast_ts.
+        """按 forecast_ts 回填真实值。
 
         Args:
-            actuals: actual observed values (length == horizon)
-            forecast_ts: must match the forecast_ts used in log_forecast
-            horizon_step_offset: first step index (usually 1)
+            actuals: 实际观测值，长度通常等于 horizon。
+            forecast_ts: 必须与 log_forecast 中写入的 forecast_ts 匹配。
+            horizon_step_offset: 起始预测步编号，默认从 1 开始。
         """
         rows = []
         for i, val in enumerate(actuals):
@@ -96,7 +96,7 @@ class ModelMonitor:
     # ------------------------------------------------------------------
 
     def compute_rolling_metrics(self) -> dict[str, float]:
-        """Join predictions and actuals, compute MAE/RMSE/MAPE on last `window` matched rows."""
+        """合并预测与真实值，并在最近 window 个匹配样本上计算 MAE/RMSE/MAPE。"""
         pred_df = self._read_csv(self._pred_path, self._PRED_COLS)
         act_df = self._read_csv(self._act_path, self._ACT_COLS)
 

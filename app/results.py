@@ -15,6 +15,7 @@ from config import AppConfig
 # ##############################
 @dataclass(frozen=True)
 class RunArtifacts:
+    """一次运行对应的标准产物目录集合。"""
     setting: str
     data_name: str
     checkpoints_dir: Path
@@ -25,16 +26,19 @@ class RunArtifacts:
 
 
 def _resolve_data_name(data_path: str | None) -> str:
+    """从数据路径提取数据名；demo 数据使用固定名称便于结果归类。"""
     if data_path is None:
         return "demo_series"
     return Path(data_path).stem
 
 
 def _build_setting(model_name: str, data_name: str, strategy_label: str) -> str:
+    """统一构建 {model_name}-{data_name}-{strategy} 结果分组名。"""
     return f"{model_name}-{data_name}-{strategy_label}"
 
 
 def prepare_run_artifacts(cfg: AppConfig) -> RunArtifacts:
+    """为本次运行创建五类 setting 子目录。"""
     # 提取数据名称
     data_name = _resolve_data_name(cfg.data_path)
     # 构建结果目录
@@ -66,18 +70,21 @@ def prepare_run_artifacts(cfg: AppConfig) -> RunArtifacts:
 # 模型运行结果保存
 # ##############################
 def write_json(path: Path, payload: dict[str, Any]) -> str:
+    """写 JSON 并返回路径字符串，供 run_summary 汇总引用。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return str(path)
 
 
 def dataframe_to_csv(path: Path, df: pd.DataFrame) -> str:
+    """写 CSV 并返回路径字符串，统一各阶段落盘行为。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)
     return str(path)
 
 
 def model_info_payload(model, model_params: dict[str, Any]) -> dict[str, Any]:
+    """提取模型可追踪信息，包括 fallback 状态和常见阶数/评分字段。"""
     fallback = getattr(model, "_fallback", None)
     result = getattr(model, "_result", None)
     payload: dict[str, Any] = {
@@ -99,6 +106,7 @@ def model_info_payload(model, model_params: dict[str, Any]) -> dict[str, Any]:
 
 
 def forecast_timestamps(history_time: pd.Series | None, horizon: int, freq: str) -> pd.Series:
+    """根据历史最后一个时间戳生成未来预测时间索引。"""
     if history_time is None or history_time.empty:
         return pd.Series([pd.NaT] * horizon, name="timestamp")
 

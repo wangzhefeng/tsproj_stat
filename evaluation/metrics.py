@@ -4,6 +4,7 @@ import numpy as np
 
 
 def _to_arrays(y_true, y_pred):
+    """将指标输入统一转为 float ndarray，避免 pandas index 影响计算。"""
     return np.asarray(y_true, dtype=float), np.asarray(y_pred, dtype=float)
 
 

@@ -9,6 +9,7 @@ def validate_horizon(horizon: int) -> None:
 
 
 def to_univariate_series(y: pd.Series | pd.DataFrame) -> pd.Series:
+    """将 Series/DataFrame 统一转为单目标序列，默认取 DataFrame 第一列。"""
     if isinstance(y, pd.DataFrame):
         if y.shape[1] == 0:
             raise ValueError("Input dataframe is empty")
@@ -17,6 +18,7 @@ def to_univariate_series(y: pd.Series | pd.DataFrame) -> pd.Series:
 
 
 def to_dataframe(y: pd.Series | pd.DataFrame) -> pd.DataFrame:
+    """将单目标序列包装为 DataFrame，便于与 X_hist 合并。"""
     if isinstance(y, pd.DataFrame):
         return y.reset_index(drop=True)
     column = y.name or "y"
@@ -27,6 +29,7 @@ def combine_history_frame(
     y: pd.Series | pd.DataFrame,
     X_hist: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
+    """合并目标序列与历史多源输入，并保证目标列排在第一列。"""
     if X_hist is None:
         return to_dataframe(y).astype(float)
 

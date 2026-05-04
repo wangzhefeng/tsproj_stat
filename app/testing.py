@@ -8,6 +8,11 @@ from models.inference import normalize_inference_strategy, normalize_window_mode
 
 
 class Tester:
+    """回测阶段封装。
+
+    将 AppConfig 中的数据列、窗口参数和推理策略传给 rolling_backtest，
+    具体窗口切分与指标计算仍集中在 evaluation/backtest.py。
+    """
 
     def __init__(
         self,
@@ -43,6 +48,7 @@ class Tester:
         self.factory = ModelFactory()
 
     def evaluate(self, df: pd.DataFrame) -> BacktestResult:
+        """执行 rolling backtest 并返回结构化结果。"""
         return rolling_backtest(
             df=df,
             model_builder=lambda: self.factory.create_model(self.model_name, self.model_params),

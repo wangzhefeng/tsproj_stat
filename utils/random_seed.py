@@ -8,7 +8,7 @@ import numpy as np
 
 def set_seed(seed: int = 2025) -> None:
     """
-    设置可重复随机数
+    同步设置 Python random 与 numpy 随机种子，保证 smoke/test 结果可复现。
     """
     random.seed(seed)
     np.random.seed(seed)

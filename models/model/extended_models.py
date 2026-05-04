@@ -1,3 +1,9 @@
+"""扩展统计模型。
+
+prophet/tbats/neuralprophet 等依赖额外库或环境能力的模型统一放在这里，
+运行时依赖缺失或不兼容时必须显式 fallback 或抛出可读错误。
+"""
+
 from __future__ import annotations
 
 import numpy as np

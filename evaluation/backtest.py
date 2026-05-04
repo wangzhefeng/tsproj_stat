@@ -13,6 +13,11 @@ from utils.log_util import logger
 
 @dataclass
 class BacktestResult:
+    """rolling backtest 的结构化返回。
+
+    predictions_df 保存逐窗口逐步预测，metrics_df 保存窗口级指标，
+    summary_df/summary 保存跨窗口汇总，failed_windows 记录被跳过的失败窗口。
+    """
     predictions_df: pd.DataFrame
     metrics_df: pd.DataFrame
     summary_df: pd.DataFrame
@@ -36,6 +41,11 @@ def rolling_backtest(
     verbose: bool = False,
     progress_every: int = 10,
 ) -> BacktestResult:
+    """执行滚动回测。
+
+    expanding 窗口从序列开头逐步扩张；sliding 窗口保持固定 train_size。
+    单个窗口失败时记录错误并跳过，只要仍有成功窗口就继续产出评估结果。
+    """
     n = len(df)
     if train_size + horizon > n:
         raise ValueError("Not enough data for backtest")
@@ -64,6 +74,7 @@ def rolling_backtest(
 
     while start + horizon <= n:
         window_id += 1
+        # expanding 使用全部历史，sliding 只保留最近 train_size 行。
         train_start = 0 if resolved_window_mode == "expanding" else start - train_size
         train_slice = df.iloc[train_start:start].reset_index(drop=True)
         test_slice = df.iloc[start : start + horizon].reset_index(drop=True)
@@ -82,6 +93,7 @@ def rolling_backtest(
         test_time = test_slice[time_col] if time_col is not None and time_col in test_slice.columns else None
 
         try:
+            # 每个回测窗口都通过统一推理入口运行，保证 test 与 forecast 策略一致。
             pred = run_point_inference(
                 model_builder=model_builder,
                 history=train_y,
@@ -91,6 +103,7 @@ def rolling_backtest(
                 X_future=test_x_future,
             ).astype(float).reset_index(drop=True)
         except Exception as exc:
+            # 部分模型在个别窗口可能拟合失败；记录失败窗口，避免一个窗口拖垮整次评估。
             failed_windows.append(
                 {
                     "window_id": int(window_id),
@@ -138,6 +151,7 @@ def rolling_backtest(
             prediction_rows.append(row)
 
         if verbose and window_id % progress_every == 0:
+            # 这里显式 print 到 stdout，满足 CLI smoke/test 对终端进度可见性的要求。
             elapsed = time.perf_counter() - started_at
             msg = (
                 f"[backtest] window {window_id}/{total_windows} "
@@ -156,6 +170,7 @@ def rolling_backtest(
     metrics_df = pd.DataFrame(metric_rows)
     predictions_df = pd.DataFrame(prediction_rows)
     summary_values: dict[str, float | int | str] = {
+        # 汇总指标采用窗口级指标均值，窗口级明细仍保留在 metrics_df 中。
         "window_count": int(len(metrics_df)),
         "failed_windows": int(len(failed_windows)),
         "horizon": int(horizon),

@@ -2,11 +2,14 @@
 
 set -euo pipefail
 
+# 单变量风电脚本：使用 dataset/wind_dataset.csv，DATE 为时间列，WIND 为目标列。
+# SARIMA 拟合成本较高，本脚本默认采用偏快的日常参数集。
 cd "$(dirname "$0")/../.."
 
 model_name=sarima
 export LOG_NAME="$model_name"
 
+# 运行完整主流程：训练、rolling backtest 和未来预测，结果写入 saved_results/{setting}/。
 python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \

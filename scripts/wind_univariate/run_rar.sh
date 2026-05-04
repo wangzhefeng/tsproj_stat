@@ -2,11 +2,14 @@
 
 set -euo pipefail
 
+# 单变量风电脚本：使用 dataset/wind_dataset.csv，DATE 为时间列，WIND 为目标列。
+# RAR 是实验性扩展模型，建议主要用回测产物判断适用性。
 cd "$(dirname "$0")/../.."
 
 model_name=rar
 export LOG_NAME="$model_name"
 
+# 运行完整主流程：训练、rolling backtest 和未来预测，结果写入 saved_results/{setting}/。
 python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \

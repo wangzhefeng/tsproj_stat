@@ -7,6 +7,11 @@ import pandas as pd
 
 
 class BaseStatModel(ABC):
+    """统计模型统一抽象。
+
+    所有主线模型都通过 fit(y, X_hist=None, X_future=None) 接入训练，
+    多步推理由 models.inference 统一编排，模型自身只需保证 predict/predict_one 契约。
+    """
 
     @abstractmethod
     def fit(
@@ -22,7 +27,11 @@ class BaseStatModel(ABC):
         raise NotImplementedError
 
     def predict_one(self, X_future_one: pd.DataFrame | None = None) -> float | pd.Series:
-        """Compatibility bridge while the project migrates to a single-step contract."""
+        """单步预测桥接方法。
+
+        迁移期仍允许模型只实现 predict(1)，这里统一抽取第一步结果，
+        让 recursive/dirrec 策略可以依赖 predict_one 契约。
+        """
         pred = self.predict(1, X_future=X_future_one)
         if isinstance(pred, pd.Series):
             if pred.empty:

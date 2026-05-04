@@ -1,3 +1,9 @@
+"""指数平滑与 Theta 家族模型。
+
+ETSModel 是 SES/DES/TES 的统一入口，季节周期和 smoothing 参数统一由
+AppConfig/model_params 注入，模型内部只负责拟合与 fallback。
+"""
+
 from __future__ import annotations
 
 import itertools

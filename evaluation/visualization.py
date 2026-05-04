@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 
 def plot_backtest_predictions(predictions_df: pd.DataFrame, output_path: str, title: str) -> str:
+    """保存回测真实值与预测值对比图。"""
     fig, ax = plt.subplots(figsize=(11, 4))
     x_values = _resolve_x(predictions_df, "horizon_step")
     ax.plot(x_values, predictions_df["y_true"], label="y_true", linewidth=1.8)
@@ -22,6 +23,7 @@ def plot_backtest_predictions(predictions_df: pd.DataFrame, output_path: str, ti
 
 
 def plot_backtest_residuals(predictions_df: pd.DataFrame, output_path: str, title: str) -> str:
+    """保存回测残差随时间/步长变化图。"""
     fig, ax = plt.subplots(figsize=(11, 4))
     x_values = _resolve_x(predictions_df, "horizon_step")
     ax.plot(x_values, predictions_df["residual"], color="tab:red", linewidth=1.5)
@@ -34,6 +36,7 @@ def plot_backtest_residuals(predictions_df: pd.DataFrame, output_path: str, titl
 
 
 def plot_error_distribution(predictions_df: pd.DataFrame, output_path: str, title: str) -> str:
+    """保存回测残差分布图，用于观察偏态与异常误差。"""
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.hist(predictions_df["residual"], bins=min(20, max(len(predictions_df) // 2, 5)), color="tab:orange", alpha=0.8)
     ax.set_title(title)
@@ -51,6 +54,7 @@ def plot_forecast(
     time_col: str,
     target_col: str,
 ) -> str:
+    """保存历史窗口与未来预测拼接图。"""
     fig, ax = plt.subplots(figsize=(11, 4))
     history_x = _resolve_plot_values(history_df, time_col)
     forecast_x = _resolve_plot_values(forecast_df, "timestamp")
@@ -64,6 +68,7 @@ def plot_forecast(
 
 
 def _resolve_x(df: pd.DataFrame, fallback_col: str):
+    """优先使用 timestamp 作横轴，缺失时退回步长列或自然序号。"""
     if "timestamp" in df.columns and df["timestamp"].notna().any():
         return pd.to_datetime(df["timestamp"])
     return range(1, len(df) + 1) if fallback_col not in df.columns else df[fallback_col]
@@ -76,6 +81,7 @@ def _resolve_plot_values(df: pd.DataFrame, time_col: str):
 
 
 def _save_figure(fig, output_path: str) -> str:
+    """统一保存 matplotlib 图形并关闭句柄，避免测试中累积 figure。"""
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150)

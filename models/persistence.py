@@ -11,6 +11,7 @@ from utils.log_util import logger
 
 
 def _collect_dep_versions(pkgs: list[str]) -> dict[str, str]:
+    """采集关键依赖版本，用于模型加载时提示环境漂移。"""
     versions: dict[str, str] = {}
     for pkg in pkgs:
         try:
@@ -24,6 +25,7 @@ _KEY_DEPS = ["statsmodels", "numpy", "pandas", "pmdarima", "scikit-learn"]
 
 
 def _warn_if_dep_mismatch(saved_deps: dict[str, str]) -> None:
+    """模型加载时只对依赖版本差异告警，不阻断历史 checkpoint 读取。"""
     current = _collect_dep_versions(list(saved_deps.keys()))
     for pkg, saved_ver in saved_deps.items():
         cur_ver = current.get(pkg, "unknown")

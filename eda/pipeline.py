@@ -16,15 +16,16 @@ def run_eda(df: pd.DataFrame,
             period: int = 7,
             nlags: int = 24,
             save_plots: bool = True) -> dict[str, str]:
-    # prepare
+    """执行 EDA 主流程：准备序列、运行诊断、保存结构化摘要和图表。"""
+    # 准备等频单变量序列；当前 EDA 在预处理前运行，用于观察原始清洗序列。
     series = prepare_series(df, time_col=time_col, target_col=target_col, freq=freq)
     logger.info(f"EDA series:\n {series.head()}")
     logger.info(f"EDA series shape: {series.shape}")
     
-    # diagnostics
+    # 诊断层只返回结构化结果，落盘和绘图统一交给 report 层。
     summary, diagnostics = run_diagnostics(series, period=period, nlags=nlags)
     
-    # result
+    # 保存 eda_summary.json、eda_diagnostics.csv 和 plots/*。
     result = save_eda_outputs(
         series=series,
         summary=summary,

@@ -22,6 +22,11 @@ def _is_allowed_output_dir(output_dir: str) -> bool:
 
 @dataclass
 class AppConfig:
+    """项目唯一运行配置。
+
+    CLI、YAML 配置和默认值最终都会收敛到这个 dataclass，避免入口层、
+    应用层和模型层各自维护一套参数体系。
+    """
     # 项目参数
     project_name: str = "tsproj_stat"
     seed: int = 2026
@@ -69,7 +74,7 @@ class AppConfig:
     scale: bool = False
     scaler_type: str = "standard"
 
-    # Data preprocessing
+    # 数据预处理：保持可逆处理集中在 DataProcessor，模型实现不再各自拆解趋势/季节项。
     denoise_enabled: bool = False
     denoise_method: str = "none"
     denoise_window: int = 3
@@ -86,24 +91,24 @@ class AppConfig:
     ets_smoothing_grid_seasonal: list[float] | None = None
     ets_validation_size: int | None = None
 
-    # Auto model selection
+    # 自动模型选择：用小规模 rolling backtest 在候选模型中选默认指标最优者。
     auto_select: bool = False
     auto_select_candidates: list[str] = field(default_factory=lambda: ["naive", "arima", "ets", "auto_arima"])
     auto_select_metric: str = "mae"
     auto_select_n_windows: int = 5
 
-    # Data quality
+    # 数据质量：在清洗后检查缺失比例和时间间隔规则性。
     max_missing_ratio: float = 0.3
     validate_freq: bool = True
 
-    # Prediction intervals
+    # 概率预测：仅在模型或推理策略支持时返回区间；否则区间列可为 NaN。
     return_intervals: bool = False
     interval_alpha: float = 0.05
     
     # Log format
     log_format: str = "text"
 
-    # model result output dir
+    # 结果目录：生产输出必须归属 saved_results 五类一级命名空间。
     checkpoints_dir: str = "saved_results/checkpoints"
     train_results_dir: str = "saved_results/results_train"
     test_results_dir: str = "saved_results/results_test"
@@ -111,18 +116,23 @@ class AppConfig:
     eda_output_dir: str = "saved_results/results_eda"
 
     def resolved_inference_strategy(self) -> str:
+        """统一解析新字段 inference_strategy 与旧字段 pred_method。"""
         return normalize_inference_strategy(self.inference_strategy, self.pred_method)
 
     def resolved_backtest_train_size(self) -> int:
+        """优先使用新字段 backtest_train_size，兼容旧字段 backtest_initial_train_size。"""
         return int(self.backtest_train_size or self.backtest_initial_train_size)
 
     def resolved_backtest_window_mode(self) -> str:
+        """标准化回测窗口模式，当前支持 expanding 与 sliding。"""
         return normalize_window_mode(self.backtest_window_mode)
 
     def setting_strategy_label(self) -> str:
+        """构建结果目录 setting 时使用的策略标签，保留旧 pred_method 命名兼容。"""
         return resolve_strategy_label_for_setting(self.inference_strategy, self.pred_method)
 
     def validate(self) -> None:
+        """在运行前集中校验配置，避免错误下沉到模型拟合阶段才暴露。"""
         _ensure_positive(self.history_size, "history_size")
         _ensure_positive(self.predict_horizon, "predict_horizon")
         _ensure_positive(self.resolved_backtest_train_size(), "backtest_train_size")
@@ -191,6 +201,7 @@ DEFAULT_CONFIG = AppConfig()
 
 
 def ensure_output_dirs(cfg: AppConfig) -> None:
+    """创建五类结果根目录；具体 setting 子目录由 app.results 负责创建。"""
     Path(cfg.checkpoints_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.train_results_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.test_results_dir).mkdir(parents=True, exist_ok=True)

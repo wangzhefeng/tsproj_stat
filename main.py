@@ -10,6 +10,7 @@ from utils.log_util import logger
 
 
 def main() -> None:
+    """最小示例入口：使用默认 AppConfig 直接运行完整 ModelApp。"""
     cfg = AppConfig()
     result = ModelApp(cfg).run()
     logger.info("ModelApp done:", result)

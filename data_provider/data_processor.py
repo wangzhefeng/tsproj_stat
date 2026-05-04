@@ -9,6 +9,7 @@ def infer_seasonal_period(
     acf_max_lag: int = 48,
     seasonality_strength_threshold: float = 0.3,
 ) -> int | None:
+    """从 ACF 局部峰值和简单频域能量中推断候选季节周期。"""
     values = pd.Series(series).astype(float).reset_index(drop=True)
     if len(values) < 4:
         return None
@@ -58,7 +59,10 @@ def infer_seasonal_period(
 
 class DataProcessor:
     """
-    Preprocessing for denoising, detrending, and reversible decomposition transforms.
+    可逆数据预处理器。
+
+    主线支持轻量去噪、去趋势和季节分解。fit_transform() 会把目标序列转换到
+    更适合统计模型学习的尺度；inverse_forecast() 再将预测值重组回原始业务尺度。
     """
 
     def __init__(
@@ -125,6 +129,7 @@ class DataProcessor:
 
     @property
     def enabled(self) -> bool:
+        """任一预处理能力开启时，下游预测输出需要执行逆变换。"""
         return (
             self.denoise_method != "none"
             or self.detrend_method != "none"
@@ -132,6 +137,7 @@ class DataProcessor:
         )
 
     def fit_transform(self, series: pd.Series) -> pd.Series:
+        """拟合预处理参数并返回建模用序列。"""
         values = pd.Series(series).astype(float).reset_index(drop=True)
 
         if self.denoise_method != "none":
@@ -147,6 +153,7 @@ class DataProcessor:
         return transformed.rename(series.name)
 
     def inverse_transform(self, transformed_series: pd.Series) -> pd.Series:
+        """将训练期转换序列还原，主要用于验证可逆性。"""
         self._check_fitted()
         values = pd.Series(transformed_series).astype(float).reset_index(drop=True)
         if self._mode == "decomposition":
@@ -155,6 +162,7 @@ class DataProcessor:
         return (values + trend).rename(transformed_series.name)
 
     def inverse_forecast(self, forecast_values: pd.Series | np.ndarray | list[float]) -> pd.Series:
+        """将未来预测值从建模尺度还原到原始目标尺度。"""
         self._check_fitted()
         pred = pd.Series(forecast_values).astype(float).reset_index(drop=True)
         if self._mode == "decomposition":
@@ -164,6 +172,7 @@ class DataProcessor:
 
     @staticmethod
     def remove_noise(series: pd.Series, method: str = "moving_average", window: int = 3) -> pd.Series:
+        """执行轻量去噪；当前只保留无额外依赖的滑动均值和滑动中位数。"""
         if window < 1:
             raise ValueError("window must be >= 1")
         if method == "moving_average":
@@ -177,6 +186,7 @@ class DataProcessor:
         raise ValueError("method must be one of {'none', 'moving_average', 'moving_median'}")
 
     def _fit_simple_transform(self, series: pd.Series) -> pd.Series:
+        """无季节分解时只拟合趋势项，并返回去趋势后的序列。"""
         self._mode = "simple"
         trend = self._fit_trend(series)
         self._trend_train = trend
@@ -187,6 +197,7 @@ class DataProcessor:
         return series - trend
 
     def _fit_decomposition(self, series: pd.Series) -> pd.Series:
+        """拟合季节分解，并按 decomposition_target 决定模型学习目标。"""
         period = self.seasonal_period or infer_seasonal_period(
             series,
             acf_max_lag=self.acf_max_lag,

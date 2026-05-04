@@ -14,10 +14,9 @@ from utils.log_util import logger
 
 
 class AutoSelector:
-    """Rank candidate models via a mini rolling backtest and return the best model name.
+    """用小规模 rolling backtest 对候选模型排序，并返回最优模型名。
 
-    Uses a small number of backtest windows (n_windows) to keep evaluation fast.
-    The model with the lowest score on `metric` wins.
+    通过 n_windows 控制评估成本；除 r2 以外，当前按 metric 越小越优选择模型。
     """
 
     def __init__(
@@ -52,7 +51,7 @@ class AutoSelector:
         target_col: str = "y",
         time_col: str = "ds",
     ) -> str:
-        """Evaluate all candidates and return the name of the best one."""
+        """评估全部候选模型，并返回有效得分最优的模型名。"""
         n = len(y)
         total_needed = self.initial_train_size + self.horizon
         if n < total_needed:
@@ -60,7 +59,7 @@ class AutoSelector:
                 f"AutoSelector needs at least {total_needed} data points, got {n}"
             )
 
-        # Compute step so we get at most n_windows windows
+        # 计算窗口步长，使自动选择最多评估 n_windows 个窗口，避免 CLI 默认运行过慢。
         available = n - total_needed
         step = max(1, available // self.n_windows)
 

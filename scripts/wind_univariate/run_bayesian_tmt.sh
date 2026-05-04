@@ -2,11 +2,14 @@
 
 set -euo pipefail
 
+# 单变量风电脚本：使用 dataset/wind_dataset.csv，DATE 为时间列，WIND 为目标列。
+# bayesian_tmt 当前是实验性单序列贝叶斯滞后回归近似，结果需结合回测解读。
 cd "$(dirname "$0")/../.."
 
 model_name=bayesian_tmt
 export LOG_NAME="$model_name"
 
+# 运行完整主流程：训练、rolling backtest 和未来预测，结果写入 saved_results/{setting}/。
 python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \

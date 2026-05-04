@@ -1,3 +1,9 @@
+"""多变量统计模型。
+
+主线仍保持单目标 yhat 输出；多变量模型通过 X_hist 接收内生/外生历史列，
+预测结果只抽取目标列对应的未来值。
+"""
+
 from __future__ import annotations
 
 import numpy as np

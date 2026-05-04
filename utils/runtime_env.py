@@ -5,6 +5,11 @@ from pathlib import Path
 
 
 def ensure_mpl_config_dir(base_dir: str | Path | None = None) -> str:
+    """确保 matplotlib 使用项目内缓存目录。
+
+    受限环境下默认用户目录可能不可写；在入口启动早期设置 MPLCONFIGDIR，
+    可以避免 EDA/可视化阶段产生无关缓存告警。
+    """
     existing = os.environ.get("MPLCONFIGDIR")
     if existing:
         return existing

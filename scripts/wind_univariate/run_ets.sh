@@ -2,11 +2,14 @@
 
 set -euo pipefail
 
+# 单变量风电脚本：使用 dataset/wind_dataset.csv，DATE 为时间列，WIND 为目标列。
+# ETS 是指数平滑统一入口，季节项和调参可通过 model_params/CLI 扩展。
 cd "$(dirname "$0")/../.."
 
 model_name=ets
 export LOG_NAME="$model_name"
 
+# 运行完整主流程：训练、rolling backtest 和未来预测，结果写入 saved_results/{setting}/。
 python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \

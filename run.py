@@ -53,12 +53,14 @@ def _parse_model_params(value: str | None) -> dict:
 
 
 def _parse_csv_list(value: str | None) -> list[str]:
+    """解析 CLI 中逗号分隔的字符串列表，空值保持为空列表。"""
     if value is None:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def _parse_csv_float_list(value: str | None) -> list[float] | None:
+    """解析 ETS 平滑参数网格，None 表示沿用默认配置。"""
     if value is None:
         return None
     items = [item.strip() for item in value.split(",") if item.strip()]
@@ -68,11 +70,9 @@ def _parse_csv_float_list(value: str | None) -> list[float] | None:
 
 
 def _load_default_config(config_module: str, config_class: str):
-    # config.default.py
+    """按模块名动态加载默认配置，允许未来复用同一 CLI 入口切换配置类。"""
     module = importlib.import_module(config_module)
-    # AppConfig class
     cfg_cls = getattr(module, config_class)
-    # 默认参数配置: AppConfig 实例
     cfg = cfg_cls()
     
     if not isinstance(cfg, AppConfig):
@@ -82,6 +82,11 @@ def _load_default_config(config_module: str, config_class: str):
 
 
 def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
+    """将显式传入的 CLI 参数覆盖到 AppConfig。
+
+    只处理非 None 参数，避免未传入的命令行字段覆盖配置文件或默认值。
+    历史字段如 pred_method、backtest_initial_train_size 仍在这里兼容。
+    """
     if getattr(args, "project_name", None) is not None:
         cfg.project_name = args.project_name
     if getattr(args, "seed", None) is not None:
@@ -232,10 +237,11 @@ def parse_args() -> AppConfig:
     parser.add_argument("--future_exog_path", type=str, default=None)      # 未来数据的路径
     parser.add_argument("--future_exog_time_col", type=str, default=None)  # 未来数据时间列
     parser.add_argument("--future_exog_cols", type=str, default=None)      # 未来数据外生变量
-    # 模型参数
+    # 模型参数：model_params 使用 JSON 对象文本，避免为每类模型扩散专用 CLI 字段。
     parser.add_argument("--model_name", type=str, default=None)
     parser.add_argument("--model_params", type=str, default=None)
     parser.add_argument("--inference_strategy", type=str, default=None)
+    # pred_method 是旧字段；仍保留用于 setting 命名和旧脚本兼容。
     parser.add_argument("--pred_method", type=str, default=None)
     # 任务参数
     parser.add_argument("--do_train", default=None)
@@ -250,21 +256,21 @@ def parse_args() -> AppConfig:
     parser.add_argument("--backtest_initial_train_size", type=int, default=None)  # 兼容旧字段
     parser.add_argument("--backtest_horizon", type=int, default=None)             # 模型测试未来数据长度
     parser.add_argument("--backtest_step", type=int, default=None)                # 模型测试窗滑动步长
-    parser.add_argument("--backtest_window_mode", type=str, default=None)
-    parser.add_argument("--backtest_verbose", default=None)                       # TODO 加注释
-    parser.add_argument("--backtest_progress_every", type=int, default=None)      # TODO 加注释
-    parser.add_argument("--backtest_n_jobs", type=int, default=None)              # TODO 加注释
+    parser.add_argument("--backtest_window_mode", type=str, default=None)         # expanding 或 sliding
+    parser.add_argument("--backtest_verbose", default=None)                       # 是否在终端打印回测进度
+    parser.add_argument("--backtest_progress_every", type=int, default=None)      # 每多少个窗口打印一次进度
+    parser.add_argument("--backtest_n_jobs", type=int, default=None)              # 预留并行参数，当前主线仍串行回测
     # 特征工程
     parser.add_argument("--enable_datetime_features", default=None)
     parser.add_argument("--lags", type=str, default=None)
     parser.add_argument("--scale", default=None)
     parser.add_argument("--scaler_type", type=str, default=None)
     # 数据预处理
-    parser.add_argument("--denoise_enabled", default=None)            # TODO 加注释
-    parser.add_argument("--denoise_method", type=str, default=None)
-    parser.add_argument("--denoise_window", type=int, default=None)
-    parser.add_argument("--detrend_method", type=str, default=None)   # TODO 加注释
-    parser.add_argument("--seasonal_period", type=int, default=None)  # TODO 加注释
+    parser.add_argument("--denoise_enabled", default=None)            # 兼容旧开关；若 method 为 none 会默认转 moving_average
+    parser.add_argument("--denoise_method", type=str, default=None)   # none / moving_average / moving_median
+    parser.add_argument("--denoise_window", type=int, default=None)   # 去噪或 moving_average 趋势窗口
+    parser.add_argument("--detrend_method", type=str, default=None)   # none / linear / moving_average
+    parser.add_argument("--seasonal_period", type=int, default=None)  # 显式季节周期；缺省时部分流程会尝试自动推断
     
     parser.add_argument("--decomposition_method", type=str, default=None)  # 时间序列分解
     parser.add_argument("--decomposition_target", type=str, default=None)
@@ -283,7 +289,7 @@ def parse_args() -> AppConfig:
     parser.add_argument("--auto_select_candidates", type=str, default=None)
     parser.add_argument("--auto_select_metric", type=str, default=None)
     parser.add_argument("--auto_select_n_windows", type=int, default=None)
-    # 数据质量
+    # 数据质量：在进入建模前暴露缺失率和时间间隔异常，避免回测阶段才发现输入问题。
     parser.add_argument("--max_missing_ratio", type=float, default=None)
     parser.add_argument("--validate_freq", default=None)
     # 概率预测
@@ -300,7 +306,8 @@ def parse_args() -> AppConfig:
     args = parser.parse_args()
 
     if getattr(args, "config", None) is not None:
-        # Collect non-None CLI overrides to pass into load_config
+        # 有配置文件时采用“默认配置 -> CLI 覆盖 -> YAML 加 CLI 覆盖”的顺序。
+        # 这里先构造 cli_override_dict，让 YAML 加载器只覆盖用户显式传入的字段。
         cli_override_dict: dict = {}
         
         # 默认参数

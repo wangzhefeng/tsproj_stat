@@ -11,6 +11,7 @@ from data_provider.data_transfer import combine_history_frame, to_dataframe, to_
 
 INFERENCE_STRATEGIES = {"single_step", "direct", "recursive", "dirrec"}
 WINDOW_MODES = {"expanding", "sliding"}
+# pred_method 是旧命名；统一映射到 inference_strategy 后再执行推理。
 PRED_METHOD_ALIASES = {
     "one_step": "single_step",
     "single_step": "single_step",
@@ -24,6 +25,7 @@ def normalize_inference_strategy(
     inference_strategy: str | None,
     pred_method: str | None = None,
 ) -> str:
+    """标准化多步推理策略名称，并兼容旧 pred_method 别名。"""
     candidate = inference_strategy or pred_method or "direct"
     normalized = PRED_METHOD_ALIASES.get(str(candidate).strip().lower())
     if normalized is None:
@@ -35,6 +37,7 @@ def normalize_inference_strategy(
 
 
 def normalize_window_mode(window_mode: str | None) -> str:
+    """标准化 rolling backtest 的窗口模式。"""
     candidate = (window_mode or "expanding").strip().lower()
     if candidate not in WINDOW_MODES:
         raise ValueError(f"backtest_window_mode must be one of {sorted(WINDOW_MODES)}")
@@ -45,6 +48,7 @@ def resolve_strategy_label_for_setting(
     inference_strategy: str | None,
     pred_method: str | None,
 ) -> str:
+    """确定结果目录 setting 中使用的策略标签，兼容旧脚本命名。"""
     if inference_strategy:
         return normalize_inference_strategy(inference_strategy, None)
     if pred_method:
@@ -121,6 +125,13 @@ def run_point_inference(
     X_hist: pd.DataFrame | None = None,
     X_future: pd.DataFrame | None = None,
 ) -> pd.Series:
+    """执行点预测的统一多步推理编排。
+
+    single_step: 只允许 horizon=1；
+    direct: 每个预测步重新拟合一个模型并取对应步长的最后一个预测值；
+    recursive: 每一步把上一轮预测追加回历史，再预测下一步；
+    dirrec: 逐步重建模型，同时使用递归扩展后的历史。
+    """
     strategy = normalize_inference_strategy(inference_strategy, None)
     validate_horizon(horizon)
     validate_single_step_horizon(strategy, horizon)
@@ -130,12 +141,14 @@ def run_point_inference(
     future_frame = None if X_future is None else to_dataframe(X_future).astype(float).reset_index(drop=True)
 
     if strategy == "single_step":
+        # 单步策略只拟合一次，严格对应 predict_one 契约。
         model = model_builder()
         first_future = _future_row(future_frame, 0)
         model.fit(history_series, X_hist=history_frame, X_future=first_future)
         return pd.Series([_predict_one(model, first_future)], name="yhat")
 
     if strategy == "direct":
+        # direct 策略按 step=1..horizon 独立拟合，避免把预测值递归写回历史。
         preds: list[float] = []
         for step_idx in range(horizon):
             model = model_builder()
@@ -148,6 +161,7 @@ def run_point_inference(
     hist_frame = history_frame.copy()
     preds = []
     for step_idx in range(horizon):
+        # recursive/dirrec 都会把预测追加回历史；dirrec 每步重建模型，recursive 复用模型副本。
         model = model_builder() if strategy == "dirrec" else copy.deepcopy(model_builder())
         next_future = _future_row(future_frame, step_idx)
         model.fit(hist, X_hist=hist_frame, X_future=next_future)
@@ -167,6 +181,11 @@ def run_interval_inference(
     X_future: pd.DataFrame | None = None,
     alpha: float = 0.05,
 ) -> pd.DataFrame:
+    """执行区间预测编排。
+
+    只有 single_step/direct 可以从每个直接预测模型取原生区间；
+    recursive/dirrec 暂时返回点预测和 NaN 区间，避免伪造不可靠置信区间。
+    """
     strategy = normalize_inference_strategy(inference_strategy, None)
     point = run_point_inference(
         model_builder=model_builder,

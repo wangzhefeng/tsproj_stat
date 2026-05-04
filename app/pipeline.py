@@ -42,6 +42,11 @@ from utils.log_util import logger, configure_logging, set_run_id, timed_stage
 
 @dataclass
 class PrepareResult:
+    """建模前准备阶段的结构化返回。
+
+    下游训练、回测和预测都从这里读取同一份历史目标序列、多源输入、
+    未来外生变量和可逆预处理器，避免不同阶段重复切分数据。
+    """
     df: pd.DataFrame
     history_df: pd.DataFrame
     history_y: pd.Series
@@ -56,12 +61,21 @@ class PrepareResult:
 
 @dataclass
 class FeatureSnapshotResult:
+    """分析特征快照的落盘结果。
+
+    该快照仅用于检查特征工程形态，不进入当前统计模型训练主链路。
+    """
     path: str
     feature_columns: list[str]
     target_shift_columns: list[str]
 
 
 class ModelApp:
+    """完整应用编排层。
+
+    run.py 只负责解析配置；真正的项目主流程在这里按 EDA、数据准备、
+    训练、回测、预测和结果汇总顺序执行。
+    """
 
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
@@ -82,12 +96,14 @@ class ModelApp:
 
     @property
     def effective_endog_cols(self) -> list[str]:
+        """保证 target_col 永远位于内生变量第一列，符合单目标 yhat 输出契约。"""
         cols = self.cfg.endog_cols or [self.cfg.target_col]
         ordered = [self.cfg.target_col, *[col for col in cols if col != self.cfg.target_col]]
         return ordered
 
     @property
     def model_value_cols(self) -> list[str]:
+        """历史建模输入列 = 内生变量 + 历史外生变量，并去除重复列。"""
         cols = []
         for col in [*self.effective_endog_cols, *self.cfg.exog_cols]:
             if col not in cols:
@@ -96,6 +112,11 @@ class ModelApp:
 
     @property
     def resolved_model_params(self) -> dict:
+        """将 CLI 顶层参数折叠进模型参数。
+
+        当前主要服务 ETS：平滑网格和 seasonal_period 可以通过通用 CLI 字段传入，
+        最终仍以 model_params 的形式交给模型工厂。
+        """
         params = dict(self.cfg.model_params)
         if self.cfg.model_name == "ets":
             params.setdefault("tune_smoothing_params", self.cfg.ets_tune_smoothing_params)
@@ -240,6 +261,7 @@ class ModelApp:
         return self._write_run_summary(out)
 
     def _load_dataset(self) -> pd.DataFrame:
+        """加载历史数据，并将清洗后的质量报告写入训练结果目录。"""
         df = self.loader.load_data()
         if self.loader.quality_report is not None:
             try:
@@ -250,6 +272,11 @@ class ModelApp:
         return df
 
     def _prepare_target_series(self, df: pd.DataFrame) -> PrepareResult:
+        """准备所有建模阶段共享的数据视图。
+
+        该阶段会完成可逆预处理、历史/未来切分、目标序列缩放和未来外生变量读取。
+        如果这里失败，说明后续 train/test/forecast 都缺少基本输入，应直接中断。
+        """
         local_df = df.copy()
         # ------------------------------
         # 数据预处理
@@ -279,7 +306,7 @@ class ModelApp:
             metadata["processor_decomposition_target"] = self.cfg.decomposition_target
             logger.info(f"After data processing, df:\n {local_df}")
         
-        # 数据分割
+        # 数据分割：预测阶段只使用 history_size 长度的历史窗口，最后 horizon 行保留为未来区间。
         history_df, _future = self.loader.split_history_future(
             df=local_df,
             history_size=self.cfg.history_size,
@@ -296,7 +323,7 @@ class ModelApp:
         logger.info(f"After data split history_y:\n {history_y}")
         logger.info(f"After data split history_time:\n {history_time}")
         
-        # 数据缩放
+        # 数据缩放：当前仅缩放目标列，并同步回多源输入中的 target_col。
         if self.cfg.scale:
             scaler = FeatureScaler(self.cfg.scaler_type)
             scaled = scaler.fit_transform(pd.DataFrame({self.cfg.target_col: history_y}))
@@ -330,6 +357,11 @@ class ModelApp:
         )
 
     def _export_feature_snapshot(self, df: pd.DataFrame) -> FeatureSnapshotResult:
+        """导出分析型特征快照。
+
+        features/ 目前不参与统计模型训练；这里落盘是为了检查时间特征、
+        lag 特征和监督学习 target shift 的形态。
+        """
         engineer = FeatureEngineer(time_col=self.cfg.time_col, target_col=self.cfg.target_col)
         featured_df, feature_cols, target_shift_cols = engineer.create_features(
             df=df[[self.cfg.time_col, self.cfg.target_col]].copy(),
@@ -346,6 +378,7 @@ class ModelApp:
         )
 
     def _write_run_summary(self, out: dict[str, str]) -> dict[str, str]:
+        """写出本次运行的总索引，方便从 forecast 目录反查各阶段产物。"""
         summary_path = self.artifacts.forecast_results_dir / "run_summary.json"
         summary_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
         result = dict(out)
@@ -355,6 +388,7 @@ class ModelApp:
     # EDA, training, testing, forecasting
     # ##############################
     def eda(self, df: pd.DataFrame) -> dict[str, str]:
+        """执行 EDA 子流程；上层 run() 会捕获异常，EDA 失败不阻断建模。"""
         if not self.cfg.do_eda:
             return {}
         
@@ -369,6 +403,7 @@ class ModelApp:
         return result
     
     def train(self, prepared: PrepareResult) -> dict[str, str]:
+        """训练模型并保存 checkpoint、训练序列和模型元信息。"""
         if not self.cfg.do_train:
             return {}
         # model training
@@ -446,9 +481,10 @@ class ModelApp:
         }
 
     def test(self, df: pd.DataFrame) -> dict[str, str]:
+        """执行 rolling backtest，并保存窗口级预测、指标汇总和诊断图。"""
         if not self.cfg.do_test:
             return {}
-        # model testing
+        # 回测阶段重新按窗口训练模型，用于评估策略在历史滚动窗口上的稳定性。
         tester = Tester(
             model_name=self.cfg.model_name,
             model_params=self.resolved_model_params,
@@ -466,7 +502,7 @@ class ModelApp:
             progress_every=self.cfg.backtest_progress_every,
         )
         result = tester.evaluate(df[[self.cfg.time_col, *self.model_value_cols]].copy())
-        # model testing saving
+        # 回测产物分为窗口指标、逐点预测、汇总指标和图形，便于后续误差分析。
         metrics_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics.csv", result.metrics_df)
         predictions_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_predictions.csv", result.predictions_df)
         summary_path_csv = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics_summary.csv", result.summary_df)
@@ -518,9 +554,10 @@ class ModelApp:
         }
 
     def forecast(self, prepared: PrepareResult) -> dict[str, str]:
+        """基于准备好的历史窗口做未来预测，并写出 forecast.csv 与预测图。"""
         if not self.cfg.do_forecast:
             return {}
-        # model forecasting
+        # 预测阶段复用统一推理编排，模型只需要遵守 fit/predict_one 契约。
         forecaster = Forecaster(
             model_name=self.cfg.model_name,
             model_params=self.resolved_model_params,
@@ -552,7 +589,7 @@ class ModelApp:
                 X_hist=prepared.history_model_input_df,
                 X_future=prepared.future_exog_df,
             )
-            # model forecasting inverse scale
+            # 可逆预处理在模型输出后重组趋势/季节项，保持最终 yhat 回到原始业务尺度。
             if prepared.processor.enabled:
                 pred = prepared.processor.inverse_forecast(pred)
             forecast_df = pd.DataFrame({

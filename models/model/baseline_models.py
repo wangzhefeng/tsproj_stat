@@ -1,3 +1,9 @@
+"""轻量统计基线模型。
+
+这些模型用于提供稳定 baseline 或低成本候选模型，不引入复杂训练流程。
+部分 statsforecast 依赖模型会显式处理缺失依赖。
+"""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

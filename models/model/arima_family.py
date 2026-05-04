@@ -1,3 +1,9 @@
+"""ARIMA 家族模型。
+
+本文件收口 ar/ma/arma/arima/sarima/auto_arima 的主线实现，
+阶数搜索 helper 与 statsmodels warning 处理也集中在这里。
+"""
+
 from __future__ import annotations
 
 import warnings
