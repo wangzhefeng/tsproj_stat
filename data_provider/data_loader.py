@@ -11,6 +11,96 @@ from utils.log_util import logger
 
 
 @dataclass
+class DataQualityReport:
+    total_rows: int
+    missing_rows: int
+    missing_ratio: float
+    duplicate_timestamps: int
+    freq_irregular: bool
+    target_mean: float
+    target_std: float
+    time_range: tuple[str, str]
+
+    def __str__(self) -> str:
+        return (
+            f"DataQualityReport("
+            f"total={self.total_rows}, missing={self.missing_rows}({self.missing_ratio:.1%}), "
+            f"dup_ts={self.duplicate_timestamps}, freq_irregular={self.freq_irregular}, "
+            f"target_mean={self.target_mean:.3f}, target_std={self.target_std:.3f}, "
+            f"range=[{self.time_range[0]}, {self.time_range[1]}])"
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "total_rows": self.total_rows,
+            "missing_rows": self.missing_rows,
+            "missing_ratio": round(self.missing_ratio, 6),
+            "duplicate_timestamps": self.duplicate_timestamps,
+            "freq_irregular": self.freq_irregular,
+            "target_mean": round(self.target_mean, 6),
+            "target_std": round(self.target_std, 6),
+            "time_range_start": self.time_range[0],
+            "time_range_end": self.time_range[1],
+        }
+
+
+def check_data_quality(
+    df: pd.DataFrame,
+    target_col: str,
+    time_col: str,
+    max_missing_ratio: float = 0.3,
+    validate_freq: bool = True,
+) -> DataQualityReport:
+    """
+    检查数据质量，超过 max_missing_ratio 则抛出 ValueError。
+    返回 DataQualityReport 供后续写入 JSON。
+    """
+    total = len(df)
+    missing = int(df[target_col].isna().sum())
+    missing_ratio = missing / total if total > 0 else 0.0
+
+    if missing_ratio > max_missing_ratio:
+        raise ValueError(
+            f"[DataQuality] target '{target_col}' missing ratio {missing_ratio:.1%} "
+            f"exceeds threshold {max_missing_ratio:.1%} ({missing}/{total} rows)"
+        )
+
+    dupes = int(df[time_col].duplicated().sum()) if time_col in df.columns else 0
+    if dupes > 0:
+        logger.warning(f"[DataQuality] {dupes} duplicate timestamps in '{time_col}'")
+
+    freq_irregular = False
+    if validate_freq and time_col in df.columns and total > 2:
+        try:
+            times = pd.to_datetime(df[time_col], errors="coerce").dropna()
+            if len(times) > 2:
+                gaps = times.diff().dropna()
+                cv = gaps.std() / gaps.mean()
+                freq_irregular = float(cv) > 0.1
+                if freq_irregular:
+                    logger.warning(f"[DataQuality] irregular time intervals detected (CV={float(cv):.3f})")
+        except Exception:
+            pass
+
+    target_vals = df[target_col].dropna()
+    report = DataQualityReport(
+        total_rows=total,
+        missing_rows=missing,
+        missing_ratio=missing_ratio,
+        duplicate_timestamps=dupes,
+        freq_irregular=freq_irregular,
+        target_mean=float(target_vals.mean()) if len(target_vals) > 0 else float("nan"),
+        target_std=float(target_vals.std()) if len(target_vals) > 1 else float("nan"),
+        time_range=(
+            str(df[time_col].iloc[0]) if time_col in df.columns and total > 0 else "",
+            str(df[time_col].iloc[-1]) if time_col in df.columns and total > 0 else "",
+        ),
+    )
+    logger.info(f"[DataQuality] {report}")
+    return report
+
+
+@dataclass
 class DataLoader:
 
     def __init__(
@@ -22,6 +112,8 @@ class DataLoader:
         value_cols: list[str] | None = None,
         future_exog_path: str | None = None,
         future_exog_time_col: str | None = None,
+        max_missing_ratio: float = 0.3,
+        validate_freq: bool = True,
     ):
         self.data_path = data_path
         self.time_col = time_col
@@ -30,6 +122,9 @@ class DataLoader:
         self.value_cols = value_cols
         self.future_exog_path = future_exog_path
         self.future_exog_time_col = future_exog_time_col
+        self.max_missing_ratio = max_missing_ratio
+        self.validate_freq = validate_freq
+        self.quality_report: DataQualityReport | None = None
 
     def load_data(self) -> pd.DataFrame:
         # ------------------------------
@@ -46,15 +141,18 @@ class DataLoader:
             )
             logger.info(f"Loaded demo series dataset:\n {demo_series.head()}")
             logger.info(f"Loaded demo series dataset shape: {demo_series.shape}")
-            return demo_series 
+            self.quality_report = check_data_quality(
+                demo_series, self.target_col, self.time_col,
+                max_missing_ratio=self.max_missing_ratio,
+                validate_freq=self.validate_freq,
+            )
+            return demo_series
         # ------------------------------
         # 使用本地数据
         # ------------------------------
-        # history data path
         path = Path(self.data_path)
         if not path.exists():
             raise FileNotFoundError(f"Data file not found: {self.data_path}")
-        # read data
         df = pd.read_csv(path)
         logger.info(f"Loaded raw data:\n {df.head()}")
         logger.info(f"Loaded raw data shape: {df.shape}")
@@ -67,7 +165,11 @@ class DataLoader:
         )
         logger.info(f"After prepare_standard_frame, df:\n {df.head()}")
         logger.info(f"After prepare_standard_frame, df shape: {df.shape}")
-
+        self.quality_report = check_data_quality(
+            df, self.target_col, self.time_col,
+            max_missing_ratio=self.max_missing_ratio,
+            validate_freq=self.validate_freq,
+        )
         return df
 
     def load_future_exog(self, future_exog_cols: list[str], horizon: int) -> pd.DataFrame | None:

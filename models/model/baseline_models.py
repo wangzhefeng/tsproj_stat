@@ -167,6 +167,27 @@ class _StatsForecastModelBase(BaseStatModel, ABC):
             raise RuntimeError("StatsForecast prediction output missing value column")
         return pd.Series(pred[value_cols[0]].astype(float).to_list(), name="yhat")
 
+    def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
+        if self._sf is None:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+        try:
+            level = int(round((1 - alpha) * 100))
+            pred = self._sf.predict(horizon, level=[level])
+            value_cols = [col for col in pred.columns if col not in {"unique_id", "ds"}]
+            if not value_cols:
+                return super().predict_with_intervals(horizon, X_future, alpha)
+            yhat_col = value_cols[0]
+            lo_col = next((c for c in pred.columns if c.endswith(f"-lo-{level}")), None)
+            hi_col = next((c for c in pred.columns if c.endswith(f"-hi-{level}")), None)
+            import numpy as np
+            return pd.DataFrame({
+                "yhat": pred[yhat_col].astype(float).to_list(),
+                "yhat_lower": pred[lo_col].astype(float).to_list() if lo_col else [np.nan] * horizon,
+                "yhat_upper": pred[hi_col].astype(float).to_list() if hi_col else [np.nan] * horizon,
+            })
+        except Exception:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+
 
 class AutoETSModel(_StatsForecastModelBase):
     def __init__(

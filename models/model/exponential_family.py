@@ -61,6 +61,23 @@ class ETSModel(FallbackMixin, BaseStatModel):
             return self._fallback_predict(horizon)
         return pd.Series(self._result.forecast(horizon), name="yhat").reset_index(drop=True)
 
+    def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
+        import pandas as pd, numpy as np
+        if self._result is None:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+        try:
+            fc = self._result.forecast(horizon)
+            # ExponentialSmoothing fitted result supports simulate() for intervals;
+            # use summary_frame if available (newer statsmodels)
+            sf = self._result.summary_frame(horizon, alpha=alpha)
+            return pd.DataFrame({
+                "yhat": sf["mean"].values,
+                "yhat_lower": sf["mean_ci_lower"].values,
+                "yhat_upper": sf["mean_ci_upper"].values,
+            })
+        except Exception:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+
     def _validate_configuration(self) -> None:
         valid_component = {None, "add", "mul"}
         if self.trend not in valid_component:
@@ -180,7 +197,7 @@ class ETSModel(FallbackMixin, BaseStatModel):
 
 
 class ThetaModel(FallbackMixin, BaseStatModel):
-    
+
     def __init__(self, period: int = 1):
         self.period = period
         self._fallback = TrendFallbackModel()
@@ -207,3 +224,19 @@ class ThetaModel(FallbackMixin, BaseStatModel):
         if self._result is None:
             return self._fallback_predict(horizon)
         return pd.Series(self._result.forecast(horizon), name="yhat").reset_index(drop=True)
+
+    def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
+        import pandas as pd
+        if self._result is None:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+        try:
+            fc = self._result.get_forecast(steps=horizon)
+            mean = fc.predicted_mean.values
+            ci = fc.conf_int(alpha=alpha)
+            return pd.DataFrame({
+                "yhat": mean,
+                "yhat_lower": ci.iloc[:, 0].values,
+                "yhat_upper": ci.iloc[:, 1].values,
+            })
+        except Exception:
+            return super().predict_with_intervals(horizon, X_future, alpha)

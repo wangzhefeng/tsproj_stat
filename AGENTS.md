@@ -27,7 +27,7 @@
 - CLI 配置统一经由 `config/AppConfig` 与 `run.py` 参数覆盖，不允许平行新增另一套入口参数体系
 - 多源数据主线约定：
   - `endog_cols` 包含 `target_col` 在内的内生变量列
-  - `hist_exog_cols` 表示历史外生变量列
+  - `exog_cols` 表示历史外生变量列
   - `future_exog_path` / `future_exog_time_col` / `future_exog_cols` 用于独立未来外生数据
   - 主线 artifact 仍保持单目标 `target_col -> yhat`
 - 结果目录主约定固定为 `saved_results/checkpoints / results_train / results_test / results_forecast / results_eda`
@@ -45,7 +45,7 @@
 - CLI 烟雾验证基线：
   - `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5`
   - `UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false`
-  - `UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --hist_exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4`
+  - `UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4`
 - 若环境未满足上述命令，先修复环境，再继续功能开发；不要跳过验证直接宣称完成
 
 ## 4. 文档同步

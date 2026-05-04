@@ -34,7 +34,7 @@ def test_pipeline_multisource_linear_var_forecast_contract(tmp_path):
         model_name="linear_var",
         model_params={"target_lags": [1, 2], "feature_lags": [0, 1]},
         endog_cols=["y", "load"],
-        hist_exog_cols=["temp"],
+        exog_cols=["temp"],
         future_exog_path=str(future_path),
         future_exog_time_col="ds",
         future_exog_cols=["temp"],

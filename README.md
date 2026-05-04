@@ -96,7 +96,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
   --model_name linear_var \
   --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' \
   --endog_cols y,load \
-  --hist_exog_cols temp \
+  --exog_cols temp \
   --future_exog_path /abs/path/future_exog.csv \
   --future_exog_time_col ds \
   --future_exog_cols temp \
@@ -132,7 +132,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 - 统计预测主线统一通过 `fit(y, X_hist=None, X_future=None) / predict(horizon, X_future=None)` 接口接入。
 - 当前主线默认仍输出单目标 `target_col -> yhat`，但已支持多源输入：
   - 内生变量：`endog_cols`
-  - 历史外生变量：`hist_exog_cols`
+  - 历史外生变量：`exog_cols`
   - 独立未来外生文件：`future_exog_path` + `future_exog_cols`
 - 统计模型实现按 `models/model/` 家族模块维护，包含 ARIMA、指数平滑、多变量、波动率和扩展模型。
 - 当前主线额外补充了一批轻量统计基线：
@@ -229,5 +229,5 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --model_name seasonal_naive --model_
 UV_CACHE_DIR=.uv_cache uv run python run.py --model_name croston --model_params '{"alpha":0.2}' --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
 UV_CACHE_DIR=.uv_cache uv run python run.py --model_name auto_theta --model_params '{"season_length":1}' --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
 UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false
-UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --hist_exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4
+UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4
 ```

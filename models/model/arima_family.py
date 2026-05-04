@@ -149,6 +149,22 @@ class ARIMAModel(FallbackMixin, BaseStatModel):
             forecast = pd.Series(forecast)
         return forecast.reset_index(drop=True).rename("yhat")
 
+    def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
+        import pandas as pd, numpy as np
+        if self._result is None:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+        try:
+            fc = self._result.get_forecast(steps=horizon)
+            mean = fc.predicted_mean.values
+            ci = fc.conf_int(alpha=alpha)
+            return pd.DataFrame({
+                "yhat": mean,
+                "yhat_lower": ci.iloc[:, 0].values,
+                "yhat_upper": ci.iloc[:, 1].values,
+            })
+        except Exception:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+
 
 class ARModel(ARIMAModel):
     def __init__(self, p: int = 1):
@@ -234,6 +250,22 @@ class SARIMAModel(FallbackMixin, BaseStatModel):
             return self._fallback_predict(horizon)
         return pd.Series(self._result.forecast(steps=horizon), name="yhat").reset_index(drop=True)
 
+    def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
+        import pandas as pd, numpy as np
+        if self._result is None:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+        try:
+            fc = self._result.get_forecast(steps=horizon)
+            mean = fc.predicted_mean.values
+            ci = fc.conf_int(alpha=alpha)
+            return pd.DataFrame({
+                "yhat": mean,
+                "yhat_lower": ci.iloc[:, 0].values,
+                "yhat_upper": ci.iloc[:, 1].values,
+            })
+        except Exception:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+
 
 class AutoARIMAModel(FallbackMixin, BaseStatModel):
     def __init__(
@@ -318,6 +350,22 @@ class AutoARIMAModel(FallbackMixin, BaseStatModel):
                 raise RuntimeError("Model is not fitted")
             return self._fallback_predict(horizon)
         return pd.Series(self._result.predict(n_periods=horizon), name="yhat")
+
+    def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
+        import pandas as pd
+        if self._result is None:
+            if self._fallback is not None:
+                return self._fallback.predict_with_intervals(horizon, X_future, alpha)
+            return super().predict_with_intervals(horizon, X_future, alpha)
+        try:
+            preds, conf_int = self._result.predict(n_periods=horizon, return_conf_int=True, alpha=alpha)
+            return pd.DataFrame({
+                "yhat": preds,
+                "yhat_lower": conf_int[:, 0],
+                "yhat_upper": conf_int[:, 1],
+            })
+        except Exception:
+            return super().predict_with_intervals(horizon, X_future, alpha)
 
     def _ensure_fallback_fitted(self, series: pd.Series) -> None:
         if self._fallback is None:

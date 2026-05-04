@@ -232,6 +232,25 @@ class ProphetModel(FallbackMixin, BaseStatModel):
         pred = self._model.predict(future)
         return pd.Series(pred["yhat"].astype(float).to_list(), name="yhat")
 
+    def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
+        import pandas as pd
+        if self._model is None or self._last_ds is None:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+        try:
+            future_ds = pd.date_range(self._last_ds, periods=horizon + 1, freq=self._freq)[1:]
+            future = pd.DataFrame({"ds": future_ds})
+            future_regs = _extract_future_regressors(X_future, self._regressor_names, horizon, "ProphetModel")
+            for col in self._regressor_names:
+                future[col] = future_regs[col].values
+            pred = self._model.predict(future)
+            return pd.DataFrame({
+                "yhat": pred["yhat"].astype(float).values,
+                "yhat_lower": pred["yhat_lower"].astype(float).values,
+                "yhat_upper": pred["yhat_upper"].astype(float).values,
+            })
+        except Exception:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+
 
 class NeuralProphetModel(FallbackMixin, BaseStatModel):
     def __init__(

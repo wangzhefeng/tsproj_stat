@@ -65,6 +65,22 @@ class VARModel(FallbackMixin, BaseStatModel):
         target_idx = list(self._frame.columns).index(self._target_col)
         return pd.Series(forecast[:, target_idx], name="yhat")
 
+    def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
+        if self._result is None or self._frame is None or self._target_col is None:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+        try:
+            lag = max(int(self._result.k_ar), 1)
+            input_values = self._frame.values[-lag:]
+            lower, mid, upper = self._result.forecast_interval(input_values, steps=horizon, alpha=alpha)
+            target_idx = list(self._frame.columns).index(self._target_col)
+            return pd.DataFrame({
+                "yhat": mid[:, target_idx],
+                "yhat_lower": lower[:, target_idx],
+                "yhat_upper": upper[:, target_idx],
+            })
+        except Exception:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+
 
 class BayesianVARModel(FallbackMixin, BaseStatModel):
     def __init__(

@@ -43,6 +43,25 @@ class ARCHModel(FallbackMixin, BaseStatModel):
         values = np.asarray(fc.mean.iloc[-1]).reshape(-1)
         return pd.Series(values[:horizon], name="yhat")
 
+    def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
+        import pandas as pd, numpy as np
+        from scipy import stats
+        if self._result is None:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+        try:
+            fc = self._result.forecast(horizon=horizon)
+            mean = np.asarray(fc.mean.iloc[-1]).reshape(-1)[:horizon]
+            var = np.asarray(fc.variance.iloc[-1]).reshape(-1)[:horizon]
+            z = stats.norm.ppf(1 - alpha / 2)
+            std = np.sqrt(np.maximum(var, 0))
+            return pd.DataFrame({
+                "yhat": mean,
+                "yhat_lower": mean - z * std,
+                "yhat_upper": mean + z * std,
+            })
+        except Exception:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+
 
 class GARCHModel(FallbackMixin, BaseStatModel):
     """
@@ -75,3 +94,21 @@ class GARCHModel(FallbackMixin, BaseStatModel):
         fc = self._result.forecast(horizon=horizon)
         values = np.asarray(fc.mean.iloc[-1]).reshape(-1)
         return pd.Series(values[:horizon], name="yhat")
+
+    def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
+        from scipy import stats
+        if self._result is None:
+            return super().predict_with_intervals(horizon, X_future, alpha)
+        try:
+            fc = self._result.forecast(horizon=horizon)
+            mean = np.asarray(fc.mean.iloc[-1]).reshape(-1)[:horizon]
+            var = np.asarray(fc.variance.iloc[-1]).reshape(-1)[:horizon]
+            z = stats.norm.ppf(1 - alpha / 2)
+            std = np.sqrt(np.maximum(var, 0))
+            return pd.DataFrame({
+                "yhat": mean,
+                "yhat_lower": mean - z * std,
+                "yhat_upper": mean + z * std,
+            })
+        except Exception:
+            return super().predict_with_intervals(horizon, X_future, alpha)

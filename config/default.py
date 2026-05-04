@@ -15,37 +15,45 @@ def _is_allowed_output_dir(output_dir: str) -> bool:
 
 @dataclass
 class AppConfig:
+    # 项目参数
     project_name: str = "tsproj_stat"
     seed: int = 2026
-
+    
+    # 数据参数
     data_path: str | None = None
     time_col: str = "ds"
     target_col: str = "y"
-    freq: str = "D"
     endog_cols: list[str] = field(default_factory=list)
-    hist_exog_cols: list[str] = field(default_factory=list)
+    exog_cols: list[str] = field(default_factory=list)
+    freq: str = "D"
     future_exog_path: str | None = None
     future_exog_time_col: str | None = None
     future_exog_cols: list[str] = field(default_factory=list)
-
+    
+    # 模型参数
     model_name: str = "arima"
     model_params: dict = field(default_factory=dict)
     pred_method: str = "direct"
-
+    
+    # 任务参数
     do_train: bool = True
     do_test: bool = True
     do_forecast: bool = True
     do_eda: bool = False
-
+    
+    # 模型训练
     history_size: int = 90
     predict_horizon: int = 7
-
+    
+    # 模型测试
     backtest_initial_train_size: int = 30
     backtest_horizon: int = 7
     backtest_step: int = 7
     backtest_verbose: bool = False
     backtest_progress_every: int = 10
-
+    backtest_n_jobs: int = 1
+    
+    # 特征工程
     enable_datetime_features: bool = True
     lags: list[int] = field(default_factory=lambda: [1, 2, 7, 14])
     scale: bool = False
@@ -68,6 +76,24 @@ class AppConfig:
     ets_smoothing_grid_seasonal: list[float] | None = None
     ets_validation_size: int | None = None
 
+    # Auto model selection
+    auto_select: bool = False
+    auto_select_candidates: list[str] = field(default_factory=lambda: ["naive", "arima", "ets", "auto_arima"])
+    auto_select_metric: str = "mae"
+    auto_select_n_windows: int = 5
+
+    # Data quality
+    max_missing_ratio: float = 0.3
+    validate_freq: bool = True
+
+    # Prediction intervals
+    return_intervals: bool = False
+    interval_alpha: float = 0.05
+    
+    # Log format
+    log_format: str = "text"
+
+    # model result output dir
     checkpoints_dir: str = "saved_results/checkpoints"
     train_results_dir: str = "saved_results/results_train"
     test_results_dir: str = "saved_results/results_test"
@@ -90,20 +116,28 @@ class AppConfig:
 
         if self.detrend_method not in {"none", "linear", "moving_average"}:
             raise ValueError("detrend_method must be one of {'none', 'linear', 'moving_average'}")
+        
         if self.denoise_method not in {"none", "moving_average", "moving_median"}:
             raise ValueError("denoise_method must be one of {'none', 'moving_average', 'moving_median'}")
+        
         if self.seasonal_period is not None and self.seasonal_period <= 1:
             raise ValueError("seasonal_period must be > 1 when provided")
+        
         if self.decomposition_method not in {"none", "seasonal_decompose", "stl"}:
             raise ValueError("decomposition_method must be one of {'none', 'seasonal_decompose', 'stl'}")
+        
         if self.decomposition_target not in {"trend_resid", "resid_only"}:
             raise ValueError("decomposition_target must be one of {'trend_resid', 'resid_only'}")
+        
         if self.decomposition_model not in {"additive", "multiplicative"}:
             raise ValueError("decomposition_model must be one of {'additive', 'multiplicative'}")
+        
         if self.acf_max_lag <= 1:
             raise ValueError("acf_max_lag must be > 1")
+        
         if not 0.0 <= self.seasonality_strength_threshold <= 1.0:
             raise ValueError("seasonality_strength_threshold must be in [0, 1]")
+        
         for field_name, values in {
             "ets_smoothing_grid_level": self.ets_smoothing_grid_level,
             "ets_smoothing_grid_trend": self.ets_smoothing_grid_trend,
@@ -115,6 +149,7 @@ class AppConfig:
                 raise ValueError(f"{field_name} must not be empty when provided")
             if not all(0.0 < float(value) <= 1.0 for value in values):
                 raise ValueError(f"{field_name} values must be in (0, 1]")
+        
         if self.ets_validation_size is not None and self.ets_validation_size <= 0:
             raise ValueError("ets_validation_size must be > 0 when provided")
 

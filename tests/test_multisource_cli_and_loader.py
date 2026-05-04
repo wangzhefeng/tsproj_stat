@@ -44,7 +44,7 @@ def test_cli_override_multisource_fields():
         forecast_result_dir=None,
         eda_output_dir=None,
         endog_cols="y,load,price",
-        hist_exog_cols="temp,is_holiday",
+        exog_cols="temp,is_holiday",
         future_exog_path="/tmp/future_exog.csv",
         future_exog_time_col="forecast_time",
         future_exog_cols="temp,is_holiday",
@@ -53,7 +53,7 @@ def test_cli_override_multisource_fields():
     updated = _apply_overrides(cfg, args)
 
     assert updated.endog_cols == ["y", "load", "price"]
-    assert updated.hist_exog_cols == ["temp", "is_holiday"]
+    assert updated.exog_cols == ["temp", "is_holiday"]
     assert updated.future_exog_path == "/tmp/future_exog.csv"
     assert updated.future_exog_time_col == "forecast_time"
     assert updated.future_exog_cols == ["temp", "is_holiday"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 import json
 from datetime import datetime
@@ -36,7 +37,7 @@ from app.results import (
 # global variable
 LOGGING_LABEL = Path(__file__).name[:-3]
 os.environ['LOG_NAME'] = LOGGING_LABEL
-from utils.log_util import logger
+from utils.log_util import logger, configure_logging, set_run_id, timed_stage
 
 
 @dataclass
@@ -64,6 +65,8 @@ class ModelApp:
 
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
+        self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
+        configure_logging(log_format=cfg.log_format, run_id=self.run_id)
         self.artifacts = prepare_run_artifacts(cfg)
         self.loader = DataLoader(
             data_path=self.cfg.data_path,
@@ -73,6 +76,8 @@ class ModelApp:
             value_cols=self.model_value_cols,
             future_exog_path=self.cfg.future_exog_path,
             future_exog_time_col=self.cfg.future_exog_time_col,
+            max_missing_ratio=self.cfg.max_missing_ratio,
+            validate_freq=self.cfg.validate_freq,
         )
 
     @property
@@ -84,7 +89,7 @@ class ModelApp:
     @property
     def model_value_cols(self) -> list[str]:
         cols = []
-        for col in [*self.effective_endog_cols, *self.cfg.hist_exog_cols]:
+        for col in [*self.effective_endog_cols, *self.cfg.exog_cols]:
             if col not in cols:
                 cols.append(col)
         return cols
@@ -126,16 +131,21 @@ class ModelApp:
             "eda_dir": str(self.artifacts.eda_dir),
         }
         # ------------------------------
-        # EDA result
+        # EDA（失败不阻断后续阶段）
         # ------------------------------
         logger.info(f"{'=' * 100}")
         logger.info(f"Running EDA...")
         logger.info(f"{'=' * 100}")
-        eda_info = self.eda(df)
-        logger.info(f"EDA info:\n {eda_info}")
-        out.update(eda_info)
+        try:
+            with timed_stage("eda"):
+                eda_info = self.eda(df)
+            logger.info(f"EDA info:\n {eda_info}")
+            out.update(eda_info)
+        except Exception as exc:
+            logger.error(f"[EDA] failed: {exc}")
+            out["eda_error"] = str(exc)
         # ------------------------------
-        # 准备目标序列
+        # 准备目标序列（失败则中断，无法继续）
         # ------------------------------
         logger.info(f"{'=' * 100}")
         logger.info(f"Running _prepare_target_series...")
@@ -144,50 +154,99 @@ class ModelApp:
         logger.info(f"Prepare info:\n {prepared.metadata}")
         out.update(prepared.metadata)
         # ------------------------------
-        # training
+        # 自动模型选择（可选，失败不阻断后续）
+        # ------------------------------
+        if self.cfg.auto_select:
+            try:
+                from models.selector import AutoSelector
+                logger.info(f"[AutoSelect] running with candidates: {self.cfg.auto_select_candidates}")
+                selector = AutoSelector(
+                    candidates=self.cfg.auto_select_candidates,
+                    metric=self.cfg.auto_select_metric,
+                    n_windows=self.cfg.auto_select_n_windows,
+                    initial_train_size=self.cfg.backtest_initial_train_size,
+                    horizon=self.cfg.backtest_horizon,
+                )
+                best_model = selector.select(
+                    y=prepared.history_y,
+                    X_hist=prepared.history_model_input_df,
+                    target_col=self.cfg.target_col,
+                    time_col=self.cfg.time_col,
+                )
+                logger.info(f"[AutoSelect] overriding model_name: {self.cfg.model_name!r} → {best_model!r}")
+                self.cfg.model_name = best_model
+                out["auto_selected_model"] = best_model
+                out["auto_select_scores"] = selector.scores
+            except Exception as exc:
+                logger.error(f"[AutoSelect] failed: {exc}")
+                out["auto_select_error"] = str(exc)
+        # ------------------------------
+        # training（失败不阻断 test/forecast）
         # ------------------------------
         logger.info(f"{'=' * 100}")
         logger.info(f"Running train...")
         logger.info(f"{'=' * 100}")
-        training_info = self.train(prepared)
-        logger.info(f"training info:\n {training_info}")
-        out.update(training_info)
+        try:
+            with timed_stage("train"):
+                training_info = self.train(prepared)
+            logger.info(f"training info:\n {training_info}")
+            out.update(training_info)
+        except Exception as exc:
+            logger.error(f"[Train] failed: {exc}")
+            out["train_error"] = str(exc)
         # ------------------------------
-        # testing
+        # testing（失败不阻断 forecast）
         # ------------------------------
         logger.info(f"{'=' * 100}")
         logger.info(f"Running test...")
         logger.info(f"{'=' * 100}")
-        testing_info = self.test(prepared.df)
-        logger.info(f"testing info:\n {testing_info}")
-        out.update(testing_info)
+        try:
+            with timed_stage("test"):
+                testing_info = self.test(prepared.df)
+            logger.info(f"testing info:\n {testing_info}")
+            out.update(testing_info)
+        except Exception as exc:
+            logger.error(f"[Test] failed: {exc}")
+            out["test_error"] = str(exc)
         # ------------------------------
-        # forecasting
+        # forecasting（失败不阻断特征导出）
         # ------------------------------
         logger.info(f"{'=' * 100}")
         logger.info(f"Running forecast...")
         logger.info(f"{'=' * 100}")
-        forecasting_info = self.forecast(prepared)
-        logger.info(f"forecasting info:\n {forecasting_info}")
-        out.update(forecasting_info)
+        try:
+            with timed_stage("forecast"):
+                forecasting_info = self.forecast(prepared)
+            logger.info(f"forecasting info:\n {forecasting_info}")
+            out.update(forecasting_info)
+        except Exception as exc:
+            logger.error(f"[Forecast] failed: {exc}")
+            out["forecast_error"] = str(exc)
         # ------------------------------
         # 特征工程
         # ------------------------------
         logger.info(f"{'=' * 100}")
         logger.info(f"Running feature_engineering...")
         logger.info(f"{'=' * 100}")
-        feature_snapshot = self._export_feature_snapshot(prepared.df)
-        out["analysis_feature_snapshot_path"] = feature_snapshot.path
-        out["analysis_feature_columns"] = ",".join(feature_snapshot.feature_columns)
-        out["analysis_target_shift_columns"] = ",".join(feature_snapshot.target_shift_columns)
-        
+        try:
+            feature_snapshot = self._export_feature_snapshot(prepared.df)
+            out["analysis_feature_snapshot_path"] = feature_snapshot.path
+            out["analysis_feature_columns"] = ",".join(feature_snapshot.feature_columns)
+            out["analysis_target_shift_columns"] = ",".join(feature_snapshot.target_shift_columns)
+        except Exception as exc:
+            logger.error(f"[FeatureSnapshot] failed: {exc}")
+
         return self._write_run_summary(out)
 
     def _load_dataset(self) -> pd.DataFrame:
-        """
-        加载数据 
-        """
-        return self.loader.load_data()
+        df = self.loader.load_data()
+        if self.loader.quality_report is not None:
+            try:
+                qr_path = self.artifacts.train_results_dir / "data_quality.json"
+                write_json(qr_path, self.loader.quality_report.to_dict())
+            except Exception:
+                pass
+        return df
 
     def _prepare_target_series(self, df: pd.DataFrame) -> PrepareResult:
         local_df = df.copy()
@@ -228,8 +287,8 @@ class ModelApp:
         history_y = history_df[self.cfg.target_col].astype(float).reset_index(drop=True)
         history_endog_df = history_df[self.effective_endog_cols].astype(float).reset_index(drop=True)
         history_exog_df = None
-        if self.cfg.hist_exog_cols:
-            history_exog_df = history_df[self.cfg.hist_exog_cols].astype(float).reset_index(drop=True)
+        if self.cfg.exog_cols:
+            history_exog_df = history_df[self.cfg.exog_cols].astype(float).reset_index(drop=True)
         history_model_input_df = history_df[self.model_value_cols].astype(float).reset_index(drop=True)
         history_time = pd.to_datetime(history_df[self.cfg.time_col]).reset_index(drop=True)
         logger.info(f"After data split history_df:\n {history_df}")
@@ -318,9 +377,19 @@ class ModelApp:
             X_hist=prepared.history_model_input_df,
             X_future=prepared.future_exog_df,
         )
-        # model saving
+        # model saving with metadata
         model_path = self.artifacts.checkpoints_dir / "model.pkl"
-        save_model(model, str(model_path))
+        save_model(model, str(model_path), meta={
+            "model_name": self.cfg.model_name,
+            "model_params": self.resolved_model_params,
+            "train_rows": int(len(prepared.history_y)),
+            "train_time_range": [
+                str(prepared.history_time.iloc[0]) if not prepared.history_time.empty else None,
+                str(prepared.history_time.iloc[-1]) if not prepared.history_time.empty else None,
+            ],
+            "target_mean": float(prepared.history_y.mean()),
+            "target_std": float(prepared.history_y.std()),
+        })
         # model training data saving
         train_series_path = dataframe_to_csv(
             self.artifacts.train_results_dir / "train_series.csv",
@@ -342,7 +411,7 @@ class ModelApp:
             "time_col": self.cfg.time_col,
             "target_col": self.cfg.target_col,
             "endog_cols": self.effective_endog_cols,
-            "hist_exog_cols": self.cfg.hist_exog_cols,
+            "exog_cols": self.cfg.exog_cols,
             "future_exog_cols": self.cfg.future_exog_cols,
             "train_size": int(len(prepared.history_y)),
             "history_size": int(self.cfg.history_size),
@@ -384,13 +453,14 @@ class ModelApp:
             target_col=self.cfg.target_col,
             time_col=self.cfg.time_col,
             endog_cols=self.effective_endog_cols,
-            hist_exog_cols=self.cfg.hist_exog_cols,
+            exog_cols=self.cfg.exog_cols,
             future_exog_cols=self.cfg.future_exog_cols,
             initial_train_size=self.cfg.backtest_initial_train_size,
             horizon=self.cfg.backtest_horizon,
             step=self.cfg.backtest_step,
             verbose=self.cfg.backtest_verbose,
             progress_every=self.cfg.backtest_progress_every,
+            n_jobs=self.cfg.backtest_n_jobs,
         )
         result = tester.evaluate(df[[self.cfg.time_col, *self.model_value_cols]].copy())
         # model testing saving
@@ -408,6 +478,7 @@ class ModelApp:
                 "initial_train_size": int(self.cfg.backtest_initial_train_size),
                 "horizon": int(self.cfg.backtest_horizon),
                 "step": int(self.cfg.backtest_step),
+                "failed_windows": result.failed_windows,
                 **result.summary,
             },
         )
@@ -447,21 +518,39 @@ class ModelApp:
             model_params=self.resolved_model_params,
             pred_method=self.cfg.pred_method,
         )
-        pred = forecaster.forecast(
-            history=prepared.history_y,
-            horizon=self.cfg.predict_horizon,
-            X_hist=prepared.history_model_input_df,
-            X_future=prepared.future_exog_df,
-        )
-        # model forecasting inverse scale
-        if prepared.processor.enabled:
-            pred = prepared.processor.inverse_forecast(pred)
-        # model forecasting result saving
-        forecast_df = pd.DataFrame({
-            "step": range(1, len(pred) + 1),
-            "timestamp": forecast_timestamps(prepared.history_time, len(pred), self.cfg.freq),
-            "yhat": pred.values,
-        })
+        if self.cfg.return_intervals:
+            interval_df = forecaster.forecast_with_intervals(
+                history=prepared.history_y,
+                horizon=self.cfg.predict_horizon,
+                X_hist=prepared.history_model_input_df,
+                X_future=prepared.future_exog_df,
+                alpha=self.cfg.interval_alpha,
+            )
+            pred = pd.Series(interval_df["yhat"].values, name="yhat")
+            if prepared.processor.enabled:
+                pred = prepared.processor.inverse_forecast(pred)
+            forecast_df = pd.DataFrame({
+                "step": range(1, len(pred) + 1),
+                "timestamp": forecast_timestamps(prepared.history_time, len(pred), self.cfg.freq),
+                "yhat": pred.values,
+                "yhat_lower": interval_df["yhat_lower"].values,
+                "yhat_upper": interval_df["yhat_upper"].values,
+            })
+        else:
+            pred = forecaster.forecast(
+                history=prepared.history_y,
+                horizon=self.cfg.predict_horizon,
+                X_hist=prepared.history_model_input_df,
+                X_future=prepared.future_exog_df,
+            )
+            # model forecasting inverse scale
+            if prepared.processor.enabled:
+                pred = prepared.processor.inverse_forecast(pred)
+            forecast_df = pd.DataFrame({
+                "step": range(1, len(pred) + 1),
+                "timestamp": forecast_timestamps(prepared.history_time, len(pred), self.cfg.freq),
+                "yhat": pred.values,
+            })
         forecast_path = dataframe_to_csv(self.artifacts.forecast_results_dir / "forecast.csv", forecast_df)
         forecast_plot_path = plot_forecast(
             history_df=prepared.history_df.tail(self.cfg.history_size).copy(),
@@ -480,7 +569,7 @@ class ModelApp:
                 "predict_horizon": int(self.cfg.predict_horizon),
                 "target_col": self.cfg.target_col,
                 "endog_cols": self.effective_endog_cols,
-                "hist_exog_cols": self.cfg.hist_exog_cols,
+                "exog_cols": self.cfg.exog_cols,
                 "future_exog_cols": self.cfg.future_exog_cols,
                 "time_col": self.cfg.time_col,
                 "last_history_timestamp": prepared.history_time.iloc[-1].isoformat()
