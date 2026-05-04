@@ -108,6 +108,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.model_name = args.model_name
     if getattr(args, "model_params", None) is not None:
         cfg.model_params = _parse_model_params(args.model_params)
+    if getattr(args, "inference_strategy", None) is not None:
+        cfg.inference_strategy = args.inference_strategy
     if getattr(args, "pred_method", None) is not None:
         cfg.pred_method = args.pred_method
     if getattr(args, "do_train", None) is not None:
@@ -122,12 +124,16 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.history_size = args.history_size
     if getattr(args, "predict_horizon", None) is not None:
         cfg.predict_horizon = args.predict_horizon
+    if getattr(args, "backtest_train_size", None) is not None:
+        cfg.backtest_train_size = args.backtest_train_size
     if getattr(args, "backtest_initial_train_size", None) is not None:
         cfg.backtest_initial_train_size = args.backtest_initial_train_size
     if getattr(args, "backtest_horizon", None) is not None:
         cfg.backtest_horizon = args.backtest_horizon
     if getattr(args, "backtest_step", None) is not None:
         cfg.backtest_step = args.backtest_step
+    if getattr(args, "backtest_window_mode", None) is not None:
+        cfg.backtest_window_mode = args.backtest_window_mode
     if getattr(args, "backtest_verbose", None) is not None:
         cfg.backtest_verbose = _parse_bool(args.backtest_verbose)
     if getattr(args, "backtest_progress_every", None) is not None:
@@ -229,6 +235,7 @@ def parse_args() -> AppConfig:
     # 模型参数
     parser.add_argument("--model_name", type=str, default=None)
     parser.add_argument("--model_params", type=str, default=None)
+    parser.add_argument("--inference_strategy", type=str, default=None)
     parser.add_argument("--pred_method", type=str, default=None)
     # 任务参数
     parser.add_argument("--do_train", default=None)
@@ -239,9 +246,11 @@ def parse_args() -> AppConfig:
     parser.add_argument("--history_size", type=int, default=None)
     parser.add_argument("--predict_horizon", type=int, default=None)
     # 模型测试
-    parser.add_argument("--backtest_initial_train_size", type=int, default=None)  # 模型测试历史数据长度
+    parser.add_argument("--backtest_train_size", type=int, default=None)          # 新主线: 训练窗口长度
+    parser.add_argument("--backtest_initial_train_size", type=int, default=None)  # 兼容旧字段
     parser.add_argument("--backtest_horizon", type=int, default=None)             # 模型测试未来数据长度
     parser.add_argument("--backtest_step", type=int, default=None)                # 模型测试窗滑动步长
+    parser.add_argument("--backtest_window_mode", type=str, default=None)
     parser.add_argument("--backtest_verbose", default=None)                       # TODO 加注释
     parser.add_argument("--backtest_progress_every", type=int, default=None)      # TODO 加注释
     parser.add_argument("--backtest_n_jobs", type=int, default=None)              # TODO 加注释

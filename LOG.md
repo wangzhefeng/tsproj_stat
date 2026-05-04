@@ -269,3 +269,4 @@
 - 删除 `src/` 历史残留涉及文件删除，命中项目红线；后续若要清理，需先确认。
 - 本文档应在每次修复后更新，而不是等问题累积后一次性补记。
 - 2026-05-03：已抽取 `data_provider.prepare_standard_frame()`，统一 `DataLoader` 与 EDA 的时间列规范化、目标列数值化、缺失值处理入口；EDA 仅保留 `Series` 视图转换、补频和最小样本校验。
+- 2026-05-04：主线已新增 `inference_strategy` 与 `backtest_window_mode` 抽象；`forecast/test/auto_select` 统一复用共享推理层，CLI 与脚本开始迁移到 `inference_strategy / backtest_train_size / backtest_window_mode`，旧 `pred_method / backtest_initial_train_size` 保留兼容入口。

@@ -11,8 +11,8 @@
 
 ## 2. 开发约定
 
-- 预测策略主线：`direct` / `recursive` / `one_step`，统一通过应用层编排与 `rolling_backtest` 验证
-- 新增模型必须接入 `models/factory.py`，并实现统一 `fit(y, X_hist=None, X_future=None) / predict(horizon, X_future=None)` 接口
+- 预测策略主线：`single_step / direct / recursive / dirrec`；模型层主线收口为 `predict_one()`，多步推理由应用层统一编排
+- 新增模型必须接入 `models/factory.py`，并实现统一 `fit(y, X_hist=None, X_future=None) / predict_one(X_future_one=None)` 接口；`predict(horizon, ...)` 仅保留迁移期兼容入口
 - 统计模型主实现位于 `models/model/` 包内，按模型家族分文件维护；新增模型不得回退到单文件堆叠
 - ARIMA 阶数搜索 helper 统一内聚在 `models/model/arima_family.py`；模型 registry 统一位于 `models/registry.py`
 - ARIMA 家族主线模型名约定为 `ar / ma / arma / arima / sarima / auto_arima`；若只是在参数层包装，不得再平行新增脚本式入口
@@ -31,7 +31,7 @@
   - `future_exog_path` / `future_exog_time_col` / `future_exog_cols` 用于独立未来外生数据
   - 主线 artifact 仍保持单目标 `target_col -> yhat`
 - 结果目录主约定固定为 `saved_results/checkpoints / results_train / results_test / results_forecast / results_eda`
-- 训练、测试、预测、EDA 结果统一按 `setting={model_name}-{data_name}-{pred_method}` 分组保存；EDA 归属到 `results_eda/{setting}`
+- 训练、测试、预测、EDA 结果统一按 `setting={model_name}-{data_name}-{strategy}` 分组保存；迁移期允许沿用旧 `pred_method` 命名，EDA 归属到 `results_eda/{setting}`
 - 新增输出文件时，必须明确归属到上述结果目录命名空间，避免散落输出；测试可使用临时绝对路径
 - `features/` 当前定位为分析特征快照与后续扩展预留层，不作为当前统计模型训练输入
 

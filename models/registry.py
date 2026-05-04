@@ -28,6 +28,9 @@ class ModelSpec:
     family: str
     stability: str
     supports_multivariate: bool
+    supports_future_exog: bool = False
+    supports_prediction_intervals: bool = False
+    supports_native_multistep: bool = True
 
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {

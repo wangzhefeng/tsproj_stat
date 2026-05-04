@@ -30,15 +30,15 @@ def _resolve_data_name(data_path: str | None) -> str:
     return Path(data_path).stem
 
 
-def _build_setting(model_name: str, data_name: str, pred_method: str) -> str:
-    return f"{model_name}-{data_name}-{pred_method}"
+def _build_setting(model_name: str, data_name: str, strategy_label: str) -> str:
+    return f"{model_name}-{data_name}-{strategy_label}"
 
 
 def prepare_run_artifacts(cfg: AppConfig) -> RunArtifacts:
     # 提取数据名称
     data_name = _resolve_data_name(cfg.data_path)
     # 构建结果目录
-    setting = _build_setting(cfg.model_name, data_name, cfg.pred_method)
+    setting = _build_setting(cfg.model_name, data_name, cfg.setting_strategy_label())
     # 创建结果参数实例
     artifacts = RunArtifacts(
         setting=setting,

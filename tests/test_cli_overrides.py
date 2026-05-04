@@ -22,6 +22,7 @@ def test_cli_override_eda_fields():
         freq=None,
         model_name=None,
         model_params=None,
+        inference_strategy=None,
         pred_method=None,
         do_eda="true",
         do_train=None,
@@ -29,9 +30,11 @@ def test_cli_override_eda_fields():
         do_forecast=None,
         history_size=None,
         predict_horizon=None,
+        backtest_train_size=None,
         backtest_initial_train_size=None,
         backtest_horizon=None,
         backtest_step=None,
+        backtest_window_mode=None,
         backtest_verbose=None,
         backtest_progress_every=None,
         enable_datetime_features=None,
@@ -99,6 +102,7 @@ def test_cli_override_extended_app_config_fields():
         freq="H",
         model_name="sarima",
         model_params='{"order": [2, 1, 0]}',
+        inference_strategy="recursive",
         pred_method="recursive",
         do_train="false",
         do_test="true",
@@ -106,9 +110,11 @@ def test_cli_override_extended_app_config_fields():
         do_eda="true",
         history_size=96,
         predict_horizon=24,
+        backtest_train_size=48,
         backtest_initial_train_size=48,
         backtest_horizon=12,
         backtest_step=6,
+        backtest_window_mode="sliding",
         backtest_verbose="true",
         backtest_progress_every=3,
         enable_datetime_features="false",
@@ -152,6 +158,7 @@ def test_cli_override_extended_app_config_fields():
     assert updated.freq == "H"
     assert updated.model_name == "sarima"
     assert updated.model_params == {"order": [2, 1, 0]}
+    assert updated.inference_strategy == "recursive"
     assert updated.pred_method == "recursive"
     assert updated.do_train is False
     assert updated.do_test is True
@@ -159,9 +166,11 @@ def test_cli_override_extended_app_config_fields():
     assert updated.do_eda is True
     assert updated.history_size == 96
     assert updated.predict_horizon == 24
+    assert updated.backtest_train_size == 48
     assert updated.backtest_initial_train_size == 48
     assert updated.backtest_horizon == 12
     assert updated.backtest_step == 6
+    assert updated.backtest_window_mode == "sliding"
     assert updated.backtest_verbose is True
     assert updated.backtest_progress_every == 3
     assert updated.enable_datetime_features is False
@@ -275,6 +284,7 @@ def test_cli_override_arima_decomposition_fields():
         future_exog_cols=None,
         model_name=None,
         model_params=None,
+        inference_strategy=None,
         pred_method=None,
         do_train=None,
         do_test=None,
@@ -282,9 +292,11 @@ def test_cli_override_arima_decomposition_fields():
         do_eda=None,
         history_size=None,
         predict_horizon=None,
+        backtest_train_size=None,
         backtest_initial_train_size=None,
         backtest_horizon=None,
         backtest_step=None,
+        backtest_window_mode=None,
         backtest_verbose=None,
         backtest_progress_every=None,
         enable_datetime_features=None,

@@ -16,16 +16,17 @@ python -u run.py \
   --freq D \
   --model_name "$model_name" \
   --model_params '{}' \
-  --pred_method direct \
+  --inference_strategy direct \
   --do_train true \
   --do_test true \
   --do_forecast true \
   --do_eda true \
   --history_size 365 \
   --predict_horizon 7 \
-  --backtest_initial_train_size 365 \
+  --backtest_train_size 365 \
   --backtest_horizon 7 \
   --backtest_step 7 \
+  --backtest_window_mode expanding \
   --enable_datetime_features true \
   --lags 1,2,7,14 \
   --scale false \

@@ -16,16 +16,17 @@ python -u run.py \
   --freq D \
   --model_name "$model_name" \
   --model_params '{"enforce_stationarity": false, "enforce_invertibility": false, "simple_differencing": true, "fit_kwargs": {"disp": false, "maxiter": 20}}' \
-  --pred_method direct \
+  --inference_strategy direct \
   --do_train true \
   --do_test true \
   --do_forecast true \
   --do_eda false \
   --history_size 180 \
   --predict_horizon 7 \
-  --backtest_initial_train_size 365 \
+  --backtest_train_size 365 \
   --backtest_horizon 7 \
   --backtest_step 30 \
+  --backtest_window_mode expanding \
   --backtest_verbose true \
   --backtest_progress_every 10 \
   --enable_datetime_features true \

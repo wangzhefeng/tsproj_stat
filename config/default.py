@@ -3,6 +3,13 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from models.inference import (
+    normalize_inference_strategy,
+    normalize_window_mode,
+    resolve_strategy_label_for_setting,
+    validate_single_step_horizon,
+)
+
 
 def _ensure_positive(value: int, field_name: str) -> None:
     if value <= 0:
@@ -33,7 +40,8 @@ class AppConfig:
     # 模型参数
     model_name: str = "arima"
     model_params: dict = field(default_factory=dict)
-    pred_method: str = "direct"
+    inference_strategy: str | None = None
+    pred_method: str | None = "direct"
     
     # 任务参数
     do_train: bool = True
@@ -46,9 +54,11 @@ class AppConfig:
     predict_horizon: int = 7
     
     # 模型测试
+    backtest_train_size: int | None = None
     backtest_initial_train_size: int = 30
     backtest_horizon: int = 7
     backtest_step: int = 7
+    backtest_window_mode: str = "expanding"
     backtest_verbose: bool = False
     backtest_progress_every: int = 10
     backtest_n_jobs: int = 1
@@ -100,16 +110,29 @@ class AppConfig:
     forecast_result_dir: str = "saved_results/results_forecast"
     eda_output_dir: str = "saved_results/results_eda"
 
+    def resolved_inference_strategy(self) -> str:
+        return normalize_inference_strategy(self.inference_strategy, self.pred_method)
+
+    def resolved_backtest_train_size(self) -> int:
+        return int(self.backtest_train_size or self.backtest_initial_train_size)
+
+    def resolved_backtest_window_mode(self) -> str:
+        return normalize_window_mode(self.backtest_window_mode)
+
+    def setting_strategy_label(self) -> str:
+        return resolve_strategy_label_for_setting(self.inference_strategy, self.pred_method)
+
     def validate(self) -> None:
         _ensure_positive(self.history_size, "history_size")
         _ensure_positive(self.predict_horizon, "predict_horizon")
-        _ensure_positive(self.backtest_initial_train_size, "backtest_initial_train_size")
+        _ensure_positive(self.resolved_backtest_train_size(), "backtest_train_size")
         _ensure_positive(self.backtest_horizon, "backtest_horizon")
         _ensure_positive(self.backtest_step, "backtest_step")
         _ensure_positive(self.backtest_progress_every, "backtest_progress_every")
-
-        if self.pred_method not in {"direct", "recursive", "one_step"}:
-            raise ValueError("pred_method must be one of {'direct', 'recursive', 'one_step'}")
+        normalize_inference_strategy(self.inference_strategy, self.pred_method)
+        normalize_window_mode(self.backtest_window_mode)
+        validate_single_step_horizon(self.resolved_inference_strategy(), self.predict_horizon)
+        validate_single_step_horizon(self.resolved_inference_strategy(), self.backtest_horizon)
 
         if self.scaler_type not in {"standard", "minmax"}:
             raise ValueError("scaler_type must be one of {'standard', 'minmax'}")

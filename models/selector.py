@@ -4,6 +4,7 @@ import pandas as pd
 
 from evaluation.backtest import rolling_backtest
 from models.factory import ModelFactory
+from models.inference import normalize_inference_strategy
 
 import os
 from pathlib import Path
@@ -27,6 +28,7 @@ class AutoSelector:
         initial_train_size: int = 30,
         horizon: int = 7,
         model_params_map: dict[str, dict] | None = None,
+        inference_strategy: str = "direct",
     ):
         if not candidates:
             raise ValueError("candidates must not be empty")
@@ -40,6 +42,7 @@ class AutoSelector:
         self.initial_train_size = initial_train_size
         self.horizon = horizon
         self.model_params_map = model_params_map or {}
+        self.inference_strategy = normalize_inference_strategy(inference_strategy, None)
         self._scores: dict[str, float] = {}
 
     def select(
@@ -73,15 +76,15 @@ class AutoSelector:
         for model_name in self.candidates:
             params = self.model_params_map.get(model_name, {})
             try:
-                model = factory.create_model(model_name, params)
                 result = rolling_backtest(
                     df=df,
-                    model=model,
+                    model_builder=lambda model_name=model_name, params=params: factory.create_model(model_name, params),
                     target_col=target_col,
                     time_col=time_col if time_col in df.columns else None,
-                    initial_train_size=self.initial_train_size,
+                    train_size=self.initial_train_size,
                     horizon=self.horizon,
                     step=step,
+                    inference_strategy=self.inference_strategy,
                     verbose=False,
                 )
                 score = result.summary.get(self.metric, float("inf"))

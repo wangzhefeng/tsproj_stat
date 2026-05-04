@@ -45,7 +45,7 @@ uv sync --extra dev
 完整流程（训练 + 回测 + 预测）：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py --model_name arima --pred_method direct --do_train true --do_test true --do_forecast true
+UV_CACHE_DIR=.uv_cache uv run python run.py --model_name arima --inference_strategy direct --do_train true --do_test true --do_forecast true
 ```
 
 仅执行 EDA：
@@ -106,7 +106,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 
 ## 输出目录
 
-当前结果统一按 `setting = {model_name}-{data_name}-{pred_method}` 落盘，例如 `arima-wind_dataset-direct`。
+当前结果统一按 `setting = {model_name}-{data_name}-{strategy}` 落盘。迁移期仍兼容旧 `pred_method` 命名，例如 `arima-wind_dataset-direct`。
 
 - `saved_results/checkpoints/{setting}/model.pkl`
 - `saved_results/results_train/{setting}/train_summary.json`
@@ -129,7 +129,9 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 
 ## 当前主线说明
 
-- 统计预测主线统一通过 `fit(y, X_hist=None, X_future=None) / predict(horizon, X_future=None)` 接口接入。
+- 统计预测主线统一通过 `fit(y, X_hist=None, X_future=None) / predict_one(X_future_one=None)` 接口接入；多步推理统一由 `inference_strategy` 编排。
+- `inference_strategy` 当前支持 `single_step / direct / recursive / dirrec`。
+- `test` 额外支持 `backtest_window_mode = expanding | sliding`，并通过 `backtest_train_size` 控制训练窗口长度；旧 `backtest_initial_train_size` 仍兼容。
 - 当前主线默认仍输出单目标 `target_col -> yhat`，但已支持多源输入：
   - 内生变量：`endog_cols`
   - 历史外生变量：`exog_cols`

@@ -164,8 +164,9 @@ class ModelApp:
                     candidates=self.cfg.auto_select_candidates,
                     metric=self.cfg.auto_select_metric,
                     n_windows=self.cfg.auto_select_n_windows,
-                    initial_train_size=self.cfg.backtest_initial_train_size,
+                    initial_train_size=self.cfg.resolved_backtest_train_size(),
                     horizon=self.cfg.backtest_horizon,
+                    inference_strategy=self.cfg.resolved_inference_strategy(),
                 )
                 best_model = selector.select(
                     y=prepared.history_y,
@@ -408,6 +409,7 @@ class ModelApp:
             "model_name": self.cfg.model_name,
             "data_name": self.artifacts.data_name,
             "pred_method": self.cfg.pred_method,
+            "inference_strategy": self.cfg.resolved_inference_strategy(),
             "time_col": self.cfg.time_col,
             "target_col": self.cfg.target_col,
             "endog_cols": self.effective_endog_cols,
@@ -455,12 +457,13 @@ class ModelApp:
             endog_cols=self.effective_endog_cols,
             exog_cols=self.cfg.exog_cols,
             future_exog_cols=self.cfg.future_exog_cols,
-            initial_train_size=self.cfg.backtest_initial_train_size,
+            train_size=self.cfg.resolved_backtest_train_size(),
             horizon=self.cfg.backtest_horizon,
             step=self.cfg.backtest_step,
+            inference_strategy=self.cfg.resolved_inference_strategy(),
+            window_mode=self.cfg.resolved_backtest_window_mode(),
             verbose=self.cfg.backtest_verbose,
             progress_every=self.cfg.backtest_progress_every,
-            n_jobs=self.cfg.backtest_n_jobs,
         )
         result = tester.evaluate(df[[self.cfg.time_col, *self.model_value_cols]].copy())
         # model testing saving
@@ -473,16 +476,21 @@ class ModelApp:
                 "model_name": self.cfg.model_name,
                 "data_name": self.artifacts.data_name,
                 "pred_method": self.cfg.pred_method,
+                "inference_strategy": self.cfg.resolved_inference_strategy(),
                 "target_col": self.cfg.target_col,
                 "time_col": self.cfg.time_col,
-                "initial_train_size": int(self.cfg.backtest_initial_train_size),
+                "train_size": int(self.cfg.resolved_backtest_train_size()),
                 "horizon": int(self.cfg.backtest_horizon),
                 "step": int(self.cfg.backtest_step),
+                "window_mode": self.cfg.resolved_backtest_window_mode(),
                 "failed_windows": result.failed_windows,
                 **result.summary,
             },
         )
-        plot_title = f"{self.cfg.model_name} / {self.artifacts.data_name} / {self.cfg.pred_method}"
+        plot_title = (
+            f"{self.cfg.model_name} / {self.artifacts.data_name} / "
+            f"{self.cfg.resolved_inference_strategy()}"
+        )
         pred_plot_path = plot_backtest_predictions(
             result.predictions_df,
             str(self.artifacts.test_results_dir / "backtest_prediction_plot.png"),
@@ -516,6 +524,7 @@ class ModelApp:
         forecaster = Forecaster(
             model_name=self.cfg.model_name,
             model_params=self.resolved_model_params,
+            inference_strategy=self.cfg.inference_strategy,
             pred_method=self.cfg.pred_method,
         )
         if self.cfg.return_intervals:
@@ -556,7 +565,10 @@ class ModelApp:
             history_df=prepared.history_df.tail(self.cfg.history_size).copy(),
             forecast_df=forecast_df,
             output_path=str(self.artifacts.forecast_results_dir / "forecast_plot.png"),
-            title=f"Forecast - {self.cfg.model_name} / {self.artifacts.data_name} / {self.cfg.pred_method}",
+            title=(
+                f"Forecast - {self.cfg.model_name} / {self.artifacts.data_name} / "
+                f"{self.cfg.resolved_inference_strategy()}"
+            ),
             time_col=self.cfg.time_col,
             target_col=self.cfg.target_col,
         )
@@ -566,6 +578,7 @@ class ModelApp:
                 "model_name": self.cfg.model_name,
                 "data_name": self.artifacts.data_name,
                 "pred_method": self.cfg.pred_method,
+                "inference_strategy": self.cfg.resolved_inference_strategy(),
                 "predict_horizon": int(self.cfg.predict_horizon),
                 "target_col": self.cfg.target_col,
                 "endog_cols": self.effective_endog_cols,

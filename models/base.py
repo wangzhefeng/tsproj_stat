@@ -21,6 +21,18 @@ class BaseStatModel(ABC):
     def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         raise NotImplementedError
 
+    def predict_one(self, X_future_one: pd.DataFrame | None = None) -> float | pd.Series:
+        """Compatibility bridge while the project migrates to a single-step contract."""
+        pred = self.predict(1, X_future=X_future_one)
+        if isinstance(pred, pd.Series):
+            if pred.empty:
+                raise ValueError("predict(1) returned empty Series")
+            return float(pred.iloc[0])
+        arr = np.asarray(pred, dtype=float).reshape(-1)
+        if arr.size == 0:
+            raise ValueError("predict(1) returned empty output")
+        return float(arr[0])
+
     def predict_with_intervals(
         self,
         horizon: int,
