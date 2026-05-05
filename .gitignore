@@ -1,4 +1,4 @@
-# Byte-compiled / optimized / DLL files
+﻿# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
@@ -206,9 +206,11 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-
 # custom
-.mplconfig/
-dataset/
 saved_results/
+dataset/
 logs/
+.uv-cache/
+.worktrees/
+.mplconfig/
+tests/
