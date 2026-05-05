@@ -39,7 +39,7 @@ def prepare_standard_frame(
     
     selected_value_cols = [target_col]
     if value_cols is not None:
-        # 多源输入场景下保留配置指定的内生/外生列，但仍强制包含 target_col。
+        # 多源输入场景下保留配置指定的协变量列；历史数据仍必须保留 target_col。
         selected_value_cols = []
         for col in value_cols:
             if col not in local_df.columns:

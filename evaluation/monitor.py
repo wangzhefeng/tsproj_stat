@@ -1,23 +1,20 @@
 from __future__ import annotations
 
 import csv
-import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-import numpy as np
 import pandas as pd
 
+from config import AppConfig
 from .metrics import mae, rmse, mape
-
-import os
-LOGGING_LABEL = "monitor"
-os.environ.setdefault("LOG_NAME", LOGGING_LABEL)
 from utils.log_util import logger
 
 
 class ModelMonitor:
-    """记录线上/离线预测质量，用于发现模型退化。
+    """
+    记录线上/离线预测质量，用于发现模型退化。
 
     monitor_dir/setting/ 下的文件约定：
         predictions_log.csv   — 每个预测步一行
@@ -235,3 +232,41 @@ class ModelMonitor:
             return pd.read_csv(path, dtype=str)
         except Exception:
             return pd.DataFrame(columns=cols)
+
+
+def run_monitor_actuals_backfill(cfg: AppConfig) -> dict[str, Any] | None:
+    """
+    从 CSV 回填监控 actuals，并可选写入滚动指标快照。
+
+    兼具 CLI early-return 判断：未配置 monitor_actuals_path 则返回 None；
+    已配置时使用 AppConfig 中的 monitor 参数执行回填。
+    """
+    # 未配置 monitor_actuals_path 则返回 None
+    if cfg.monitor_actuals_path is None:
+        return None
+    # 监控数据保存路径
+    data_name = "demo_series" if cfg.data_path is None else Path(cfg.data_path).stem
+    setting = cfg.monitor_actuals_setting or f"{cfg.model_name}-{data_name}-{cfg.setting_strategy_label()}"
+    # 读取回填数据
+    actuals_df = pd.read_csv(cfg.monitor_actuals_path)
+    # 创建 Monitor
+    monitor = ModelMonitor(monitor_dir=cfg.monitor_dir, setting=setting, window=cfg.monitor_window)
+    # 真实值回填
+    monitor.fill_actuals_frame(
+        actuals_df,
+        actual_col=cfg.monitor_actuals_value_col,
+        forecast_ts=cfg.monitor_actuals_forecast_ts,
+    )
+    # 写入滚动指标
+    metrics = (
+        monitor.snapshot_metrics(run_id=cfg.monitor_actuals_run_id)
+        if cfg.monitor_actuals_snapshot
+        else monitor.compute_rolling_metrics()
+    )
+
+    return {
+        "monitor_predictions_path": str(monitor._pred_path),
+        "monitor_actuals_path": str(monitor._act_path),
+        "monitor_metrics_path": str(monitor._metrics_path),
+        "metrics": metrics,
+    }

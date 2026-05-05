@@ -7,7 +7,7 @@ from typing import Callable
 
 import pandas as pd
 
-from models.inference import normalize_inference_strategy, normalize_window_mode, run_point_inference
+from models.inference import normalize_forecast_strategy, normalize_window_mode, run_point_inference
 from .metrics import bias, mae, mape, max_error, mse, r2, rmse, smape
 from utils.log_util import logger
 
@@ -37,7 +37,7 @@ def rolling_backtest(
     train_size: int = 30,
     horizon: int = 7,
     step: int = 7,
-    inference_strategy: str = "direct",
+    forecast_strategy: str = "direct",
     window_mode: str = "expanding",
     verbose: bool = False,
     progress_every: int = 10,
@@ -56,9 +56,9 @@ def rolling_backtest(
     if n_jobs <= 0:
         raise ValueError("n_jobs must be > 0")
 
-    strategy = normalize_inference_strategy(inference_strategy, None)
+    strategy = normalize_forecast_strategy(forecast_strategy)
     resolved_window_mode = normalize_window_mode(window_mode)
-    endog_cols = endog_cols or [target_col]
+    endog_cols = endog_cols or []
     exog_cols = exog_cols or []
     future_exog_cols = future_exog_cols or []
 
@@ -108,7 +108,7 @@ def rolling_backtest(
                 model_builder=model_builder,
                 history=train_y,
                 horizon=horizon,
-                inference_strategy=strategy,
+                forecast_strategy=strategy,
                 X_hist=train_x_hist,
                 X_future=test_x_future,
             ).astype(float).reset_index(drop=True)
@@ -199,7 +199,7 @@ def rolling_backtest(
         "train_size": int(train_size),
         "step": int(step),
         "window_mode": resolved_window_mode,
-        "inference_strategy": strategy,
+        "forecast_strategy": strategy,
         "mae": float(metrics_df["mae"].mean()),
         "rmse": float(metrics_df["rmse"].mean()),
         "mape": float(metrics_df["mape"].mean()),

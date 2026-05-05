@@ -4,9 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from models.inference import (
-    normalize_inference_strategy,
+    normalize_forecast_strategy,
     normalize_window_mode,
-    resolve_strategy_label_for_setting,
     validate_single_step_horizon,
 )
 
@@ -45,8 +44,7 @@ class AppConfig:
     # 模型参数
     model_name: str = "arima"
     model_params: dict = field(default_factory=dict)
-    inference_strategy: str | None = None
-    pred_method: str | None = "direct"
+    forecast_strategy: str = "direct"
     
     # 任务参数
     do_train: bool = True
@@ -133,9 +131,9 @@ class AppConfig:
     forecast_result_dir: str = "saved_results/results_forecast"
     eda_output_dir: str = "saved_results/results_eda"
 
-    def resolved_inference_strategy(self) -> str:
-        """统一解析新字段 inference_strategy 与旧字段 pred_method。"""
-        return normalize_inference_strategy(self.inference_strategy, self.pred_method)
+    def resolved_forecast_strategy(self) -> str:
+        """统一解析预测策略。"""
+        return normalize_forecast_strategy(self.forecast_strategy)
 
     def resolved_backtest_train_size(self) -> int:
         """优先使用新字段 backtest_train_size，兼容旧字段 backtest_initial_train_size。"""
@@ -146,8 +144,8 @@ class AppConfig:
         return normalize_window_mode(self.backtest_window_mode)
 
     def setting_strategy_label(self) -> str:
-        """构建结果目录 setting 时使用的策略标签，保留旧 pred_method 命名兼容。"""
-        return resolve_strategy_label_for_setting(self.inference_strategy, self.pred_method)
+        """构建结果目录 setting 时使用的预测策略标签。"""
+        return self.resolved_forecast_strategy()
 
     def validate(self) -> None:
         """在运行前集中校验配置，避免错误下沉到模型拟合阶段才暴露。"""
@@ -161,10 +159,13 @@ class AppConfig:
         _ensure_positive(self.eda_period, "eda_period")
         _ensure_positive(self.eda_nlags, "eda_nlags")
         _ensure_positive(self.monitor_window, "monitor_window")
-        normalize_inference_strategy(self.inference_strategy, self.pred_method)
+        normalize_forecast_strategy(self.forecast_strategy)
         normalize_window_mode(self.backtest_window_mode)
-        validate_single_step_horizon(self.resolved_inference_strategy(), self.predict_horizon)
-        validate_single_step_horizon(self.resolved_inference_strategy(), self.backtest_horizon)
+        validate_single_step_horizon(self.resolved_forecast_strategy(), self.predict_horizon)
+        validate_single_step_horizon(self.resolved_forecast_strategy(), self.backtest_horizon)
+
+        if self.target_col in self.endog_cols:
+            raise ValueError("endog_cols must not include target_col")
 
         if self.scaler_type not in {"standard", "minmax"}:
             raise ValueError("scaler_type must be one of {'standard', 'minmax'}")

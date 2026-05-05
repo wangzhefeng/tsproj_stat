@@ -9,31 +9,18 @@ import pandas as pd
 from data_provider.data_transfer import combine_history_frame, to_dataframe, to_univariate_series
 
 
-INFERENCE_STRATEGIES = {"single_step", "direct", "recursive", "dirrec"}
+FORECAST_STRATEGIES = {"single_step", "direct", "recursive", "dirrec"}
 WINDOW_MODES = {"expanding", "sliding"}
-# pred_method 是旧命名；统一映射到 inference_strategy 后再执行推理。
-PRED_METHOD_ALIASES = {
-    "one_step": "single_step",
-    "single_step": "single_step",
-    "direct": "direct",
-    "recursive": "recursive",
-    "dirrec": "dirrec",
-}
 
 
-def normalize_inference_strategy(
-    inference_strategy: str | None,
-    pred_method: str | None = None,
+def normalize_forecast_strategy(
+    forecast_strategy: str | None,
 ) -> str:
-    """标准化多步推理策略名称，并兼容旧 pred_method 别名。"""
-    candidate = inference_strategy or pred_method or "direct"
-    normalized = PRED_METHOD_ALIASES.get(str(candidate).strip().lower())
-    if normalized is None:
-        raise ValueError(
-            "inference_strategy must be one of "
-            f"{sorted(INFERENCE_STRATEGIES)} or legacy pred_method aliases {sorted(PRED_METHOD_ALIASES)}"
-        )
-    return normalized
+    """标准化多步预测策略名称。"""
+    candidate = str(forecast_strategy or "direct").strip().lower()
+    if candidate not in FORECAST_STRATEGIES:
+        raise ValueError(f"forecast_strategy must be one of {sorted(FORECAST_STRATEGIES)}")
+    return candidate
 
 
 def normalize_window_mode(window_mode: str | None) -> str:
@@ -44,18 +31,6 @@ def normalize_window_mode(window_mode: str | None) -> str:
     return candidate
 
 
-def resolve_strategy_label_for_setting(
-    inference_strategy: str | None,
-    pred_method: str | None,
-) -> str:
-    """确定结果目录 setting 中使用的策略标签，兼容旧脚本命名。"""
-    if inference_strategy:
-        return normalize_inference_strategy(inference_strategy, None)
-    if pred_method:
-        return str(pred_method).strip().lower()
-    return "direct"
-
-
 def validate_horizon(horizon: int) -> None:
     if horizon <= 0:
         raise ValueError("horizon must be positive")
@@ -63,7 +38,7 @@ def validate_horizon(horizon: int) -> None:
 
 def validate_single_step_horizon(strategy: str, horizon: int) -> None:
     if strategy == "single_step" and horizon != 1:
-        raise ValueError("single_step inference_strategy requires predict_horizon/backtest_horizon == 1")
+        raise ValueError("single_step forecast_strategy requires predict_horizon/backtest_horizon == 1")
 
 
 def _coerce_single_value(value: pd.Series | float | np.floating | int) -> float:
@@ -121,7 +96,7 @@ def run_point_inference(
     model_builder: Callable[[], object],
     history: pd.Series | pd.DataFrame,
     horizon: int,
-    inference_strategy: str,
+    forecast_strategy: str,
     X_hist: pd.DataFrame | None = None,
     X_future: pd.DataFrame | None = None,
 ) -> pd.Series:
@@ -132,7 +107,7 @@ def run_point_inference(
     recursive: 每一步把上一轮预测追加回历史，再预测下一步；
     dirrec: 逐步重建模型，同时使用递归扩展后的历史。
     """
-    strategy = normalize_inference_strategy(inference_strategy, None)
+    strategy = normalize_forecast_strategy(forecast_strategy)
     validate_horizon(horizon)
     validate_single_step_horizon(strategy, horizon)
 
@@ -176,7 +151,7 @@ def run_interval_inference(
     model_builder: Callable[[], object],
     history: pd.Series | pd.DataFrame,
     horizon: int,
-    inference_strategy: str,
+    forecast_strategy: str,
     X_hist: pd.DataFrame | None = None,
     X_future: pd.DataFrame | None = None,
     alpha: float = 0.05,
@@ -186,12 +161,12 @@ def run_interval_inference(
     只有 single_step/direct 可以从每个直接预测模型取原生区间；
     recursive/dirrec 暂时返回点预测和 NaN 区间，避免伪造不可靠置信区间。
     """
-    strategy = normalize_inference_strategy(inference_strategy, None)
+    strategy = normalize_forecast_strategy(forecast_strategy)
     point = run_point_inference(
         model_builder=model_builder,
         history=history,
         horizon=horizon,
-        inference_strategy=strategy,
+        forecast_strategy=strategy,
         X_hist=X_hist,
         X_future=X_future,
     )

@@ -45,7 +45,7 @@ uv sync --extra dev
 完整流程（训练 + 回测 + 预测）：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py --model_name arima --inference_strategy direct --do_train true --do_test true --do_forecast true
+UV_CACHE_DIR=.uv_cache uv run python run.py --model_name arima --forecast_strategy direct --do_train true --do_test true --do_forecast true
 ```
 
 仅执行 EDA：
@@ -134,7 +134,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
   --target_col y \
   --model_name linear_var \
   --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' \
-  --endog_cols y,load \
+  --endog_cols load \
   --exog_cols temp \
   --future_exog_path /abs/path/future_exog.csv \
   --future_exog_time_col ds \
@@ -145,7 +145,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 
 ## 输出目录
 
-当前结果统一按 `setting = {model_name}-{data_name}-{strategy}` 落盘。迁移期仍兼容旧 `pred_method` 命名，例如 `arima-wind_dataset-direct`。
+当前结果统一按 `setting = {model_name}-{data_name}-{forecast_strategy}` 落盘，例如 `arima-wind_dataset-direct`。
 
 - `saved_results/checkpoints/{setting}/model.pkl`
 - `saved_results/results_train/{setting}/train_summary.json`
@@ -175,11 +175,11 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 
 ## 当前主线说明
 
-- 统计预测主线统一通过 `fit(y, X_hist=None, X_future=None) / predict_one(X_future_one=None)` 接口接入；多步推理统一由 `inference_strategy` 编排。
-- `inference_strategy` 当前支持 `single_step / direct / recursive / dirrec`。
+- 统计预测主线统一通过 `fit(y, X_hist=None, X_future=None) / predict_one(X_future_one=None)` 接口接入；多步推理统一由 `forecast_strategy` 编排。
+- `forecast_strategy` 当前支持 `single_step / direct / recursive / dirrec`。
 - `test` 额外支持 `backtest_window_mode = expanding | sliding`，并通过 `backtest_train_size` 控制训练窗口长度；旧 `backtest_initial_train_size` 仍兼容。`backtest_n_jobs > 1` 时可按窗口并行回测，输出仍按 `window_id` 排序。
 - 当前主线默认仍输出单目标 `target_col -> yhat`，但已支持多源输入：
-  - 内生变量：`endog_cols`
+  - 历史内生协变量：`endog_cols`，不包含 `target_col`
   - 历史外生变量：`exog_cols`
   - 独立未来外生文件：`future_exog_path` + `future_exog_cols`
 - 统计模型实现按 `models/model/` 家族模块维护，包含 ARIMA、指数平滑、多变量、波动率和扩展模型。
@@ -228,14 +228,22 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 
 ## 数据集脚本
 
-- 单模型脚本入口：
+- `scripts/wind_univariate/` 覆盖当前单变量可运行模型：
+  - stable：`naive`、`seasonal_naive`、`historic_average`、`ar`、`ma`、`arma`、`arima`、`auto_arima`、`sarima`、`ets`、`theta`
+  - optional：`dynamic_theta`、`auto_ets`、`auto_theta`、`arch`、`garch`、`tbats`、`prophet`
+  - experimental：`croston`、`neuralprophet`、`bayesian_tmt`、`rar`
+- 单模型脚本入口示例：
   - `bash scripts/wind_univariate/run_naive.sh`
+  - `bash scripts/wind_univariate/run_seasonal_naive.sh`
   - `bash scripts/wind_univariate/run_arima.sh`
   - 其余模型同名脚本位于 `scripts/wind_univariate/`
-- 当前每个脚本都显式传入完整 `AppConfig` 字段，并统一使用 `python -u run.py`、`model_name`、`LOG_NAME`
+- 当前每个脚本都显式传入 wind 单变量实验相关的主要 `AppConfig` 字段，并统一使用 `python -u run.py`、`model_name`、`LOG_NAME`
+- 脚本中不展开 `config/config_module/config_class`、多源输入和 monitor actuals 回填字段；这些不属于 wind 单变量单模型运行入口。
 - 脚本运行后会自动把结果写到 `saved_results/checkpoints|results_train|results_test|results_forecast|results_eda/{setting}/`
+- 周期类日频脚本默认使用周周期参数，如 `season_length=7`、`period=7` 或 `seasonal_periods=7`；StatsForecast optional 模型显式传入 `freq="D"`。
 - `run_auto_arima.sh` 当前定位为偏快的日常脚本：默认缩短 `history_size`、增大 `backtest_step`、收紧 `auto_arima` 搜索空间，并开启回测进度日志与 `auto_arima` trace
 - `run_sarima.sh` 当前也定位为偏快的日常脚本：默认缩短 `history_size`、增大 `backtest_step`、开启回测进度日志，并通过 `model_params.fit_kwargs.maxiter` 等参数收紧 `SARIMAX` 拟合成本
+- `run_tbats.sh` 与 `run_neuralprophet.sh` 保留为可运行脚本；当前环境 smoke 可能通过 fallback 完成，需结合 `test_summary.json` 或 smoke matrix 的 `used_fallback` 字段判断是否原生模型成功。
 - 当前 `scripts/wind_univariate/` 只覆盖单变量脚本；多变量/多源输入模型建议直接用 CLI 运行。
 
 ## EDA 能力
@@ -289,5 +297,5 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_
 UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false --eda_period 7 --eda_nlags 24 --eda_recommendation_enabled true
 UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5 --backtest_n_jobs 2 --monitor_enabled true
 UV_CACHE_DIR=.uv_cache uv run python run.py --monitor_actuals_path /abs/path/actuals.csv --monitor_actuals_setting naive-demo_series-direct --monitor_actuals_value_col actual --monitor_actuals_run_id manual-backfill-1
-UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4
+UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols load --exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4
 ```

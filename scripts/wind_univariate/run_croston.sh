@@ -3,10 +3,10 @@
 set -euo pipefail
 
 # 单变量风电脚本：使用 dataset/wind_dataset.csv，DATE 为时间列，WIND 为目标列。
-# theta 是轻量统计预测模型，这里显式设置日频周周期。
+# croston 是 experimental 间歇需求基线；WIND 非负时可用于对照。
 cd "$(dirname "$0")/../.."
 
-model_name=theta
+model_name=croston
 export LOG_NAME="$model_name"
 
 # 运行完整主流程：训练、rolling backtest 和未来预测。
@@ -19,7 +19,7 @@ python -u run.py \
   --target_col WIND \
   --freq D \
   --model_name "$model_name" \
-  --model_params '{"period":7}' \
+  --model_params '{"alpha":0.2}' \
   --forecast_strategy direct \
   --do_train true \
   --do_test true \

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from models.factory import ModelFactory
-from models.inference import normalize_inference_strategy, run_interval_inference, run_point_inference
+from models.inference import normalize_forecast_strategy, run_interval_inference, run_point_inference
 
 import os
 from pathlib import Path
@@ -43,12 +43,11 @@ class Forecaster:
         self,
         model_name: str,
         model_params: dict | None = None,
-        inference_strategy: str | None = None,
-        pred_method: str | None = None,
+        forecast_strategy: str | None = None,
     ):
         self.model_name = model_name
         self.model_params = model_params or {}
-        self.inference_strategy = normalize_inference_strategy(inference_strategy, pred_method)
+        self.forecast_strategy = normalize_forecast_strategy(forecast_strategy)
         self.factory = ModelFactory()
 
     def forecast(
@@ -63,7 +62,7 @@ class Forecaster:
             model_builder=lambda: self.factory.create_model(self.model_name, self.model_params),
             history=history,
             horizon=horizon,
-            inference_strategy=self.inference_strategy,
+            forecast_strategy=self.forecast_strategy,
             X_hist=X_hist,
             X_future=X_future,
         )
@@ -82,7 +81,7 @@ class Forecaster:
             model_builder=lambda: self.factory.create_model(self.model_name, self.model_params),
             history=history,
             horizon=horizon,
-            inference_strategy=self.inference_strategy,
+            forecast_strategy=self.forecast_strategy,
             X_hist=X_hist,
             X_future=X_future,
             alpha=alpha,

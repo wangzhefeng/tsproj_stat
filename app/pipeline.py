@@ -115,19 +115,28 @@ class ModelApp:
 
     @property
     def effective_endog_cols(self) -> list[str]:
-        """保证 target_col 永远位于内生变量第一列，符合单目标 yhat 输出契约。"""
-        cols = self.cfg.endog_cols or [self.cfg.target_col]
-        ordered = [self.cfg.target_col, *[col for col in cols if col != self.cfg.target_col]]
-        return ordered
+        """用户配置的历史内生协变量，不包含 target_col。"""
+        cols = []
+        for col in self.cfg.endog_cols:
+            if col == self.cfg.target_col:
+                raise ValueError("endog_cols must not include target_col")
+            if col not in cols:
+                cols.append(col)
+        return cols
 
     @property
     def model_value_cols(self) -> list[str]:
-        """历史建模输入列 = 内生变量 + 历史外生变量，并去除重复列。"""
+        """历史协变量列 = 内生协变量 + 历史外生变量，并去除重复列。"""
         cols = []
         for col in [*self.effective_endog_cols, *self.cfg.exog_cols]:
             if col not in cols:
                 cols.append(col)
         return cols
+
+    @property
+    def model_history_input_cols(self) -> list[str]:
+        """模型内部历史输入列，始终把 target_col 放在第一列。"""
+        return [self.cfg.target_col, *self.model_value_cols]
 
     @property
     def resolved_model_params(self) -> dict:
@@ -223,7 +232,7 @@ class ModelApp:
                     n_windows=self.cfg.auto_select_n_windows,
                     initial_train_size=self.cfg.resolved_backtest_train_size(),
                     horizon=self.cfg.backtest_horizon,
-                    inference_strategy=self.cfg.resolved_inference_strategy(),
+                    forecast_strategy=self.cfg.resolved_forecast_strategy(),
                 )
                 best_model = selector.select(
                     y=prepared.history_y,
@@ -349,11 +358,12 @@ class ModelApp:
             horizon=self.cfg.predict_horizon,
         )
         history_y = history_df[self.cfg.target_col].astype(float).reset_index(drop=True)
-        history_endog_df = history_df[self.effective_endog_cols].astype(float).reset_index(drop=True)
+        history_endog_cols = [self.cfg.target_col, *self.effective_endog_cols]
+        history_endog_df = history_df[history_endog_cols].astype(float).reset_index(drop=True)
         history_exog_df = None
         if self.cfg.exog_cols:
             history_exog_df = history_df[self.cfg.exog_cols].astype(float).reset_index(drop=True)
-        history_model_input_df = history_df[self.model_value_cols].astype(float).reset_index(drop=True)
+        history_model_input_df = history_df[self.model_history_input_cols].astype(float).reset_index(drop=True)
         model_input_feature_columns: list[str] = []
         if self.cfg.feature_mode == "model_input":
             feature_frame, model_input_feature_columns = self._build_model_input_features(history_df)
@@ -512,8 +522,7 @@ class ModelApp:
         train_summary = {
             "model_name": self.cfg.model_name,
             "data_name": self.artifacts.data_name,
-            "pred_method": self.cfg.pred_method,
-            "inference_strategy": self.cfg.resolved_inference_strategy(),
+            "forecast_strategy": self.cfg.resolved_forecast_strategy(),
             "time_col": self.cfg.time_col,
             "target_col": self.cfg.target_col,
             "endog_cols": self.effective_endog_cols,
@@ -570,13 +579,13 @@ class ModelApp:
             train_size=self.cfg.resolved_backtest_train_size(),
             horizon=self.cfg.backtest_horizon,
             step=self.cfg.backtest_step,
-            inference_strategy=self.cfg.resolved_inference_strategy(),
+            forecast_strategy=self.cfg.resolved_forecast_strategy(),
             window_mode=self.cfg.resolved_backtest_window_mode(),
             verbose=self.cfg.backtest_verbose,
             progress_every=self.cfg.backtest_progress_every,
             n_jobs=self.cfg.backtest_n_jobs,
         )
-        result = tester.evaluate(df[[self.cfg.time_col, *self.model_value_cols]].copy())
+        result = tester.evaluate(df[[self.cfg.time_col, *self.model_history_input_cols]].copy())
         # 回测产物分为窗口指标、逐点预测、汇总指标和图形，便于后续误差分析。
         metrics_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics.csv", result.metrics_df)
         predictions_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_predictions.csv", result.predictions_df)
@@ -588,8 +597,7 @@ class ModelApp:
                 {
                 "model_name": self.cfg.model_name,
                 "data_name": self.artifacts.data_name,
-                "pred_method": self.cfg.pred_method,
-                "inference_strategy": self.cfg.resolved_inference_strategy(),
+                "forecast_strategy": self.cfg.resolved_forecast_strategy(),
                 "target_col": self.cfg.target_col,
                 "time_col": self.cfg.time_col,
                 "train_size": int(self.cfg.resolved_backtest_train_size()),
@@ -605,7 +613,7 @@ class ModelApp:
         )
         plot_title = (
             f"{self.cfg.model_name} / {self.artifacts.data_name} / "
-            f"{self.cfg.resolved_inference_strategy()}"
+            f"{self.cfg.resolved_forecast_strategy()}"
         )
         pred_plot_path = plot_backtest_predictions(
             result.predictions_df,
@@ -641,8 +649,7 @@ class ModelApp:
         forecaster = Forecaster(
             model_name=self.cfg.model_name,
             model_params=self.resolved_model_params,
-            inference_strategy=self.cfg.inference_strategy,
-            pred_method=self.cfg.pred_method,
+            forecast_strategy=self.cfg.resolved_forecast_strategy(),
         )
         if self.cfg.return_intervals:
             interval_df = forecaster.forecast_with_intervals(
@@ -684,7 +691,7 @@ class ModelApp:
             output_path=str(self.artifacts.forecast_results_dir / "forecast_plot.png"),
             title=(
                 f"Forecast - {self.cfg.model_name} / {self.artifacts.data_name} / "
-                f"{self.cfg.resolved_inference_strategy()}"
+                f"{self.cfg.resolved_forecast_strategy()}"
             ),
             time_col=self.cfg.time_col,
             target_col=self.cfg.target_col,
@@ -694,8 +701,7 @@ class ModelApp:
             {
                 "model_name": self.cfg.model_name,
                 "data_name": self.artifacts.data_name,
-                "pred_method": self.cfg.pred_method,
-                "inference_strategy": self.cfg.resolved_inference_strategy(),
+                "forecast_strategy": self.cfg.resolved_forecast_strategy(),
                 "predict_horizon": int(self.cfg.predict_horizon),
                 "target_col": self.cfg.target_col,
                 "endog_cols": self.effective_endog_cols,

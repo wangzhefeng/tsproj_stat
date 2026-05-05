@@ -4,7 +4,7 @@ import pandas as pd
 
 from evaluation.backtest import BacktestResult, rolling_backtest
 from models.factory import ModelFactory
-from models.inference import normalize_inference_strategy, normalize_window_mode
+from models.inference import normalize_forecast_strategy, normalize_window_mode
 
 
 class Tester:
@@ -26,7 +26,7 @@ class Tester:
         train_size: int = 30,
         horizon: int = 7,
         step: int = 7,
-        inference_strategy: str = "direct",
+        forecast_strategy: str = "direct",
         window_mode: str = "expanding",
         verbose: bool = False,
         progress_every: int = 10,
@@ -36,13 +36,13 @@ class Tester:
         self.model_params = model_params or {}
         self.target_col = target_col
         self.time_col = time_col
-        self.endog_cols = endog_cols or [target_col]
+        self.endog_cols = endog_cols or []
         self.exog_cols = exog_cols or []
         self.future_exog_cols = future_exog_cols or []
         self.train_size = train_size
         self.horizon = horizon
         self.step = step
-        self.inference_strategy = normalize_inference_strategy(inference_strategy, None)
+        self.forecast_strategy = normalize_forecast_strategy(forecast_strategy)
         self.window_mode = normalize_window_mode(window_mode)
         self.verbose = verbose
         self.progress_every = progress_every
@@ -62,7 +62,7 @@ class Tester:
             train_size=self.train_size,
             horizon=self.horizon,
             step=self.step,
-            inference_strategy=self.inference_strategy,
+            forecast_strategy=self.forecast_strategy,
             window_mode=self.window_mode,
             verbose=self.verbose,
             progress_every=self.progress_every,

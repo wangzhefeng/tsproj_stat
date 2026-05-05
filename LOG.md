@@ -217,6 +217,27 @@
 - 原因：上一轮已完成主线基础版，但缺少测试阶段稳定性可观测性、模型风险矩阵和 forecast 后 actuals 回填入口
 - 影响范围：`app/pipeline.py`、`models/stability.py`、`evaluation/monitor.py`、`run.py`、README、AGENTS、相关测试
 
+### 2026-05-05 / Step 34
+
+- 补齐 `scripts/wind_univariate/` 当前单变量可运行模型脚本，并完善已有脚本注释与 `model_params`
+- 原因：registry 已扩展到更多 stable/optional/experimental 单变量模型，原脚本目录只覆盖部分模型，不利于真实 wind 数据集批量验证
+- 影响范围：`scripts/wind_univariate/`、README、LOG
+- 备注：`tbats` 与 `neuralprophet` 保留运行脚本，但当前 smoke 可能通过 fallback 完成，需结合 `used_fallback` 判断原生模型是否成功
+
+### 2026-05-05 / Step 35
+
+- 扩展 `scripts/wind_univariate/` 中每个模型脚本的显式 CLI 参数块
+- 原因：`run.py` 与 `config/AppConfig` 已暴露更多会影响训练、回测、预处理、EDA、auto_select、数据质量、区间预测和本地监控的参数；单变量脚本需要尽量列出这些配置，减少默认值漂移带来的复现实验歧义
+- 影响范围：`scripts/wind_univariate/`、README、LOG
+- 备注：脚本仍不展开 `config/config_module/config_class`、多源输入和 monitor actuals 回填字段；这些入口不属于 wind 单变量单模型脚本
+
+### 2026-05-05 / Step 36
+
+- 将预测策略主字段统一为 `forecast_strategy`
+- 原因：旧预测策略字段已经表示同一套预测策略，继续并存会导致 CLI、summary 和脚本出现重复配置与歧义
+- 影响范围：`config/AppConfig`、`run.py`、`models/inference.py`、`app/`、`evaluation/`、`models/selector.py`、`scripts/wind_univariate/`、README、AGENTS、CLAUDE、相关测试
+- 备注：项目不再保留旧预测策略 CLI 参数，统一直接使用 `--forecast_strategy`
+
 ## 待办任务
 
 | ID | 任务 | 优先级 | 完成条件 |
@@ -271,7 +292,7 @@
 | `UV_CACHE_DIR=.uv_cache uv run pytest tests/test_arima_auto_order.py tests/test_backtest_smoke.py tests/test_cli_overrides.py -q` | 通过 | `AutoARIMAModel` 惰性 fallback、参数透传与 backtest 进度日志回归通过 |
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q tests/test_arima_auto_order.py -k sarima_forwards_model_params` | 通过 | `SARIMAModel` 新增拟合参数与 `fit_kwargs` 透传回归通过 |
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `64 passed`；多源输入、`bayesian_var`、`linear_var` 接入后全量回归通过 |
-| `UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /private/tmp/tsproj_multisource_smoke/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --exog_cols temp --future_exog_path /private/tmp/tsproj_multisource_smoke/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --do_eda false --history_size 12 --predict_horizon 4 --backtest_initial_train_size 12 --backtest_horizon 4 --backtest_step 4` | 通过 | 多源 CLI smoke 可运行，结果落盘到 `saved_results/.../linear_var-history-direct/` |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /private/tmp/tsproj_multisource_smoke/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols load --exog_cols temp --future_exog_path /private/tmp/tsproj_multisource_smoke/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --do_eda false --history_size 12 --predict_horizon 4 --backtest_initial_train_size 12 --backtest_horizon 4 --backtest_step 4` | 通过 | 多源 CLI smoke 可运行，结果落盘到 `saved_results/.../linear_var-history-direct/` |
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | `75 passed`；AR/MA/ARMA 与可逆分解预处理接入后全量回归通过 |
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name ar --model_params '{"p":2}' --decomposition_method seasonal_decompose --decomposition_target resid_only --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4` | 通过 | `ar` + 分解预处理 smoke 可运行，结果落盘到 `saved_results/.../ar-demo_series-direct/` |
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name auto_arima --model_params '{"seasonal":false,"max_p":2,"max_q":2,"max_order":4,"maxiter":10}' --decomposition_method stl --decomposition_target trend_resid --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4` | 通过 | `auto_arima` + STL 分解预处理 smoke 可运行，结果落盘到 `saved_results/.../auto_arima-demo_series-direct/` |
@@ -286,17 +307,32 @@
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false` | 通过 | EDA-only CLI smoke 通过，并输出 `eda_recommendations.json/csv` |
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5 --backtest_n_jobs 2 --monitor_enabled true` | 通过 | 并行回测与本地监控日志 smoke 通过，预测日志写入 `saved_results/monitor/{setting}` |
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false --decomposition_method seasonal_decompose --decomposition_target resid_only --seasonal_period 7 --eda_run_preprocessed true` | 通过 | 预处理后 EDA smoke 通过，额外输出 `results_eda/{setting}/postprocessed/*` |
-| `UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /private/tmp/tsproj_multisource_smoke/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --exog_cols temp --future_exog_path /private/tmp/tsproj_multisource_smoke/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --do_eda false --history_size 12 --predict_horizon 4 --backtest_initial_train_size 12 --backtest_horizon 4 --backtest_step 4` | 通过 | 多源 `linear_var` CLI smoke 继续通过 |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /private/tmp/tsproj_multisource_smoke/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols load --exog_cols temp --future_exog_path /private/tmp/tsproj_multisource_smoke/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --do_eda false --history_size 12 --predict_horizon 4 --backtest_initial_train_size 12 --backtest_horizon 4 --backtest_step 4` | 通过 | 多源 `linear_var` CLI smoke 继续通过 |
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q tests/test_pipeline.py::test_pipeline_end_to_end tests/test_monitor.py tests/test_model_stability.py tests/test_cli_overrides.py::test_parse_args_supports_monitor_actuals_backfill_fields` | 通过 | `test_summary` 稳定性字段、monitor actuals 回填和模型 smoke matrix targeted 回归通过 |
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --monitor_actuals_path /private/tmp/tsproj_monitor_actuals.csv --monitor_actuals_setting naive-demo_series-direct --monitor_actuals_value_col actual --monitor_actuals_run_id manual-smoke --monitor_window 5` | 通过 | monitor actuals CLI 可写入 `actuals_log.csv` 并生成 `metrics_history.csv` 快照 |
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | Step 33 后全量回归通过；仍有既有 `ConvergenceWarning` 与 optional 依赖 warning |
 | `UV_CACHE_DIR=.uv_cache uv run python -m compileall run.py main.py app config data_provider models evaluation eda features utils` | 通过 | Step 33 后主线模块语法检查通过 |
 | `bash -n scripts/wind_univariate/*.sh` | 通过 | Step 33 后脚本 shell 语法检查通过 |
+| `bash -n scripts/wind_univariate/*.sh` | 通过 | Step 34 后 22 个 wind 单变量脚本 shell 语法检查通过 |
+| `UV_CACHE_DIR=.uv_cache uv run python - <<'PY' ... build_smoke_matrix(...) ... PY` | 通过 | 22 个非多变量模型 smoke 均为 `success`；`tbats` 与 `neuralprophet` 当前 `used_fallback=True` |
+| `UV_CACHE_DIR=.uv_cache uv run python - <<'PY' ... create_stat_model(...) ... PY` | 通过 | 22 个脚本中的 `model_name` 与 `model_params` 均可通过 registry 实例化 |
+| `bash scripts/wind_univariate/run_seasonal_naive.sh` | 失败 | 当前非交互 shell 中无 `python` 命令；脚本按约定保持 `python -u run.py`，验证时需让 `.venv/bin` 在 `PATH` 中 |
+| `PATH="/Users/wangzf/projects/tsproj_stat/.venv/bin:$PATH" bash scripts/wind_univariate/run_seasonal_naive.sh` | 通过 | stable baseline 代表脚本可完成 train/test/forecast |
+| `PATH="/Users/wangzf/projects/tsproj_stat/.venv/bin:$PATH" bash scripts/wind_univariate/run_ar.sh` | 通过 | 新增 ARIMA family 代表脚本可完成 train/test/forecast；887 个回测窗口耗时约 509 秒 |
+| `PATH="/Users/wangzf/projects/tsproj_stat/.venv/bin:$PATH" python -u run.py --model_name tbats ... --do_test false ...` | 通过 | fallback 标注模型参数链路可运行；当前 TBATS 原生拟合失败后走 ETS fallback |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | Step 34 后全量回归通过；仍有既有 `ConvergenceWarning` 与 optional 依赖 warning |
+| `bash -n scripts/wind_univariate/*.sh` | 通过 | Step 35 后扩展参数块的 22 个 wind 单变量脚本 shell 语法检查通过 |
+| `UV_CACHE_DIR=.uv_cache uv run python - <<'PY' ... run.parse_args() ... PY` | 通过 | Step 35 后 22 个脚本完整参数块均可通过 `run.py` 解析和 `AppConfig.validate()` |
+| `PATH="/Users/wangzf/projects/tsproj_stat/.venv/bin:$PATH" bash scripts/wind_univariate/run_naive.sh` | 通过 | 扩展显式参数后，代表脚本 train/test/forecast 仍可运行 |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | Step 35 后全量回归通过；仍有既有 `ConvergenceWarning` 与 optional 依赖 warning |
 
 ## 备注
 
 - 删除 `src/` 历史残留涉及文件删除，命中项目红线；后续若要清理，需先确认。
 - 本文档应在每次修复后更新，而不是等问题累积后一次性补记。
 - 2026-05-03：已抽取 `data_provider.prepare_standard_frame()`，统一 `DataLoader` 与 EDA 的时间列规范化、目标列数值化、缺失值处理入口；EDA 仅保留 `Series` 视图转换、补频和最小样本校验。
-- 2026-05-04：主线已新增 `inference_strategy` 与 `backtest_window_mode` 抽象；`forecast/test/auto_select` 统一复用共享推理层，CLI 与脚本开始迁移到 `inference_strategy / backtest_train_size / backtest_window_mode`，旧 `pred_method / backtest_initial_train_size` 保留兼容入口。
+- 2026-05-04：主线已新增预测策略与 `backtest_window_mode` 抽象；`forecast/test/auto_select` 统一复用共享推理层。
+- 2026-05-05：预测策略主字段已统一为 `forecast_strategy`，项目内不再保留旧预测策略参数。
+- 2026-05-05：多源输入 contract 已调整为 `endog_cols` 不包含 `target_col`；应用层内部仍会把 `target_col` 放在模型历史输入第一列，保持单目标 `target_col -> yhat` 产物契约。
 - 2026-05-05：EDA recommendations 和 monitor 当前采用本地文件版，不引入数据库或服务端组件；`features/` 仍默认只输出分析快照，只有 `feature_mode=model_input` 时才进入模型输入链路。
+- 2026-05-06：monitor actuals 回填入口已收口到 `evaluation.monitor.run_monitor_actuals_backfill()`；`run.py` 不再保留独立 helper，只负责解析配置并调用统一 monitor 入口。

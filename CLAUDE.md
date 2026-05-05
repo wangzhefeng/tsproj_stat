@@ -56,7 +56,7 @@ run.py → AppConfig → ModelApp.run()
 | `models/factory.py` | 工厂入口 | 通过 registry 实例化 |
 | `data_provider/data_processor.py` | 可逆 3 层预处理 | denoise → detrend → decompose |
 | `evaluation/backtest.py` | rolling backtest | expanding-window，支持进度日志 |
-| `app/results.py` | 结果落盘管理 | `setting = {model_name}-{data_name}-{pred_method}` |
+| `app/results.py` | 结果落盘管理 | `setting = {model_name}-{data_name}-{forecast_strategy}` |
 
 ## 工作规则
 

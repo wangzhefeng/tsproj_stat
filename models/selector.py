@@ -4,7 +4,7 @@ import pandas as pd
 
 from evaluation.backtest import rolling_backtest
 from models.factory import ModelFactory
-from models.inference import normalize_inference_strategy
+from models.inference import normalize_forecast_strategy
 from models.registry import MODEL_REGISTRY
 
 import os
@@ -28,7 +28,7 @@ class AutoSelector:
         initial_train_size: int = 30,
         horizon: int = 7,
         model_params_map: dict[str, dict] | None = None,
-        inference_strategy: str = "direct",
+        forecast_strategy: str = "direct",
     ):
         if candidates is None:
             candidates = [name for name, spec in MODEL_REGISTRY.items() if spec.stability == "stable"]
@@ -44,7 +44,7 @@ class AutoSelector:
         self.initial_train_size = initial_train_size
         self.horizon = horizon
         self.model_params_map = model_params_map or {}
-        self.inference_strategy = normalize_inference_strategy(inference_strategy, None)
+        self.forecast_strategy = normalize_forecast_strategy(forecast_strategy)
         self._scores: dict[str, float] = {}
 
     def select(
@@ -86,7 +86,7 @@ class AutoSelector:
                     train_size=self.initial_train_size,
                     horizon=self.horizon,
                     step=step,
-                    inference_strategy=self.inference_strategy,
+                    forecast_strategy=self.forecast_strategy,
                     verbose=False,
                 )
                 score = result.summary.get(self.metric, float("inf"))
