@@ -30,6 +30,7 @@ class Tester:
         window_mode: str = "expanding",
         verbose: bool = False,
         progress_every: int = 10,
+        n_jobs: int = 1,
     ):
         self.model_name = model_name
         self.model_params = model_params or {}
@@ -45,6 +46,7 @@ class Tester:
         self.window_mode = normalize_window_mode(window_mode)
         self.verbose = verbose
         self.progress_every = progress_every
+        self.n_jobs = n_jobs
         self.factory = ModelFactory()
 
     def evaluate(self, df: pd.DataFrame) -> BacktestResult:
@@ -64,4 +66,5 @@ class Tester:
             window_mode=self.window_mode,
             verbose=self.verbose,
             progress_every=self.progress_every,
+            n_jobs=self.n_jobs,
         )

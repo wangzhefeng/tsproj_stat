@@ -54,6 +54,14 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --model_name arima --inference_strat
 UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false
 ```
 
+执行 EDA 并输出建模建议：
+
+```bash
+UV_CACHE_DIR=.uv_cache uv run python run.py \
+  --do_eda true --do_train false --do_test false --do_forecast false \
+  --eda_period 7 --eda_nlags 24 --eda_recommendation_enabled true
+```
+
 启用预处理（可选去噪 + 去趋势 + 逆变换）：
 
 ```bash
@@ -86,6 +94,37 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
   --predict_horizon 4
 ```
 
+启用预处理后 EDA 对比：
+
+```bash
+UV_CACHE_DIR=.uv_cache uv run python run.py \
+  --do_eda true --do_train false --do_test false --do_forecast false \
+  --decomposition_method seasonal_decompose \
+  --decomposition_target resid_only \
+  --seasonal_period 7 \
+  --eda_run_preprocessed true
+```
+
+启用并行回测和本地监控：
+
+```bash
+UV_CACHE_DIR=.uv_cache uv run python run.py \
+  --model_name naive \
+  --do_train true --do_test true --do_forecast true \
+  --backtest_n_jobs 2 \
+  --monitor_enabled true
+```
+
+回填监控实际值并生成指标快照：
+
+```bash
+UV_CACHE_DIR=.uv_cache uv run python run.py \
+  --monitor_actuals_path /abs/path/actuals.csv \
+  --monitor_actuals_setting naive-demo_series-direct \
+  --monitor_actuals_value_col actual \
+  --monitor_actuals_run_id manual-backfill-1
+```
+
 多源输入预测（历史内生 + 历史外生 + 独立未来外生）：
 
 ```bash
@@ -114,10 +153,14 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 - `saved_results/results_train/{setting}/model_info.json`
 - `saved_results/results_eda/{setting}/eda_summary.json`
 - `saved_results/results_eda/{setting}/eda_diagnostics.csv`
+- `saved_results/results_eda/{setting}/eda_recommendations.json`
+- `saved_results/results_eda/{setting}/eda_recommendations.csv`
+- `saved_results/results_eda/{setting}/postprocessed/*`（仅 `eda_run_preprocessed=true` 且启用预处理时生成）
 - `saved_results/results_eda/{setting}/plots/*.png`
 - `saved_results/results_test/{setting}/backtest_predictions.csv`
 - `saved_results/results_test/{setting}/backtest_metrics.csv`
 - `saved_results/results_test/{setting}/backtest_metrics_summary.csv`
+- `saved_results/results_test/{setting}/test_summary.json`
 - `saved_results/results_test/{setting}/backtest_prediction_plot.png`
 - `saved_results/results_test/{setting}/backtest_residual_plot.png`
 - `saved_results/results_test/{setting}/backtest_error_distribution.png`
@@ -126,12 +169,15 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 - `saved_results/results_forecast/{setting}/forecast_plot.png`
 - `saved_results/results_forecast/{setting}/analysis_feature_snapshot.csv`
 - `saved_results/results_forecast/{setting}/run_summary.json`
+- `saved_results/monitor/{setting}/predictions_log.csv`（仅 `monitor_enabled=true` 时生成）
+- `saved_results/monitor/{setting}/actuals_log.csv`
+- `saved_results/monitor/{setting}/metrics_history.csv`
 
 ## 当前主线说明
 
 - 统计预测主线统一通过 `fit(y, X_hist=None, X_future=None) / predict_one(X_future_one=None)` 接口接入；多步推理统一由 `inference_strategy` 编排。
 - `inference_strategy` 当前支持 `single_step / direct / recursive / dirrec`。
-- `test` 额外支持 `backtest_window_mode = expanding | sliding`，并通过 `backtest_train_size` 控制训练窗口长度；旧 `backtest_initial_train_size` 仍兼容。
+- `test` 额外支持 `backtest_window_mode = expanding | sliding`，并通过 `backtest_train_size` 控制训练窗口长度；旧 `backtest_initial_train_size` 仍兼容。`backtest_n_jobs > 1` 时可按窗口并行回测，输出仍按 `window_id` 排序。
 - 当前主线默认仍输出单目标 `target_col -> yhat`，但已支持多源输入：
   - 内生变量：`endog_cols`
   - 历史外生变量：`exog_cols`
@@ -146,8 +192,9 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
   - `ACF/PACF` 用于 AR/MA/ARMA 识别与参数经验
   - `ADF/KPSS` 用于平稳性与差分建议
   - 分解观察与滚动预测思路用于主线测试和预处理设计，不再保留脚本式 API
-- `features/` 当前只用于生成分析型特征快照，不参与模型训练或预测主链路。
+- `features/` 默认只用于生成分析型特征快照；当 `feature_mode=model_input` 时，会把时间特征和 lag 特征并入模型历史输入元信息，默认仍不改变单目标 `yhat` 输出 contract。
 - 训练、测试、预测和 EDA 结果现统一落到 `saved_results/checkpoints / results_train / results_test / results_forecast / results_eda`，并按 `setting` 自动分组。
+- EDA 当前会输出结构化建模建议，包括季节周期、差分、预处理和模型族候选；启用 `eda_run_preprocessed` 后，会额外对实际训练尺度序列运行一轮 EDA。
 - 测试阶段当前会额外输出窗口级明细、汇总指标和三类图：预测对比图、残差图、误差分布图。
 - 无 `data_path` 时会加载内置 demo 序列，用于 smoke/test 场景；真实数据读取仍统一走 `data_provider/data_loader.py`。
 - 通用时序清洗已统一收敛到 `data_provider.prepare_standard_frame()`：默认保留 `time_col/target_col`；配置多源列后会额外保留并数值化这些输入列。
@@ -177,6 +224,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
   - `stable`：默认主线模型，可作为常规 baseline 使用
   - `optional`：依赖额外库或环境能力，如 `statsforecast`、`prophet`、`tbats`
   - `experimental`：实现已接入主线，但算法边界或环境稳定性仍需额外验证，如 `croston`、`neuralprophet`、`bayesian_tmt`
+- `models.stability.build_smoke_matrix()` 可生成 optional/experimental 模型 smoke matrix，状态固定为 `success / dependency_unavailable / fit_failed`，用于区分依赖问题、拟合失败和成功路径。
 
 ## 数据集脚本
 
@@ -199,6 +247,13 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 - 异方差：ARCH-LM
 - 白噪声：Ljung-Box
 - 可预测性评分：谱熵归一化分数
+- 建模建议：`eda_recommendations.json/csv`，覆盖季节周期、差分、预处理和模型族候选
+
+## 监控闭环
+
+- `monitor_enabled=true` 时，预测阶段会把每个未来步的 `yhat` 写入 `saved_results/monitor/{setting}/predictions_log.csv`。
+- `evaluation.monitor.ModelMonitor` 和 `run.py --monitor_actuals_path ...` 支持后续回填真实值到 `actuals_log.csv`，并基于最近 `monitor_window` 个匹配样本生成 `metrics_history.csv`。
+- 当前监控是本地文件版，不依赖数据库或服务端组件。
 
 ## 数据生成脚本
 
@@ -231,5 +286,8 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --model_name seasonal_naive --model_
 UV_CACHE_DIR=.uv_cache uv run python run.py --model_name croston --model_params '{"alpha":0.2}' --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
 UV_CACHE_DIR=.uv_cache uv run python run.py --model_name auto_theta --model_params '{"season_length":1}' --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
 UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false
+UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false --eda_period 7 --eda_nlags 24 --eda_recommendation_enabled true
+UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5 --backtest_n_jobs 2 --monitor_enabled true
+UV_CACHE_DIR=.uv_cache uv run python run.py --monitor_actuals_path /abs/path/actuals.csv --monitor_actuals_setting naive-demo_series-direct --monitor_actuals_value_col actual --monitor_actuals_run_id manual-backfill-1
 UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4
 ```

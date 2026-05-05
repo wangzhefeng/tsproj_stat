@@ -1,4 +1,7 @@
+import json
 from pathlib import Path
+
+import pandas as pd
 
 from app import ModelApp
 from config import AppConfig
@@ -41,6 +44,13 @@ def test_pipeline_end_to_end(tmp_path):
     assert Path(result["test_metrics_path"]).as_posix().endswith(f"results_test/{setting}/backtest_metrics.csv")
     assert Path(result["prediction_path"]).as_posix().endswith(f"results_forecast/{setting}/forecast.csv")
     assert Path(result["eda_dir"]).as_posix().endswith(f"results_eda/{setting}")
+    test_summary = json.loads(Path(result["test_summary_path"]).read_text(encoding="utf-8"))
+    assert test_summary["stability"] == "stable"
+    assert test_summary["is_optional"] is False
+    assert test_summary["is_experimental"] is False
+    assert test_summary["is_trainer_fallback"] is False
+    assert test_summary["fallback_reason"] is None
+    assert test_summary["failed_window_ratio"] == 0.0
 
 
 def test_pipeline_eda_only_mode(tmp_path):
@@ -67,6 +77,87 @@ def test_pipeline_eda_only_mode(tmp_path):
     assert "analysis_feature_snapshot_path" in result
     assert Path(result["eda_summary_path"]).as_posix().endswith("results_eda_custom/arima-demo_series-direct/eda_summary.json")
     assert Path(result["eda_dir"]).as_posix().endswith("results_eda_custom/arima-demo_series-direct")
+
+
+def test_pipeline_writes_postprocessed_eda_when_enabled(tmp_path):
+    cfg = AppConfig(
+        data_path=None,
+        do_eda=True,
+        do_train=False,
+        do_test=False,
+        do_forecast=False,
+        eda_run_preprocessed=True,
+        seasonal_period=5,
+        decomposition_method="seasonal_decompose",
+        decomposition_target="resid_only",
+        history_size=60,
+        predict_horizon=4,
+        checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
+        train_results_dir=str(tmp_path / "saved_results" / "results_train"),
+        test_results_dir=str(tmp_path / "saved_results" / "results_test"),
+        forecast_result_dir=str(tmp_path / "saved_results" / "results_forecast"),
+        eda_output_dir=str(tmp_path / "saved_results" / "results_eda"),
+    )
+
+    result = ModelApp(cfg).run()
+
+    assert "postprocessed_eda_summary_path" in result
+    assert Path(result["postprocessed_eda_summary_path"]).as_posix().endswith(
+        "results_eda/arima-demo_series-direct/postprocessed/eda_summary.json"
+    )
+
+
+def test_pipeline_monitor_logs_forecast_when_enabled(tmp_path):
+    cfg = AppConfig(
+        data_path=None,
+        model_name="naive",
+        do_eda=False,
+        do_train=False,
+        do_test=False,
+        do_forecast=True,
+        monitor_enabled=True,
+        monitor_dir=str(tmp_path / "saved_results" / "monitor"),
+        history_size=60,
+        predict_horizon=4,
+        checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
+        train_results_dir=str(tmp_path / "saved_results" / "results_train"),
+        test_results_dir=str(tmp_path / "saved_results" / "results_test"),
+        forecast_result_dir=str(tmp_path / "saved_results" / "results_forecast"),
+    )
+
+    result = ModelApp(cfg).run()
+    predictions_path = Path(result["monitor_predictions_path"])
+
+    assert predictions_path.as_posix().endswith("monitor/naive-demo_series-direct/predictions_log.csv")
+    logged = pd.read_csv(predictions_path)
+    assert len(logged) == 4
+    assert {"run_id", "forecast_ts", "horizon_step", "yhat"}.issubset(logged.columns)
+
+
+def test_pipeline_feature_mode_model_input_records_feature_columns(tmp_path):
+    cfg = AppConfig(
+        data_path=None,
+        model_name="naive",
+        do_eda=False,
+        do_train=True,
+        do_test=False,
+        do_forecast=False,
+        feature_mode="model_input",
+        enable_datetime_features=True,
+        lags=[],
+        history_size=60,
+        predict_horizon=4,
+        checkpoints_dir=str(tmp_path / "saved_results" / "checkpoints"),
+        train_results_dir=str(tmp_path / "saved_results" / "results_train"),
+        test_results_dir=str(tmp_path / "saved_results" / "results_test"),
+        forecast_result_dir=str(tmp_path / "saved_results" / "results_forecast"),
+    )
+
+    result = ModelApp(cfg).run()
+    summary = json.loads(Path(result["train_summary_path"]).read_text(encoding="utf-8"))
+
+    assert summary["feature_mode"] == "model_input"
+    assert {"hour", "dayofweek", "month", "dayofyear"}.issubset(summary["model_input_feature_columns"])
 
 
 def test_pipeline_forecast_only_mode(tmp_path):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable
 
@@ -40,6 +41,7 @@ def rolling_backtest(
     window_mode: str = "expanding",
     verbose: bool = False,
     progress_every: int = 10,
+    n_jobs: int = 1,
 ) -> BacktestResult:
     """执行滚动回测。
 
@@ -51,6 +53,8 @@ def rolling_backtest(
         raise ValueError("Not enough data for backtest")
     if progress_every <= 0:
         raise ValueError("progress_every must be > 0")
+    if n_jobs <= 0:
+        raise ValueError("n_jobs must be > 0")
 
     strategy = normalize_inference_strategy(inference_strategy, None)
     resolved_window_mode = normalize_window_mode(window_mode)
@@ -64,18 +68,24 @@ def rolling_backtest(
             feature_cols.append(col)
     future_cols = [col for col in future_exog_cols if col in df.columns]
 
-    start = train_size
-    window_id = 0
     total_windows = ((n - train_size - horizon) // step) + 1
     started_at = time.perf_counter()
     metric_rows: list[dict] = []
     prediction_rows: list[dict] = []
     failed_windows: list[dict] = []
 
+    windows = []
+    start = train_size
+    window_id = 0
     while start + horizon <= n:
         window_id += 1
         # expanding 使用全部历史，sliding 只保留最近 train_size 行。
         train_start = 0 if resolved_window_mode == "expanding" else start - train_size
+        windows.append((window_id, train_start, start))
+        start += step
+
+    def evaluate_window(window: tuple[int, int, int]) -> dict:
+        window_id, train_start, start = window
         train_slice = df.iloc[train_start:start].reset_index(drop=True)
         test_slice = df.iloc[start : start + horizon].reset_index(drop=True)
 
@@ -104,38 +114,32 @@ def rolling_backtest(
             ).astype(float).reset_index(drop=True)
         except Exception as exc:
             # 部分模型在个别窗口可能拟合失败；记录失败窗口，避免一个窗口拖垮整次评估。
-            failed_windows.append(
-                {
+            return {
+                "failed": True,
+                "failed_window": {
                     "window_id": int(window_id),
                     "train_start": int(train_start),
                     "train_end": int(start),
                     "error": str(exc),
-                }
-            )
-            logger.warning(
-                f"[Backtest] window {window_id}/{total_windows} failed "
-                f"(train_start={train_start}, train_end={start}): {exc}"
-            )
-            start += step
-            continue
+                },
+            }
 
         residual = test_y - pred
-        metric_rows.append(
-            {
-                "window_id": int(window_id),
-                "train_start": int(train_start),
-                "train_end": int(start),
-                "horizon": int(horizon),
-                "mae": mae(test_y.values, pred.values),
-                "rmse": rmse(test_y.values, pred.values),
-                "mape": mape(test_y.values, pred.values),
-                "smape": smape(test_y.values, pred.values),
-                "mse": mse(test_y.values, pred.values),
-                "r2": r2(test_y.values, pred.values),
-                "bias": bias(test_y.values, pred.values),
-                "max_error": max_error(test_y.values, pred.values),
-            }
-        )
+        metric_row = {
+            "window_id": int(window_id),
+            "train_start": int(train_start),
+            "train_end": int(start),
+            "horizon": int(horizon),
+            "mae": mae(test_y.values, pred.values),
+            "rmse": rmse(test_y.values, pred.values),
+            "mape": mape(test_y.values, pred.values),
+            "smape": smape(test_y.values, pred.values),
+            "mse": mse(test_y.values, pred.values),
+            "r2": r2(test_y.values, pred.values),
+            "bias": bias(test_y.values, pred.values),
+            "max_error": max_error(test_y.values, pred.values),
+        }
+        pred_rows = []
         for idx in range(horizon):
             row: dict[str, object] = {
                 "window_id": int(window_id),
@@ -148,7 +152,27 @@ def rolling_backtest(
             }
             if test_time is not None:
                 row["timestamp"] = test_time.iloc[idx]
-            prediction_rows.append(row)
+            pred_rows.append(row)
+        return {"failed": False, "metric_row": metric_row, "prediction_rows": pred_rows}
+
+    if n_jobs == 1:
+        results = [evaluate_window(window) for window in windows]
+    else:
+        with ThreadPoolExecutor(max_workers=n_jobs) as executor:
+            results = list(executor.map(evaluate_window, windows))
+
+    for window, result in zip(windows, results):
+        window_id, train_start, start = window
+        if result["failed"]:
+            failed_window = result["failed_window"]
+            failed_windows.append(failed_window)
+            logger.warning(
+                f"[Backtest] window {window_id}/{total_windows} failed "
+                f"(train_start={train_start}, train_end={start}): {failed_window['error']}"
+            )
+        else:
+            metric_rows.append(result["metric_row"])
+            prediction_rows.extend(result["prediction_rows"])
 
         if verbose and window_id % progress_every == 0:
             # 这里显式 print 到 stdout，满足 CLI smoke/test 对终端进度可见性的要求。
@@ -159,8 +183,6 @@ def rolling_backtest(
             )
             print(msg)
             logger.info(msg)
-
-        start += step
 
     if failed_windows:
         logger.warning(f"[Backtest] {len(failed_windows)}/{total_windows} windows failed and were skipped")

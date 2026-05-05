@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -59,7 +59,7 @@ class ModelMonitor:
         forecast_ts: str | None = None,
     ) -> None:
         """将一次预测结果追加写入 predictions_log.csv。"""
-        ts = forecast_ts or datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        ts = forecast_ts or datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
         rows = []
         for step, val in enumerate(yhat, start=1):
             rows.append({
@@ -90,6 +90,39 @@ class ModelMonitor:
             })
         self._append_rows(self._act_path, self._ACT_COLS, rows)
         logger.info(f"[Monitor] filled {len(rows)} actuals for forecast_ts={forecast_ts!r}")
+
+    def fill_actuals_frame(
+        self,
+        actuals_df: pd.DataFrame,
+        *,
+        actual_col: str = "y_true",
+        forecast_ts: str | None = None,
+        forecast_ts_col: str = "forecast_ts",
+        horizon_step_col: str = "horizon_step",
+    ) -> None:
+        """从结构化表回填真实值，适合 CLI 从 CSV 批量导入。
+
+        输入表可以逐行提供 forecast_ts/horizon_step；如果没有 forecast_ts
+        列，则必须通过参数提供单个 forecast_ts。
+        """
+        if actual_col not in actuals_df.columns:
+            raise ValueError(f"actual_col '{actual_col}' not found in actuals data")
+        has_forecast_ts_col = forecast_ts_col in actuals_df.columns
+        if not has_forecast_ts_col and forecast_ts is None:
+            raise ValueError("forecast_ts is required when actuals data has no forecast_ts column")
+
+        rows = []
+        for idx, row in actuals_df.reset_index(drop=True).iterrows():
+            step = int(row[horizon_step_col]) if horizon_step_col in actuals_df.columns else int(idx + 1)
+            rows.append(
+                {
+                    "forecast_ts": str(row[forecast_ts_col]) if has_forecast_ts_col else str(forecast_ts),
+                    "horizon_step": step,
+                    "y_true": float(row[actual_col]),
+                }
+            )
+        self._append_rows(self._act_path, self._ACT_COLS, rows)
+        logger.info(f"[Monitor] filled {len(rows)} actual rows from dataframe")
 
     # ------------------------------------------------------------------
     # Metrics
@@ -125,13 +158,13 @@ class ModelMonitor:
         }
 
     def snapshot_metrics(self, run_id: str) -> dict[str, float]:
-        """Compute rolling metrics and append a row to metrics_history.csv."""
+        """计算滚动指标，并追加一条快照到 metrics_history.csv。"""
         metrics = self.compute_rolling_metrics()
         if not metrics:
             logger.warning("[Monitor] no matched predictions/actuals to snapshot")
             return {}
         row = {
-            "snapshot_ts": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "snapshot_ts": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "run_id": run_id,
             "window": metrics.get("n_samples", self.window),
             "mae": metrics.get("mae", ""),
@@ -146,11 +179,11 @@ class ModelMonitor:
         baseline_metrics: dict[str, float],
         threshold_ratio: float = 0.2,
     ) -> list[str]:
-        """Compare rolling metrics to a baseline; return alert messages for degraded metrics.
+        """将当前滚动指标与基线比较，返回退化告警信息。
 
         Args:
-            baseline_metrics: reference values, e.g. {"mae": 3.2, "rmse": 4.5}
-            threshold_ratio: alert if current > baseline * (1 + threshold_ratio)
+            baseline_metrics: 参考指标，例如 {"mae": 3.2, "rmse": 4.5}。
+            threshold_ratio: 当前指标超过 baseline * (1 + threshold_ratio) 时告警。
         """
         rolling = self.compute_rolling_metrics()
         if not rolling:

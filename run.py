@@ -5,9 +5,13 @@ import argparse
 import importlib
 from typing import Any
 
+import pandas as pd
+
 from config import AppConfig, ensure_output_dirs
 from utils.random_seed import set_seed
 from app import ModelApp
+from app.results import prepare_run_artifacts
+from evaluation.monitor import ModelMonitor
 from utils.log_util import logger
 from utils.runtime_env import ensure_mpl_config_dir
 ensure_mpl_config_dir()
@@ -125,6 +129,14 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.do_forecast = _parse_bool(args.do_forecast)
     if getattr(args, "do_eda", None) is not None:
         cfg.do_eda = _parse_bool(args.do_eda)
+    if getattr(args, "eda_period", None) is not None:
+        cfg.eda_period = args.eda_period
+    if getattr(args, "eda_nlags", None) is not None:
+        cfg.eda_nlags = args.eda_nlags
+    if getattr(args, "eda_run_preprocessed", None) is not None:
+        cfg.eda_run_preprocessed = _parse_bool(args.eda_run_preprocessed)
+    if getattr(args, "eda_recommendation_enabled", None) is not None:
+        cfg.eda_recommendation_enabled = _parse_bool(args.eda_recommendation_enabled)
     if getattr(args, "history_size", None) is not None:
         cfg.history_size = args.history_size
     if getattr(args, "predict_horizon", None) is not None:
@@ -145,6 +157,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.backtest_progress_every = args.backtest_progress_every
     if getattr(args, "backtest_n_jobs", None) is not None:
         cfg.backtest_n_jobs = args.backtest_n_jobs
+    if getattr(args, "feature_mode", None) is not None:
+        cfg.feature_mode = args.feature_mode
     if getattr(args, "enable_datetime_features", None) is not None:
         cfg.enable_datetime_features = _parse_bool(args.enable_datetime_features)
     if getattr(args, "lags", None) is not None:
@@ -201,6 +215,24 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.return_intervals = _parse_bool(args.return_intervals)
     if getattr(args, "interval_alpha", None) is not None:
         cfg.interval_alpha = args.interval_alpha
+    if getattr(args, "monitor_enabled", None) is not None:
+        cfg.monitor_enabled = _parse_bool(args.monitor_enabled)
+    if getattr(args, "monitor_dir", None) is not None:
+        cfg.monitor_dir = args.monitor_dir
+    if getattr(args, "monitor_window", None) is not None:
+        cfg.monitor_window = args.monitor_window
+    if getattr(args, "monitor_actuals_path", None) is not None:
+        cfg.monitor_actuals_path = args.monitor_actuals_path
+    if getattr(args, "monitor_actuals_setting", None) is not None:
+        cfg.monitor_actuals_setting = args.monitor_actuals_setting
+    if getattr(args, "monitor_actuals_forecast_ts", None) is not None:
+        cfg.monitor_actuals_forecast_ts = args.monitor_actuals_forecast_ts
+    if getattr(args, "monitor_actuals_value_col", None) is not None:
+        cfg.monitor_actuals_value_col = args.monitor_actuals_value_col
+    if getattr(args, "monitor_actuals_snapshot", None) is not None:
+        cfg.monitor_actuals_snapshot = _parse_bool(args.monitor_actuals_snapshot)
+    if getattr(args, "monitor_actuals_run_id", None) is not None:
+        cfg.monitor_actuals_run_id = args.monitor_actuals_run_id
     if getattr(args, "checkpoints_dir", None) is not None:
         cfg.checkpoints_dir = args.checkpoints_dir
     if getattr(args, "train_results_dir", None) is not None:
@@ -248,6 +280,10 @@ def parse_args() -> AppConfig:
     parser.add_argument("--do_test", default=None)
     parser.add_argument("--do_forecast", default=None)
     parser.add_argument("--do_eda", default=None)
+    parser.add_argument("--eda_period", type=int, default=None)
+    parser.add_argument("--eda_nlags", type=int, default=None)
+    parser.add_argument("--eda_run_preprocessed", default=None)
+    parser.add_argument("--eda_recommendation_enabled", default=None)
     # 模型训练
     parser.add_argument("--history_size", type=int, default=None)
     parser.add_argument("--predict_horizon", type=int, default=None)
@@ -259,8 +295,9 @@ def parse_args() -> AppConfig:
     parser.add_argument("--backtest_window_mode", type=str, default=None)         # expanding 或 sliding
     parser.add_argument("--backtest_verbose", default=None)                       # 是否在终端打印回测进度
     parser.add_argument("--backtest_progress_every", type=int, default=None)      # 每多少个窗口打印一次进度
-    parser.add_argument("--backtest_n_jobs", type=int, default=None)              # 预留并行参数，当前主线仍串行回测
+    parser.add_argument("--backtest_n_jobs", type=int, default=None)              # 窗口级回测并行数，1 表示保持串行路径
     # 特征工程
+    parser.add_argument("--feature_mode", type=str, default=None)
     parser.add_argument("--enable_datetime_features", default=None)
     parser.add_argument("--lags", type=str, default=None)
     parser.add_argument("--scale", default=None)
@@ -295,6 +332,16 @@ def parse_args() -> AppConfig:
     # 概率预测
     parser.add_argument("--return_intervals", default=None)
     parser.add_argument("--interval_alpha", type=float, default=None)
+    # 本地监控
+    parser.add_argument("--monitor_enabled", default=None)
+    parser.add_argument("--monitor_dir", type=str, default=None)
+    parser.add_argument("--monitor_window", type=int, default=None)
+    parser.add_argument("--monitor_actuals_path", type=str, default=None)
+    parser.add_argument("--monitor_actuals_setting", type=str, default=None)
+    parser.add_argument("--monitor_actuals_forecast_ts", type=str, default=None)
+    parser.add_argument("--monitor_actuals_value_col", type=str, default=None)
+    parser.add_argument("--monitor_actuals_snapshot", default=None)
+    parser.add_argument("--monitor_actuals_run_id", type=str, default=None)
     # 日志格式
     parser.add_argument("--log_format", type=str, default=None)
     # 模型结果输出路径
@@ -342,11 +389,61 @@ def parse_args() -> AppConfig:
 
 
 
+def run_monitor_actuals_backfill(
+    *,
+    monitor_dir: str,
+    setting: str,
+    actuals_path: str,
+    actual_col: str = "y_true",
+    forecast_ts: str | None = None,
+    snapshot: bool = True,
+    run_id: str = "manual_backfill",
+    window: int = 30,
+) -> dict[str, Any]:
+    """从 CSV 回填监控 actuals，并可选写入滚动指标快照。"""
+    actuals_df = pd.read_csv(actuals_path)
+    monitor = ModelMonitor(monitor_dir=monitor_dir, setting=setting, window=window)
+    monitor.fill_actuals_frame(
+        actuals_df,
+        actual_col=actual_col,
+        forecast_ts=forecast_ts,
+    )
+    metrics = monitor.snapshot_metrics(run_id=run_id) if snapshot else monitor.compute_rolling_metrics()
+    return {
+        "monitor_predictions_path": str(monitor._pred_path),
+        "monitor_actuals_path": str(monitor._act_path),
+        "monitor_metrics_path": str(monitor._metrics_path),
+        "metrics": metrics,
+    }
+
+
+def _maybe_run_monitor_actuals_backfill(cfg: AppConfig) -> dict[str, Any] | None:
+    """当 CLI 只用于回填 actuals 时，直接执行监控流程，不进入建模 pipeline。"""
+    if cfg.monitor_actuals_path is None:
+        return None
+    setting = cfg.monitor_actuals_setting or prepare_run_artifacts(cfg).setting
+    return run_monitor_actuals_backfill(
+        monitor_dir=cfg.monitor_dir,
+        setting=setting,
+        actuals_path=cfg.monitor_actuals_path,
+        actual_col=cfg.monitor_actuals_value_col,
+        forecast_ts=cfg.monitor_actuals_forecast_ts,
+        snapshot=cfg.monitor_actuals_snapshot,
+        run_id=cfg.monitor_actuals_run_id,
+        window=cfg.monitor_window,
+    )
+
+
 def main() -> None:
     # config
     cfg = parse_args()
     # Set seed
     set_seed(cfg.seed)
+    monitor_result = _maybe_run_monitor_actuals_backfill(cfg)
+    if monitor_result is not None:
+        logger.info("Monitor actuals backfill finished")
+        logger.info(f"Result: {monitor_result}")
+        return
     # Run model
     result = ModelApp(cfg).run()
     # model result

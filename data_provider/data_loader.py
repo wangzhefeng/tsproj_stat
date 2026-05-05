@@ -21,6 +21,11 @@ class DataQualityReport:
     target_mean: float
     target_std: float
     time_range: tuple[str, str]
+    raw_rows: int = 0
+    clean_rows: int = 0
+    interpolated_value_count: int = 0
+    inserted_timestamp_count: int = 0
+    dropped_row_count: int = 0
 
     def __str__(self) -> str:
         return (
@@ -42,6 +47,11 @@ class DataQualityReport:
             "target_std": round(self.target_std, 6),
             "time_range_start": self.time_range[0],
             "time_range_end": self.time_range[1],
+            "raw_rows": self.raw_rows,
+            "clean_rows": self.clean_rows,
+            "interpolated_value_count": self.interpolated_value_count,
+            "inserted_timestamp_count": self.inserted_timestamp_count,
+            "dropped_row_count": self.dropped_row_count,
         }
 
 
@@ -51,6 +61,8 @@ def check_data_quality(
     time_col: str,
     max_missing_ratio: float = 0.3,
     validate_freq: bool = True,
+    raw_df: pd.DataFrame | None = None,
+    freq: str | None = None,
 ) -> DataQualityReport:
     """
     检查建模前数据质量。
@@ -59,8 +71,23 @@ def check_data_quality(
     交给调用方决定是否继续。返回值会写入 data_quality.json 作为运行证据。
     """
     total = len(df)
+    raw_rows = len(raw_df) if raw_df is not None else total
     missing = int(df[target_col].isna().sum())
     missing_ratio = missing / total if total > 0 else 0.0
+    interpolated_value_count = 0
+    inserted_timestamp_count = 0
+    if raw_df is not None and target_col in raw_df.columns:
+        raw_target = pd.to_numeric(raw_df[target_col], errors="coerce").replace([float("inf"), float("-inf")], pd.NA)
+        interpolated_value_count = int(raw_target.isna().sum()) - missing
+        interpolated_value_count = max(interpolated_value_count, 0)
+    if raw_df is not None and freq and time_col in raw_df.columns and raw_rows > 1:
+        try:
+            raw_times = pd.to_datetime(raw_df[time_col], errors="coerce").dropna().sort_values()
+            if len(raw_times) > 1:
+                expected = pd.date_range(raw_times.iloc[0], raw_times.iloc[-1], freq=freq)
+                inserted_timestamp_count = max(0, len(expected) - raw_times.nunique())
+        except Exception:
+            inserted_timestamp_count = 0
 
     if missing_ratio > max_missing_ratio:
         raise ValueError(
@@ -98,6 +125,11 @@ def check_data_quality(
             str(df[time_col].iloc[0]) if time_col in df.columns and total > 0 else "",
             str(df[time_col].iloc[-1]) if time_col in df.columns and total > 0 else "",
         ),
+        raw_rows=raw_rows,
+        clean_rows=total,
+        interpolated_value_count=interpolated_value_count,
+        inserted_timestamp_count=inserted_timestamp_count,
+        dropped_row_count=max(0, raw_rows - total),
     )
     logger.info(f"[DataQuality] {report}")
     return report
@@ -139,6 +171,7 @@ class DataLoader:
         # ------------------------------
         if self.data_path is None:
             demo_series = load_demo_series(time_col=self.time_col, target_col=self.target_col, freq=self.freq)
+            raw_demo_series = demo_series.copy()
             demo_series = prepare_standard_frame(
                 demo_series,
                 time_col=self.time_col,
@@ -152,6 +185,8 @@ class DataLoader:
                 demo_series, self.target_col, self.time_col,
                 max_missing_ratio=self.max_missing_ratio,
                 validate_freq=self.validate_freq,
+                raw_df=raw_demo_series,
+                freq=self.freq,
             )
             return demo_series
         # ------------------------------
@@ -160,11 +195,11 @@ class DataLoader:
         path = Path(self.data_path)
         if not path.exists():
             raise FileNotFoundError(f"Data file not found: {self.data_path}")
-        df = pd.read_csv(path)
-        logger.info(f"Loaded raw data:\n {df.head()}")
-        logger.info(f"Loaded raw data shape: {df.shape}")
+        raw_df = pd.read_csv(path)
+        logger.info(f"Loaded raw data:\n {raw_df.head()}")
+        logger.info(f"Loaded raw data shape: {raw_df.shape}")
         df = prepare_standard_frame(
-            df,
+            raw_df,
             time_col=self.time_col,
             target_col=self.target_col,
             freq=self.freq,
@@ -176,6 +211,8 @@ class DataLoader:
             df, self.target_col, self.time_col,
             max_missing_ratio=self.max_missing_ratio,
             validate_freq=self.validate_freq,
+            raw_df=raw_df,
+            freq=self.freq,
         )
         return df
 

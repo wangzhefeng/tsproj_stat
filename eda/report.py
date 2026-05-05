@@ -19,6 +19,8 @@ def save_eda_outputs(
     series: pd.Series,
     summary: dict,
     diagnostics: pd.DataFrame,
+    recommendations: dict | None = None,
+    recommendations_df: pd.DataFrame | None = None,
     period: int = 7,
     acf_nlags: int = 24,
     output_dir: str = None,
@@ -41,6 +43,15 @@ def save_eda_outputs(
         "eda_summary_path": str(summary_path),
         "eda_diagnostics_path": str(diagnostics_path),
     }
+
+    if recommendations is not None:
+        recommendations_path = out_dir / "eda_recommendations.json"
+        recommendations_path.write_text(json.dumps(recommendations, ensure_ascii=False, indent=2), encoding="utf-8")
+        out["eda_recommendations_path"] = str(recommendations_path)
+    if recommendations_df is not None:
+        recommendations_csv_path = out_dir / "eda_recommendations.csv"
+        recommendations_df.to_csv(recommendations_csv_path, index=False)
+        out["eda_recommendations_csv_path"] = str(recommendations_csv_path)
 
     if save_plots:
         plots_dir = out_dir / "plots"

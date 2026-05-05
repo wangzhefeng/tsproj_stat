@@ -26,6 +26,8 @@ from evaluation.visualization import (
     plot_error_distribution,
     plot_forecast,
 )
+from evaluation.monitor import ModelMonitor
+from models.registry import MODEL_REGISTRY
 from app.results import (
     dataframe_to_csv,
     forecast_timestamps,
@@ -56,6 +58,7 @@ class PrepareResult:
     future_exog_df: pd.DataFrame | None
     history_time: pd.Series
     processor: DataProcessor
+    model_input_feature_columns: list[str] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)
 
 
@@ -68,6 +71,22 @@ class FeatureSnapshotResult:
     path: str
     feature_columns: list[str]
     target_shift_columns: list[str]
+
+
+def _test_summary_payload(model_name: str, payload: dict) -> dict:
+    """补充测试阶段模型稳定性字段，与 model_info.json 保持可观测性一致。"""
+    spec = MODEL_REGISTRY.get(model_name)
+    result = dict(payload)
+    result.update(
+        {
+            "stability": spec.stability if spec is not None else None,
+            "is_optional": spec.stability == "optional" if spec is not None else False,
+            "is_experimental": spec.stability == "experimental" if spec is not None else False,
+            "is_trainer_fallback": False,
+            "fallback_reason": None,
+        }
+    )
+    return result
 
 
 class ModelApp:
@@ -174,6 +193,23 @@ class ModelApp:
         prepared = self._prepare_target_series(df)
         logger.info(f"Prepare info:\n {prepared.metadata}")
         out.update(prepared.metadata)
+        if self.cfg.do_eda and self.cfg.eda_run_preprocessed and prepared.processor.enabled:
+            try:
+                post_dir = self.artifacts.eda_dir / "postprocessed"
+                post_info = run_eda(
+                    df=prepared.df,
+                    time_col=self.cfg.time_col,
+                    target_col=self.cfg.target_col,
+                    freq=self.cfg.freq,
+                    output_dir=str(post_dir),
+                    period=self.cfg.eda_period,
+                    nlags=self.cfg.eda_nlags,
+                    recommendation_enabled=self.cfg.eda_recommendation_enabled,
+                )
+                out.update({f"postprocessed_{key}": value for key, value in post_info.items()})
+            except Exception as exc:
+                logger.error(f"[EDA:postprocessed] failed: {exc}")
+                out["postprocessed_eda_error"] = str(exc)
         # ------------------------------
         # 自动模型选择（可选，失败不阻断后续）
         # ------------------------------
@@ -318,6 +354,16 @@ class ModelApp:
         if self.cfg.exog_cols:
             history_exog_df = history_df[self.cfg.exog_cols].astype(float).reset_index(drop=True)
         history_model_input_df = history_df[self.model_value_cols].astype(float).reset_index(drop=True)
+        model_input_feature_columns: list[str] = []
+        if self.cfg.feature_mode == "model_input":
+            feature_frame, model_input_feature_columns = self._build_model_input_features(history_df)
+            if model_input_feature_columns:
+                history_model_input_df = pd.concat(
+                    [history_model_input_df, feature_frame[model_input_feature_columns].reset_index(drop=True)],
+                    axis=1,
+                )
+                metadata["feature_mode"] = self.cfg.feature_mode
+                metadata["model_input_feature_columns"] = ",".join(model_input_feature_columns)
         history_time = pd.to_datetime(history_df[self.cfg.time_col]).reset_index(drop=True)
         logger.info(f"After data split history_df:\n {history_df}")
         logger.info(f"After data split history_y:\n {history_y}")
@@ -353,8 +399,28 @@ class ModelApp:
             future_exog_df=future_exog_df,
             history_time=history_time,
             processor=processor,
+            model_input_feature_columns=model_input_feature_columns,
             metadata=metadata,
         )
+
+    def _build_model_input_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+        feature_df = pd.DataFrame(index=df.index)
+        feature_cols: list[str] = []
+        if self.cfg.enable_datetime_features and self.cfg.time_col in df.columns:
+            dt = pd.to_datetime(df[self.cfg.time_col])
+            for col, values in {
+                "hour": dt.dt.hour,
+                "dayofweek": dt.dt.dayofweek,
+                "month": dt.dt.month,
+                "dayofyear": dt.dt.dayofyear,
+            }.items():
+                feature_df[col] = values.astype(float)
+                feature_cols.append(col)
+        for lag in self.cfg.lags:
+            col = f"lag_{lag}"
+            feature_df[col] = df[self.cfg.target_col].shift(lag).bfill().ffill().astype(float)
+            feature_cols.append(col)
+        return feature_df, feature_cols
 
     def _export_feature_snapshot(self, df: pd.DataFrame) -> FeatureSnapshotResult:
         """导出分析型特征快照。
@@ -398,6 +464,9 @@ class ModelApp:
             target_col=self.cfg.target_col,
             freq=self.cfg.freq,
             output_dir=str(self.artifacts.eda_dir),
+            period=self.cfg.eda_period,
+            nlags=self.cfg.eda_nlags,
+            recommendation_enabled=self.cfg.eda_recommendation_enabled,
         )
         
         return result
@@ -437,7 +506,7 @@ class ModelApp:
         # model info saving
         model_info_path = write_json(
             self.artifacts.train_results_dir / "model_info.json",
-            model_info_payload(model, self.resolved_model_params),
+            model_info_payload(model, self.resolved_model_params, self.cfg.model_name),
         )
         # model training summary saving
         train_summary = {
@@ -464,10 +533,15 @@ class ModelApp:
             "decomposition_target": self.cfg.decomposition_target,
             "decomposition_model": self.cfg.decomposition_model,
             "processor_applied": prepared.processor.enabled,
+            "feature_mode": self.cfg.feature_mode,
+            "model_input_feature_columns": prepared.model_input_feature_columns,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "checkpoint_path": str(model_path),
             "model_info_path": model_info_path,
         }
+        spec = MODEL_REGISTRY.get(self.cfg.model_name)
+        if spec is not None:
+            train_summary["stability"] = spec.stability
         train_summary_path = write_json(
             self.artifacts.train_results_dir / "train_summary.json", 
             train_summary
@@ -500,6 +574,7 @@ class ModelApp:
             window_mode=self.cfg.resolved_backtest_window_mode(),
             verbose=self.cfg.backtest_verbose,
             progress_every=self.cfg.backtest_progress_every,
+            n_jobs=self.cfg.backtest_n_jobs,
         )
         result = tester.evaluate(df[[self.cfg.time_col, *self.model_value_cols]].copy())
         # 回测产物分为窗口指标、逐点预测、汇总指标和图形，便于后续误差分析。
@@ -508,7 +583,9 @@ class ModelApp:
         summary_path_csv = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics_summary.csv", result.summary_df)
         test_summary_path = write_json(
             self.artifacts.test_results_dir / "test_summary.json",
-            {
+            _test_summary_payload(
+                self.cfg.model_name,
+                {
                 "model_name": self.cfg.model_name,
                 "data_name": self.artifacts.data_name,
                 "pred_method": self.cfg.pred_method,
@@ -519,9 +596,12 @@ class ModelApp:
                 "horizon": int(self.cfg.backtest_horizon),
                 "step": int(self.cfg.backtest_step),
                 "window_mode": self.cfg.resolved_backtest_window_mode(),
+                "backtest_n_jobs": int(self.cfg.backtest_n_jobs),
                 "failed_windows": result.failed_windows,
+                "failed_window_ratio": float(result.failed_windows and len(result.failed_windows) / (len(result.metrics_df) + len(result.failed_windows)) or 0.0),
                 **result.summary,
-            },
+                },
+            ),
         )
         plot_title = (
             f"{self.cfg.model_name} / {self.artifacts.data_name} / "
@@ -626,10 +706,27 @@ class ModelApp:
                 if not prepared.history_time.empty
                 else None,
                 "history_points_plotted": int(min(len(prepared.history_df), self.cfg.history_size)),
+                "feature_mode": self.cfg.feature_mode,
             },
         )
-        return {
+        result = {
             "prediction_path": forecast_path,
             "forecast_summary_path": forecast_summary_path,
             "forecast_plot_path": forecast_plot_path,
         }
+        if self.cfg.monitor_enabled:
+            monitor = ModelMonitor(
+                monitor_dir=self.cfg.monitor_dir,
+                setting=self.artifacts.setting,
+                window=self.cfg.monitor_window,
+            )
+            monitor.log_forecast(
+                run_id=self.run_id,
+                yhat=pd.Series(forecast_df["yhat"].values, name="yhat"),
+                yhat_lower=pd.Series(forecast_df["yhat_lower"].values) if "yhat_lower" in forecast_df.columns else None,
+                yhat_upper=pd.Series(forecast_df["yhat_upper"].values) if "yhat_upper" in forecast_df.columns else None,
+            )
+            result["monitor_predictions_path"] = str(monitor._pred_path)
+            result["monitor_actuals_path"] = str(monitor._act_path)
+            result["monitor_metrics_path"] = str(monitor._metrics_path)
+        return result

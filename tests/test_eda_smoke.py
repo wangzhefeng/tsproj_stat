@@ -1,4 +1,6 @@
-﻿import warnings
+﻿import json
+import warnings
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -99,3 +101,34 @@ def test_eda_fills_missing_timestamps_after_frequency_alignment(tmp_path):
 
     summary = pd.read_json(out["eda_summary_path"], typ="series")
     assert summary["n_samples"] == 11.0
+
+
+def test_eda_outputs_structured_recommendations(tmp_path):
+    df = pd.DataFrame(
+        {
+            "ds": pd.date_range("2024-01-01", periods=120, freq="D"),
+            "y": [10 + i * 0.1 + (i % 7) * 2.0 for i in range(120)],
+        }
+    )
+
+    out = run_eda(
+        df=df,
+        time_col="ds",
+        target_col="y",
+        freq="D",
+        output_dir=str(tmp_path),
+        period=7,
+        nlags=14,
+        recommendation_enabled=True,
+    )
+
+    assert "eda_recommendations_path" in out
+    assert "eda_recommendations_csv_path" in out
+    payload = json.loads(Path(out["eda_recommendations_path"]).read_text(encoding="utf-8"))
+
+    assert payload["seasonal_period"]["recommended_period"] == 7
+    assert payload["differencing"]["recommended_D"] in {0, 1, 2}
+    assert "model_family" in payload
+    assert {"category", "name", "recommendation", "confidence"}.issubset(
+        set(pd.read_csv(out["eda_recommendations_csv_path"]).columns)
+    )

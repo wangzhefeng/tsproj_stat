@@ -55,6 +55,26 @@ def test_data_loader_normalizes_target_values_and_keeps_standard_columns(tmp_pat
     assert df["y"].tolist() == [3.5, 3.5, 1.5, 1.5]
 
 
+def test_data_quality_report_tracks_cleaning_counts(tmp_path):
+    csv_path = tmp_path / "dirty_series.csv"
+    pd.DataFrame(
+        {
+            "ds": ["2024-01-01", "2024-01-03", "2024-01-04"],
+            "y": [1.0, None, 4.0],
+        }
+    ).to_csv(csv_path, index=False)
+
+    loader = DataLoader(data_path=str(csv_path), freq="D")
+    loader.load_data()
+    report = loader.quality_report.to_dict()
+
+    assert report["raw_rows"] == 3
+    assert report["clean_rows"] == 3
+    assert report["interpolated_value_count"] >= 1
+    assert report["inserted_timestamp_count"] == 1
+    assert report["dropped_row_count"] == 0
+
+
 def test_data_loader_requires_target_column(tmp_path):
     csv_path = tmp_path / "missing_target.csv"
     pd.DataFrame({"ds": ["2024-01-01", "2024-01-02"], "value": [1.0, 2.0]}).to_csv(csv_path, index=False)

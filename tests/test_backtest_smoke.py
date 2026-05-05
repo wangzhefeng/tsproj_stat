@@ -1,4 +1,5 @@
 ﻿import pandas as pd
+import pytest
 
 from evaluation.backtest import rolling_backtest
 from models.factory import ModelFactory
@@ -83,3 +84,42 @@ def test_backtest_sliding_window_keeps_fixed_train_size():
     assert (result.metrics_df["train_end"] - result.metrics_df["train_start"]).eq(10).all()
     assert result.summary["window_mode"] == "sliding"
     assert result.summary["inference_strategy"] == "recursive"
+
+
+def test_backtest_parallel_matches_serial_output():
+    df = pd.DataFrame({"ds": pd.date_range("2024-01-01", periods=60, freq="D"), "y": list(range(60))})
+    kwargs = dict(
+        df=df,
+        model_builder=lambda: ModelFactory().create_model("naive"),
+        target_col="y",
+        time_col="ds",
+        train_size=30,
+        horizon=5,
+        step=5,
+    )
+
+    serial = rolling_backtest(**kwargs, n_jobs=1)
+    parallel = rolling_backtest(**kwargs, n_jobs=2)
+
+    pd.testing.assert_frame_equal(serial.metrics_df, parallel.metrics_df)
+    pd.testing.assert_frame_equal(serial.predictions_df, parallel.predictions_df)
+    assert serial.summary == parallel.summary
+
+
+def test_backtest_parallel_all_failed_windows_raise():
+    df = pd.DataFrame({"ds": pd.date_range("2024-01-01", periods=40, freq="D"), "y": list(range(40))})
+
+    def failing_builder():
+        raise RuntimeError("builder failed")
+
+    with pytest.raises(RuntimeError, match="All backtest windows failed"):
+        rolling_backtest(
+            df,
+            model_builder=failing_builder,
+            target_col="y",
+            time_col="ds",
+            train_size=10,
+            horizon=5,
+            step=5,
+            n_jobs=2,
+        )

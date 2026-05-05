@@ -37,6 +37,15 @@ def test_cli_override_eda_fields():
         backtest_window_mode=None,
         backtest_verbose=None,
         backtest_progress_every=None,
+        backtest_n_jobs=None,
+        eda_period=14,
+        eda_nlags=48,
+        eda_run_preprocessed="true",
+        eda_recommendation_enabled="false",
+        monitor_enabled="true",
+        monitor_dir="saved_results/custom_monitor",
+        monitor_window=12,
+        feature_mode="model_input",
         enable_datetime_features=None,
         lags=None,
         scale=None,
@@ -71,6 +80,14 @@ def test_cli_override_eda_fields():
     updated = _apply_overrides(cfg, args)
     assert updated.do_eda is True
     assert updated.eda_output_dir == "saved_results/custom_eda"
+    assert updated.eda_period == 14
+    assert updated.eda_nlags == 48
+    assert updated.eda_run_preprocessed is True
+    assert updated.eda_recommendation_enabled is False
+    assert updated.monitor_enabled is True
+    assert updated.monitor_dir == "saved_results/custom_monitor"
+    assert updated.monitor_window == 12
+    assert updated.feature_mode == "model_input"
     assert updated.denoise_enabled is True
     assert updated.denoise_method == "moving_median"
     assert updated.denoise_window == 5
@@ -117,6 +134,15 @@ def test_cli_override_extended_app_config_fields():
         backtest_window_mode="sliding",
         backtest_verbose="true",
         backtest_progress_every=3,
+        backtest_n_jobs=2,
+        eda_period=24,
+        eda_nlags=36,
+        eda_run_preprocessed="false",
+        eda_recommendation_enabled="true",
+        monitor_enabled="false",
+        monitor_dir="saved_results/monitor",
+        monitor_window=30,
+        feature_mode="analysis_snapshot",
         enable_datetime_features="false",
         lags="1,3,6,24",
         scale="true",
@@ -173,6 +199,15 @@ def test_cli_override_extended_app_config_fields():
     assert updated.backtest_window_mode == "sliding"
     assert updated.backtest_verbose is True
     assert updated.backtest_progress_every == 3
+    assert updated.backtest_n_jobs == 2
+    assert updated.eda_period == 24
+    assert updated.eda_nlags == 36
+    assert updated.eda_run_preprocessed is False
+    assert updated.eda_recommendation_enabled is True
+    assert updated.monitor_enabled is False
+    assert updated.monitor_dir == "saved_results/monitor"
+    assert updated.monitor_window == 30
+    assert updated.feature_mode == "analysis_snapshot"
     assert updated.enable_datetime_features is False
     assert updated.lags == [1, 3, 6, 24]
     assert updated.scale is True
@@ -247,6 +282,77 @@ def test_parse_args_supports_underscore_cli_names(monkeypatch):
     assert cfg.predict_horizon == 5
     assert cfg.do_train is False
     assert cfg.lags == [1, 7]
+
+
+def test_parse_args_supports_eda_monitor_and_feature_fields(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run.py",
+            "--do_eda",
+            "true",
+            "--eda_period",
+            "14",
+            "--eda_nlags",
+            "36",
+            "--eda_run_preprocessed",
+            "true",
+            "--eda_recommendation_enabled",
+            "false",
+            "--monitor_enabled",
+            "true",
+            "--monitor_dir",
+            "saved_results/custom_monitor",
+            "--monitor_window",
+            "12",
+            "--feature_mode",
+            "model_input",
+        ],
+    )
+
+    cfg = parse_args()
+
+    assert cfg.do_eda is True
+    assert cfg.eda_period == 14
+    assert cfg.eda_nlags == 36
+    assert cfg.eda_run_preprocessed is True
+    assert cfg.eda_recommendation_enabled is False
+    assert cfg.monitor_enabled is True
+    assert cfg.monitor_dir == "saved_results/custom_monitor"
+    assert cfg.monitor_window == 12
+    assert cfg.feature_mode == "model_input"
+
+
+def test_parse_args_supports_monitor_actuals_backfill_fields(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run.py",
+            "--monitor_actuals_path",
+            "/tmp/actuals.csv",
+            "--monitor_actuals_setting",
+            "naive-demo_series-direct",
+            "--monitor_actuals_forecast_ts",
+            "2026-05-04T00:00:00Z",
+            "--monitor_actuals_value_col",
+            "actual",
+            "--monitor_actuals_snapshot",
+            "false",
+            "--monitor_actuals_run_id",
+            "manual-1",
+        ],
+    )
+
+    cfg = parse_args()
+
+    assert cfg.monitor_actuals_path == "/tmp/actuals.csv"
+    assert cfg.monitor_actuals_setting == "naive-demo_series-direct"
+    assert cfg.monitor_actuals_forecast_ts == "2026-05-04T00:00:00Z"
+    assert cfg.monitor_actuals_value_col == "actual"
+    assert cfg.monitor_actuals_snapshot is False
+    assert cfg.monitor_actuals_run_id == "manual-1"
 
 
 def test_parse_args_rejects_hyphenated_cli_names(monkeypatch):

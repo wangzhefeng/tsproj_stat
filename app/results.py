@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 import pandas as pd
 
 from config import AppConfig
+from models.registry import MODEL_REGISTRY
 
 
 # ##############################
@@ -83,16 +84,23 @@ def dataframe_to_csv(path: Path, df: pd.DataFrame) -> str:
     return str(path)
 
 
-def model_info_payload(model, model_params: dict[str, Any]) -> dict[str, Any]:
+def model_info_payload(model, model_params: dict[str, Any], model_name: str | None = None) -> dict[str, Any]:
     """提取模型可追踪信息，包括 fallback 状态和常见阶数/评分字段。"""
     fallback = getattr(model, "_fallback", None)
     result = getattr(model, "_result", None)
+    spec = MODEL_REGISTRY.get(model_name or "")
     payload: dict[str, Any] = {
         "model_class": type(model).__name__,
         "model_params": model_params,
+        "model_name": model_name,
+        "stability": spec.stability if spec is not None else None,
+        "is_optional": spec.stability == "optional" if spec is not None else False,
+        "is_experimental": spec.stability == "experimental" if spec is not None else False,
         "uses_fallback_model": fallback is not None,
         "fallback_model_class": type(fallback).__name__ if fallback is not None else None,
         "using_fallback_prediction": fallback is not None and result is None,
+        "is_trainer_fallback": bool(getattr(model, "_is_fallback", False)),
+        "fallback_reason": getattr(model, "_fallback_reason", None),
         "has_native_result": result is not None,
     }
     for attr in ("order", "seasonal_order", "selected_order", "selected_score", "ic", "seasonal", "m"):

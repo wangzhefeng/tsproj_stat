@@ -53,6 +53,12 @@ class AppConfig:
     do_test: bool = True
     do_forecast: bool = True
     do_eda: bool = False
+
+    # EDA：诊断参数和建议输出统一走 AppConfig，避免在 eda/pipeline.py 中硬编码。
+    eda_period: int = 7
+    eda_nlags: int = 24
+    eda_run_preprocessed: bool = False
+    eda_recommendation_enabled: bool = True
     
     # 模型训练
     history_size: int = 90
@@ -69,6 +75,7 @@ class AppConfig:
     backtest_n_jobs: int = 1
     
     # 特征工程
+    feature_mode: str = "analysis_snapshot"
     enable_datetime_features: bool = True
     lags: list[int] = field(default_factory=lambda: [1, 2, 7, 14])
     scale: bool = False
@@ -93,7 +100,7 @@ class AppConfig:
 
     # 自动模型选择：用小规模 rolling backtest 在候选模型中选默认指标最优者。
     auto_select: bool = False
-    auto_select_candidates: list[str] = field(default_factory=lambda: ["naive", "arima", "ets", "auto_arima"])
+    auto_select_candidates: list[str] = field(default_factory=lambda: ["naive", "seasonal_naive", "historic_average", "arima", "auto_arima", "ets", "theta"])
     auto_select_metric: str = "mae"
     auto_select_n_windows: int = 5
 
@@ -104,6 +111,17 @@ class AppConfig:
     # 概率预测：仅在模型或推理策略支持时返回区间；否则区间列可为 NaN。
     return_intervals: bool = False
     interval_alpha: float = 0.05
+
+    # 本地文件监控：默认关闭；开启后 forecast 阶段写入 saved_results/monitor/{setting}。
+    monitor_enabled: bool = False
+    monitor_dir: str = "saved_results/monitor"
+    monitor_window: int = 30
+    monitor_actuals_path: str | None = None
+    monitor_actuals_setting: str | None = None
+    monitor_actuals_forecast_ts: str | None = None
+    monitor_actuals_value_col: str = "y_true"
+    monitor_actuals_snapshot: bool = True
+    monitor_actuals_run_id: str = "manual_backfill"
     
     # Log format
     log_format: str = "text"
@@ -139,6 +157,10 @@ class AppConfig:
         _ensure_positive(self.backtest_horizon, "backtest_horizon")
         _ensure_positive(self.backtest_step, "backtest_step")
         _ensure_positive(self.backtest_progress_every, "backtest_progress_every")
+        _ensure_positive(self.backtest_n_jobs, "backtest_n_jobs")
+        _ensure_positive(self.eda_period, "eda_period")
+        _ensure_positive(self.eda_nlags, "eda_nlags")
+        _ensure_positive(self.monitor_window, "monitor_window")
         normalize_inference_strategy(self.inference_strategy, self.pred_method)
         normalize_window_mode(self.backtest_window_mode)
         validate_single_step_horizon(self.resolved_inference_strategy(), self.predict_horizon)
@@ -146,6 +168,9 @@ class AppConfig:
 
         if self.scaler_type not in {"standard", "minmax"}:
             raise ValueError("scaler_type must be one of {'standard', 'minmax'}")
+
+        if self.feature_mode not in {"analysis_snapshot", "model_input"}:
+            raise ValueError("feature_mode must be one of {'analysis_snapshot', 'model_input'}")
 
         if self.detrend_method not in {"none", "linear", "moving_average"}:
             raise ValueError("detrend_method must be one of {'none', 'linear', 'moving_average'}")
@@ -192,7 +217,14 @@ class AppConfig:
         if self.future_exog_path is not None and self.future_exog_cols and self.future_exog_time_col is None:
             raise ValueError("future_exog_time_col is required when future_exog_path and future_exog_cols are set")
 
-        for output_dir in (self.checkpoints_dir, self.train_results_dir, self.test_results_dir, self.forecast_result_dir, self.eda_output_dir):
+        for output_dir in (
+            self.checkpoints_dir,
+            self.train_results_dir,
+            self.test_results_dir,
+            self.forecast_result_dir,
+            self.eda_output_dir,
+            self.monitor_dir,
+        ):
             if not _is_allowed_output_dir(output_dir):
                 raise ValueError("All output directories must remain under the 'saved_results/' namespace")
 
@@ -207,3 +239,4 @@ def ensure_output_dirs(cfg: AppConfig) -> None:
     Path(cfg.test_results_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.forecast_result_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.eda_output_dir).mkdir(parents=True, exist_ok=True)
+    Path(cfg.monitor_dir).mkdir(parents=True, exist_ok=True)

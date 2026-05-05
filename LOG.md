@@ -205,6 +205,18 @@
 - 原因：旧目录的核心价值是模型候选、适用场景、参数经验与约束条件，不是脚本本身；需要把这些信息收口到当前 `models/model/` 家族实现、registry metadata、README 与测试
 - 影响范围：`models/model/baseline_models.py`、`models/model/extended_models.py`、`models/model/multivariate.py`、`models/registry.py`、`pyproject.toml`、`uv.lock`、`tests/test_model_expansion.py`、`tests/test_factory.py`、`tests/test_pipeline.py`、README、AGENTS
 
+### 2026-05-05 / Step 32
+
+- 补齐 EDA 建模建议、预处理后 EDA、并行回测、模型稳定性元信息、显式特征输入模式和本地监控闭环
+- 原因：当前项目已能运行统计预测实验，但缺少从 EDA 诊断到建模建议的闭环，也缺少批量回测性能、模型风险标记和 forecast 后的基础监控记录
+- 影响范围：`config/default.py`、`run.py`、`app/pipeline.py`、`app/results.py`、`app/testing.py`、`data_provider/data_loader.py`、`eda/`、`evaluation/backtest.py`、`evaluation/monitor.py`、`models/selector.py`、README、AGENTS、相关测试
+
+### 2026-05-05 / Step 33
+
+- 补齐上一轮收口项：`test_summary.json` 增加稳定性/fallback 字段，新增 optional/experimental 模型 smoke matrix，新增 monitor actuals CSV 回填 CLI
+- 原因：上一轮已完成主线基础版，但缺少测试阶段稳定性可观测性、模型风险矩阵和 forecast 后 actuals 回填入口
+- 影响范围：`app/pipeline.py`、`models/stability.py`、`evaluation/monitor.py`、`run.py`、README、AGENTS、相关测试
+
 ## 待办任务
 
 | ID | 任务 | 优先级 | 完成条件 |
@@ -215,6 +227,8 @@
 | T04 | 增补环境初始化标准流程 | P1 | README 中提供基于 `uv venv` / `uv sync` 的可复现安装路径 |
 | T05 | 处理 `matplotlib` 缓存目录不可写问题 | P2 | 已提供项目级 `.mplconfig/` 方案，并纳入主线运行约定 |
 | T06 | 持续治理 ARIMA 拟合 `ConvergenceWarning` | P2 | 保持模型层定向处理，不把低价值 warning 再推回入口层 |
+| T07 | 持续校准 EDA 建模建议规则 | P2 | recommendations 输出字段稳定，并通过真实数据集复核建议质量 |
+| T08 | 扩展监控闭环使用示例 | P2 | 已在 README 和 CLI smoke 中提供 forecast 记录、actuals 回填和 metrics 快照示例 |
 
 ## 验证记录
 
@@ -263,6 +277,21 @@
 | `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name auto_arima --model_params '{"seasonal":false,"max_p":2,"max_q":2,"max_order":4,"maxiter":10}' --decomposition_method stl --decomposition_target trend_resid --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4` | 通过 | `auto_arima` + STL 分解预处理 smoke 可运行，结果落盘到 `saved_results/.../auto_arima-demo_series-direct/` |
 | `UV_CACHE_DIR=.uv_cache uv add statsforecast neuralprophet` | 通过 | 已新增可选依赖；当前环境下 `neuralprophet` 仍存在上游依赖兼容问题，主线按 optional fallback 处理 |
 | `UV_CACHE_DIR=.uv_cache uv run pytest -q tests/test_factory.py tests/test_model_expansion.py tests/test_pipeline.py` | 通过 | `21 passed`；新增基线模型、扩展模型与 pipeline smoke 回归通过 |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q tests/test_eda_smoke.py tests/test_cli_overrides.py tests/test_backtest_smoke.py tests/test_pipeline.py tests/test_monitor.py tests/test_auto_selector.py tests/test_statistical_registry.py tests/test_data_loader.py` | 通过 | `45 passed`；EDA recommendations、并行回测、监控、auto_select 与数据质量增强 targeted 回归通过 |
+| `UV_CACHE_DIR=.uv_cache uv run python -m compileall run.py main.py app config data_provider models evaluation eda features utils` | 通过 | 主线模块语法检查通过 |
+| `bash -n scripts/wind_univariate/*.sh` | 通过 | 单变量运行脚本 shell 语法检查通过 |
+| `git diff --check` | 通过 | 当前 diff 无空白错误 |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | 全量回归通过；仍有既有 `ConvergenceWarning` 与 optional 依赖 warning |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5` | 通过 | 基础 train/test/forecast CLI smoke 通过 |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false` | 通过 | EDA-only CLI smoke 通过，并输出 `eda_recommendations.json/csv` |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5 --backtest_n_jobs 2 --monitor_enabled true` | 通过 | 并行回测与本地监控日志 smoke 通过，预测日志写入 `saved_results/monitor/{setting}` |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false --decomposition_method seasonal_decompose --decomposition_target resid_only --seasonal_period 7 --eda_run_preprocessed true` | 通过 | 预处理后 EDA smoke 通过，额外输出 `results_eda/{setting}/postprocessed/*` |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /private/tmp/tsproj_multisource_smoke/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols y,load --exog_cols temp --future_exog_path /private/tmp/tsproj_multisource_smoke/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --do_eda false --history_size 12 --predict_horizon 4 --backtest_initial_train_size 12 --backtest_horizon 4 --backtest_step 4` | 通过 | 多源 `linear_var` CLI smoke 继续通过 |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q tests/test_pipeline.py::test_pipeline_end_to_end tests/test_monitor.py tests/test_model_stability.py tests/test_cli_overrides.py::test_parse_args_supports_monitor_actuals_backfill_fields` | 通过 | `test_summary` 稳定性字段、monitor actuals 回填和模型 smoke matrix targeted 回归通过 |
+| `UV_CACHE_DIR=.uv_cache uv run python run.py --monitor_actuals_path /private/tmp/tsproj_monitor_actuals.csv --monitor_actuals_setting naive-demo_series-direct --monitor_actuals_value_col actual --monitor_actuals_run_id manual-smoke --monitor_window 5` | 通过 | monitor actuals CLI 可写入 `actuals_log.csv` 并生成 `metrics_history.csv` 快照 |
+| `UV_CACHE_DIR=.uv_cache uv run pytest -q` | 通过 | Step 33 后全量回归通过；仍有既有 `ConvergenceWarning` 与 optional 依赖 warning |
+| `UV_CACHE_DIR=.uv_cache uv run python -m compileall run.py main.py app config data_provider models evaluation eda features utils` | 通过 | Step 33 后主线模块语法检查通过 |
+| `bash -n scripts/wind_univariate/*.sh` | 通过 | Step 33 后脚本 shell 语法检查通过 |
 
 ## 备注
 
@@ -270,3 +299,4 @@
 - 本文档应在每次修复后更新，而不是等问题累积后一次性补记。
 - 2026-05-03：已抽取 `data_provider.prepare_standard_frame()`，统一 `DataLoader` 与 EDA 的时间列规范化、目标列数值化、缺失值处理入口；EDA 仅保留 `Series` 视图转换、补频和最小样本校验。
 - 2026-05-04：主线已新增 `inference_strategy` 与 `backtest_window_mode` 抽象；`forecast/test/auto_select` 统一复用共享推理层，CLI 与脚本开始迁移到 `inference_strategy / backtest_train_size / backtest_window_mode`，旧 `pred_method / backtest_initial_train_size` 保留兼容入口。
+- 2026-05-05：EDA recommendations 和 monitor 当前采用本地文件版，不引入数据库或服务端组件；`features/` 仍默认只输出分析快照，只有 `feature_mode=model_input` 时才进入模型输入链路。

@@ -5,6 +5,7 @@ import pandas as pd
 from evaluation.backtest import rolling_backtest
 from models.factory import ModelFactory
 from models.inference import normalize_inference_strategy
+from models.registry import MODEL_REGISTRY
 
 import os
 from pathlib import Path
@@ -21,7 +22,7 @@ class AutoSelector:
 
     def __init__(
         self,
-        candidates: list[str],
+        candidates: list[str] | None = None,
         metric: str = "mae",
         n_windows: int = 5,
         initial_train_size: int = 30,
@@ -29,6 +30,8 @@ class AutoSelector:
         model_params_map: dict[str, dict] | None = None,
         inference_strategy: str = "direct",
     ):
+        if candidates is None:
+            candidates = [name for name, spec in MODEL_REGISTRY.items() if spec.stability == "stable"]
         if not candidates:
             raise ValueError("candidates must not be empty")
         if metric not in {"mae", "rmse", "mape", "smape", "mse", "r2", "bias", "max_error"}:
@@ -100,7 +103,7 @@ class AutoSelector:
         if not valid:
             raise RuntimeError("AutoSelector: all candidate models failed evaluation")
 
-        best = min(valid, key=valid.__getitem__)
+        best = max(valid, key=valid.__getitem__) if self.metric == "r2" else min(valid, key=valid.__getitem__)
         logger.info(
             f"[AutoSelect] selected: {best!r} ({self.metric}={valid[best]:.4f}) "
             f"from {list(valid.keys())}"
