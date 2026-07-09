@@ -4,10 +4,10 @@
 
 ## 1. 主线边界
 
-- 主线目录命名空间：`app / config / models / evaluation / data_provider / features / eda / tests`
-- 统一入口：`run.py` 为完整 CLI，`main.py` 为最小示例入口
+- 主线目录命名空间：`app / config / models / evaluation / data_provider / features / eda / utils / tests`
+- 统一入口：`run.py` 为唯一 CLI 入口
 - 当前仓库以“统计模型时间序列预测 + EDA + 可逆预处理”为主线，不在主线内的实验性内容不得直接混入上述目录
-- `todo_models_source/`、`todo_ts_eda/` 已完成迁移并移除；后续若新增迁移目录，必须先定义生命周期与清理时机
+- 历史迁移目录（`todo_models_source/`、`todo_ts_eda/`、`models/models_todo/`、`eda/eda_todo/`、`src/`）均已清理；后续若新增迁移/过渡目录，必须先定义生命周期与清理时机
 
 ## 2. 开发约定
 
@@ -66,10 +66,10 @@
 - 接口行为变更必须补最小必要测试
 - 发现环境、编码、路径、平台兼容问题时，优先修根因，不做静默绕过
 
-## 6. 当前状态（2026-05-05）
+## 6. 当前状态（2026-07-09）
 
 - 主线入口已统一为 `run.py`，CLI 参数名与 `AppConfig` 字段保持一致，如 `--model_name`、`--predict_horizon`、`--do_eda`
-- 运行时 warning 初始化已统一到 `app/runtime.py`，CLI 与最小入口共用
+- 运行时环境（`MPLCONFIGDIR`、随机种子）统一在 `utils/runtime_env.py`；matplotlib `Agg` 后端与 warning 定向过滤位于 `eda/report.py` / `eda/diagnostics.py`
 - 统计模型当前按 `models/model/` 家族模块维护，fallback 和公共 helper 已独立；registry 位于 `models/registry.py`
 - EDA 子系统已并入主流程，入口为 `eda/pipeline.py`，产出结构化摘要、诊断表、图表路径与 `eda_recommendations.json/csv` 建模建议
 - 数据预处理已集中到 `data_provider/data_processor.py`，支持去噪、去趋势与预测逆变换
@@ -78,14 +78,14 @@
 - `DataLoader` 已支持多源输入：历史内生/外生列保留、独立未来外生文件加载与最小校验
 - `DataLoader` 数据质量报告已补充清洗审计字段，包括原始/清洗后样本数、插值数量、补齐时间戳数量与 dropna 行数
 - `BayesianTMT` / `RAR` 已完成非占位实现，并纳入测试覆盖
-- `BayesianVAR` / `LinearVAR` 已从 `models/models_todo` 抽取核心实现并接入主线模型 registry
+- `BayesianVAR` / `LinearVAR` 已接入主线模型 registry（实验性多变量模型）
 - `forecast_stats`、`prophet_models`、`var_models` 当前都只作为历史研究与方法信息来源；有效内容应沉淀到主线实现、registry metadata、README 与测试，不继续维护脚本式 demo
-- `models/models_todo/arima_models` 当前保留为历史研究材料；有效方法流程已收口到 ARIMA family 与测试，不再要求脚本可直接运行
+- 早期 ARIMA 研究脚本的有效方法流程（ACF/PACF、ADF/KPSS、差分与滚动预测）已收口到 ARIMA family 与测试；脚本已移除，不再保留
 - `ETSModel` 当前支持可选 smoothing grid 调参；若启用季节项但未显式提供周期，会先尝试统一周期推断，失败后直接报错
 - 主线现有模型稳定性分层约定：
   - `stable`：默认基线与常规统计模型
   - `optional`：依赖额外库，如 `statsforecast`、`prophet`、`tbats`
-  - `experimental`：已接入但需要额外验证的模型，如 `croston`、`neuralprophet`、`bayesian_tmt`、`bayesian_var`、`linear_var`
+  - `experimental`：已接入但需要额外验证的模型，如 `croston`、`neuralprophet`、`bayesian_tmt`、`bayesian_var`、`linear_var`、`rar`
 - 分析特征快照输出已更名为 `analysis_feature_snapshot.csv`，以避免与预测主链路混淆；`feature_mode=model_input` 是显式建模输入模式，不改变默认行为
 - 训练、测试、预测、EDA 结果已统一迁移到 `saved_results/` 五类一级目录下，并按 `setting` 自动分组；`eda_output_dir` 真实控制 EDA 落盘根目录，监控日志归属到 `saved_results/monitor/{setting}`
 - 回测结果已扩展为窗口级明细、汇总指标和图形产物；`backtest_n_jobs>1` 支持窗口级并行并保持 CSV 输出按 `window_id` 稳定排序

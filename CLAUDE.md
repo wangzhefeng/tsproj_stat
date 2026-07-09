@@ -4,21 +4,21 @@
 
 ## 项目概况
 
-统计模型时间序列预测框架。23+ 模型，8 个家族，统一接口 `fit/predict`，支持训练 → 回测 → 预测 → EDA 全流程。
+统计模型时间序列预测框架。25 个模型，7 个家族，统一接口 `fit/predict`，支持训练 → 回测 → 预测 → EDA 全流程。
 
 | 属性 | 值 |
 | --- | --- |
 | Python | 3.12（`.python-version` 为准） |
 | 包管理 | `uv`（虚拟环境 `.venv`） |
-| 入口 | `run.py`（完整 CLI）/ `main.py`（最小） |
-| 测试 | `pytest`，24 文件，75+ tests |
+| 入口 | `run.py`（唯一 CLI 入口） |
+| 测试 | `pytest`（`tests/` 本地维护，已 gitignore，不进版本库） |
 | 分支 | `dev`（活跃），`main`（稳定） |
 | 成熟度 | 早中期，主架构已成型 |
 
 ## 验证命令（改完必跑）
 
 ```bash
-# 全量测试（最低基线）
+# 全量测试（最低基线；tests/ 本地维护、已 gitignore，全新 clone 需先补回）
 UV_CACHE_DIR=.uv_cache uv run pytest -q
 
 # CLI smoke -- 单变量
@@ -50,7 +50,7 @@ run.py → AppConfig → ModelApp.run()
 
 | 模块 | 职责 | 注意 |
 | --- | --- | --- |
-| `config/default.py` | `AppConfig` dataclass，40+ 参数 | CLI 参数名必须与字段名一致（下划线风格） |
+| `config/default.py` | `AppConfig` dataclass，75 字段 | CLI 参数名必须与字段名一致（下划线风格） |
 | `models/registry.py` | `MODEL_REGISTRY` + 模型规格 | 新模型必须注册 |
 | `models/base.py` | `BaseStatModel` 抽象类 | `fit(y, X_hist, X_future)` / `predict(horizon, X_future)` |
 | `models/factory.py` | 工厂入口 | 通过 registry 实例化 |
@@ -102,15 +102,13 @@ run.py → AppConfig → ModelApp.run()
 | `uv sync` 网络受限失败 | 设置 `UV_CACHE_DIR=.uv_cache`，或用已有 `.venv` 直接运行 |
 | 季节周期推断失败 | `DataProcessor` 会回退无季节路径，不静默生造周期 |
 | `neuralprophet` 环境不兼容 | 显式 fallback，不伪装成功 |
-| `models/models_todo/` 旧脚本 | 仅历史研究材料，不可运行，不维护 |
-| `eda/eda_todo/` 占位文件 | 12 个空壳，未接入主线 |
 
 ## 项目分析
 
 ### 当前优势
 
 - 清晰的架构分层与模块职责
-- 统一的 `fit/predict` 契约覆盖 23+ 模型
+- 统一的 `fit/predict` 契约覆盖 25 个模型、7 个家族
 - 可逆预处理管道（denoise → detrend → decompose → inverse）
 - 多源输入支持（endog + hist_exog + future_exog）
 - 完善的 rolling backtest + 窗口级明细
@@ -120,20 +118,17 @@ run.py → AppConfig → ModelApp.run()
 
 | 领域 | 现状 | 优化方向 |
 | --- | --- | --- |
-| EDA 扩展 | `eda/eda_todo/` 有 12 个空壳占位 | 按需实现，接入 `eda/pipeline.py` |
-| `features/` 定位 | 未参与训练管线 | 评估是否接入或明确标注为分析快照层 |
-| 分支管理 | dev 领先 main 25+ commits | 需要 merge 回 main |
-| Commit 规范 | 大量 "update" 消息 | 采用 conventional commits |
-| Docstring | ~23% 覆盖率 | 优先补公共接口（BaseStatModel / AppConfig / DataProcessor） |
+| `features/` 定位 | 默认仅输出分析快照，未进训练管线 | 评估是否接入或维持分析快照定位 |
+| Commit 规范 | 大量 "update"/"fixed" 消息 | 采用 conventional commits |
+| Docstring | 覆盖率偏低 | 优先补公共接口（BaseStatModel / AppConfig / DataProcessor） |
 | 类型标注 | 部分缺失 | 逐步补全关键路径 |
+| 测试 | `tests/` 本地维护、已 gitignore，不进版本库 | 视协作需要决定是否纳入版本管理 |
 
 ### 下一步建议优先级
 
-1. **P0**：合并 dev → main，建立定期 merge 习惯
-2. **P1**：按需实现 `eda/eda_todo/` 中优先级最高的模块
-3. **P1**：补 `BaseStatModel` / `AppConfig` / `DataProcessor` 公共接口 docstring
-4. **P2**：评估 `features/` 定位，决定接入训练或明确标注为分析快照层
-5. **P2**：规范化 commit message（conventional commits）
+1. **P1**：补 `BaseStatModel` / `AppConfig` / `DataProcessor` 公共接口 docstring
+2. **P2**：评估 `features/` 定位，决定接入训练或维持分析快照层
+3. **P2**：规范化 commit message（conventional commits）
 
 ## 环境速查
 
@@ -150,7 +145,7 @@ uv add --dev <package>
 UV_CACHE_DIR=.uv_cache uv run python run.py ...
 UV_CACHE_DIR=.uv_cache uv run pytest -q
 
-# 单模型脚本
+# 单模型脚本（需 .venv/bin 在 PATH 中，脚本内调用 `python -u run.py`）
 bash scripts/wind_univariate/run_naive.sh
 ```
 

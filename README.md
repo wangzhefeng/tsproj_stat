@@ -7,20 +7,21 @@
 ```text
 .
 |- app/                # 应用编排层（pipeline/training/testing/forecasting）
-|- config/             # dataclass 配置
+|- config/             # dataclass 配置与 YAML/env 加载（default.py / loader.py）
 |- models/             # 统计模型抽象、工厂与实现（`models/model/` 为分族包结构）
-|- evaluation/         # 指标与滚动回测
-|- data_provider/      # 数据加载、示例数据与预处理
-|- features/           # 分析特征快照与后续扩展预留层
-|- eda/                # EDA 子系统（analyzer/diagnostics/report/data_gen）
-|- tests/              # 测试用例
+|- evaluation/         # 指标、滚动回测与可视化
+|- data_provider/      # 数据加载、通用清洗与可逆预处理
+|- features/           # 分析特征快照（feature_engineering / feature_scaling）
+|- eda/                # EDA 子系统（analyzer/diagnostics/pipeline/recommendations/report）
+|- utils/              # demo 数据、运行时环境、日志、随机种子
 |- scripts/            # 数据集专项运行脚本
-|- saved_results/      # 运行期输出目录（按需生成）
-|- run.py              # 完整 CLI 入口
-|- main.py             # 最小示例入口
+|- run.py              # 唯一 CLI 入口
 |- AGENTS.md           # 项目协作规范
+|- CLAUDE.md           # Claude Code 工作指令
 |- LOG.md              # 问题台账、修复记录与待办
 ```
+
+> `dataset/`（数据集）、`logs/`、`saved_results/`（运行输出）、`tests/`、`.venv/` 均在 `.gitignore` 中，属于本地目录，不会进入版本库；全新 clone 后需自行准备数据集并运行生成输出。
 
 ## 安装
 
@@ -188,10 +189,10 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
   - 间歇需求：`croston`
   - 基于 `statsforecast` 的可选自动模型：`dynamic_theta / auto_ets / auto_theta`
 - ARIMA 家族当前包含 `ar / ma / arma / arima / sarima / auto_arima`，统一由 `models/model/arima_family.py` 维护；模型 registry 位于 `models/registry.py`。
-- `models/models_todo/arima_models/*.ipynb` 当前作为历史研究材料保留，其有效内容已抽象为主线规则：
+- 早期 ARIMA 研究脚本的有效内容已抽象为主线规则（脚本本身已移除，不再保留脚本式 API）：
   - `ACF/PACF` 用于 AR/MA/ARMA 识别与参数经验
   - `ADF/KPSS` 用于平稳性与差分建议
-  - 分解观察与滚动预测思路用于主线测试和预处理设计，不再保留脚本式 API
+  - 分解观察与滚动预测思路用于主线测试和预处理设计
 - `features/` 默认只用于生成分析型特征快照；当 `feature_mode=model_input` 时，会把时间特征和 lag 特征并入模型历史输入元信息，默认仍不改变单目标 `yhat` 输出 contract。
 - 训练、测试、预测和 EDA 结果现统一落到 `saved_results/checkpoints / results_train / results_test / results_forecast / results_eda`，并按 `setting` 自动分组。
 - EDA 当前会输出结构化建模建议，包括季节周期、差分、预处理和模型族候选；启用 `eda_run_preprocessed` 后，会额外对实际训练尺度序列运行一轮 EDA。
@@ -220,13 +221,15 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
   - `tbats` 暴露多重季节性核心参数，如 `seasonal_periods`、`use_box_cox`、`use_trend`
   - `neuralprophet` 为实验性 optional 模型；若环境依赖不可用或运行时不兼容，会显式 fallback，不静默伪装成真实成功
 - `bayesian_tmt` 当前明确表示“实验性单序列贝叶斯滞后回归近似”，不是旧 `BayesianTMT.py` 中的矩阵分解/面板预测算法。
-- 模型稳定性约定：
-  - `stable`：默认主线模型，可作为常规 baseline 使用
-  - `optional`：依赖额外库或环境能力，如 `statsforecast`、`prophet`、`tbats`
-  - `experimental`：实现已接入主线，但算法边界或环境稳定性仍需额外验证，如 `croston`、`neuralprophet`、`bayesian_tmt`
+- 模型稳定性约定（共 25 个模型，7 个家族）：
+  - `stable`（12）：默认主线模型，可作为常规 baseline，如 `naive / ar / arima / sarima / ets / theta / var`
+  - `optional`（7）：依赖额外库或环境能力，如 `dynamic_theta / auto_ets / auto_theta / arch / garch / tbats / prophet`
+  - `experimental`（6）：实现已接入主线，但算法边界或环境稳定性仍需额外验证，如 `croston / bayesian_var / linear_var / neuralprophet / bayesian_tmt / rar`
 - `models.stability.build_smoke_matrix()` 可生成 optional/experimental 模型 smoke matrix，状态固定为 `success / dependency_unavailable / fit_failed`，用于区分依赖问题、拟合失败和成功路径。
 
 ## 数据集脚本
+
+- `dataset/`（本地、已 gitignore）当前包含 `wind_dataset.csv` 与若干公开基准：`ETT-small/`（ETTh1/h2、ETTm1/m2）、`weather/`、`electricity/`。目前只有 wind 单变量配有运行脚本，其余数据集建议直接用 CLI 运行。
 
 - `scripts/wind_univariate/` 覆盖当前单变量可运行模型：
   - stable：`naive`、`seasonal_naive`、`historic_average`、`ar`、`ma`、`arma`、`arima`、`auto_arima`、`sarima`、`ets`、`theta`
@@ -262,18 +265,6 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 - `monitor_enabled=true` 时，预测阶段会把每个未来步的 `yhat` 写入 `saved_results/monitor/{setting}/predictions_log.csv`。
 - `evaluation.monitor.ModelMonitor` 和 `run.py --monitor_actuals_path ...` 支持后续回填真实值到 `actuals_log.csv`，并基于最近 `monitor_window` 个匹配样本生成 `metrics_history.csv`。
 - 当前监控是本地文件版，不依赖数据库或服务端组件。
-
-## 数据生成脚本
-
-- `eda/data_gen.py`：用于生成模型测试数据。
-- 默认输出路径需以脚本实际配置为准；若新增数据目录，需同步更新 `AGENTS.md` 与本文件。
-
-## 迁移说明
-
-- `todo_ts_eda` 中“趋势去除与逆变换”“去噪流程”已并入 `data_provider/data_processor.py`。
-- `todo_ts_eda` 其余主要统计诊断能力已并入 `eda/diagnostics.py` 与 `eda/report.py`。
-- `todo_models_source` 中 `BayesianTMT` 与 `RAR` 已完成非占位迁移。
-- `todo_models_source/` 与 `todo_ts_eda/` 目录已删除。
 
 ## 当前已知问题
 
