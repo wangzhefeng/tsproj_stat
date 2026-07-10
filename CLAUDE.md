@@ -42,7 +42,7 @@ run.py → AppConfig → ModelApp.run()
                       ├── Test: app/testing.py → evaluation/backtest.py
                       └── Forecast: app/forecasting.py → predict()
 
-数据流: DataLoader → prepare_standard_frame() → DataProcessor(denoise→detrend→decompose) → model
+数据流: (可选) data_aggregate.resolve_config_aggregation() → DataLoader → prepare_standard_frame() → DataProcessor(denoise→detrend→decompose) → model
 逆变换: model output → DataProcessor.inverse_transform() → final forecast
 ```
 
@@ -54,9 +54,10 @@ run.py → AppConfig → ModelApp.run()
 | `models/registry.py` | `MODEL_REGISTRY` + 模型规格 | 新模型必须注册 |
 | `models/base.py` | `BaseStatModel` 抽象类 | `fit(y, X_hist, X_future)` / `predict(horizon, X_future)` |
 | `models/factory.py` | 工厂入口 | 通过 registry 实例化 |
+| `data_provider/data_aggregate.py` | 高频→目标频率聚合（DataLoader 前） | 改写 `cfg.data_path` 为派生 CSV + 审计；`seasonal_slot` 无线性兜底 |
 | `data_provider/data_processor.py` | 可逆 3 层预处理 | denoise → detrend → decompose |
 | `evaluation/backtest.py` | rolling backtest | expanding-window，支持进度日志 |
-| `app/results.py` | 结果落盘管理 | `setting = {model_name}-{data_name}-{forecast_strategy}` |
+| `app/results.py` | 结果落盘管理 | `results/{data_name}/{category}/{experiment_path}` |
 
 ## 工作规则
 
@@ -66,7 +67,7 @@ run.py → AppConfig → ModelApp.run()
 2. **接口契约**：`fit(y, X_hist=None, X_future=None)` / `predict(horizon, X_future=None)`，不得自创入口
 3. **预处理逻辑**：统一走 `DataProcessor`，模型内部不得自维分解/重组
 4. **CLI 参数**：与 `AppConfig` 字段名一致（`--model_name`，不是 `--model-name`）
-5. **结果目录**：必须归属 `saved_results/` 五类一级目录，不得散落输出
+5. **结果目录**：必须归属 `results/{data_name}/` 的标准类别与完整参数路径，不得散落输出
 6. **文档同步**：功能变更后同步更新 AGENTS.md / README.md / LOG.md
 
 ### 禁止

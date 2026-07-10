@@ -25,10 +25,6 @@ python -u run.py \
   --do_test true \
   --do_forecast true \
   --do_eda false \
-  --eda_period 7 \
-  --eda_nlags 24 \
-  --eda_run_preprocessed false \
-  --eda_recommendation_enabled true \
   --history_size 365 \
   --predict_horizon 7 \
   --backtest_train_size 365 \
@@ -63,11 +59,6 @@ python -u run.py \
   --return_intervals false \
   --interval_alpha 0.05 \
   --monitor_enabled false \
-  --monitor_dir saved_results/monitor \
   --monitor_window 30 \
   --log_format text \
-  --checkpoints_dir saved_results/checkpoints \
-  --train_results_dir saved_results/results_train \
-  --test_results_dir saved_results/results_test \
-  --forecast_result_dir saved_results/results_forecast \
-  --eda_output_dir saved_results/results_eda
+  --results_dir results

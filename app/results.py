@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 from dataclasses import asdict, dataclass
@@ -18,12 +19,16 @@ from models.registry import MODEL_REGISTRY
 class RunArtifacts:
     """一次运行对应的标准产物目录集合。"""
     setting: str
+    experiment_path: Path
+    eda_path: Path
     data_name: str
     checkpoints_dir: Path
     train_results_dir: Path
     test_results_dir: Path
     forecast_results_dir: Path
     eda_dir: Path
+    monitor_dir: Path
+    custom_monitor_dir: Path
 
 
 def _resolve_data_name(data_path: str | None) -> str:
@@ -33,35 +38,130 @@ def _resolve_data_name(data_path: str | None) -> str:
     return Path(data_path).stem
 
 
-def _build_setting(model_name: str, data_name: str, strategy_label: str) -> str:
-    """统一构建 {model_name}-{data_name}-{strategy} 结果分组名。"""
-    return f"{model_name}-{data_name}-{strategy_label}"
+def _mapping_tokens(mapping: dict, prefix: str = "") -> list[str]:
+    tokens: list[str] = []
+    for key in sorted(mapping):
+        full_key = f"{prefix}.{key}" if prefix else str(key)
+        value = mapping[key]
+        if isinstance(value, dict):
+            tokens.extend(_mapping_tokens(value, full_key))
+        else:
+            tokens.append(f"{_path_token(full_key)}_{_path_token(value)}")
+    return tokens
+
+
+def _path_token(value: Any) -> str:
+    if value is None:
+        return "none"
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, Path):
+        value = value.name
+    if isinstance(value, (list, tuple)):
+        return "+".join(_path_token(item) for item in value) or "none"
+    if isinstance(value, dict):
+        return "+".join(_mapping_tokens(value)) or "default"
+    text = str(value)
+    if "/" in text or "\\" in text:
+        text = Path(text).name
+    text = re.sub(r"[^A-Za-z0-9._+-]+", "-", text).strip("-")
+    return text or "none"
+
+
+def resolve_model_params(cfg: AppConfig) -> dict[str, Any]:
+    """返回实际交给模型工厂的参数，供实验路径和训练共同使用。"""
+    params = dict(cfg.model_params)
+    if cfg.model_name == "ets":
+        params.setdefault("tune_smoothing_params", cfg.ets_tune_smoothing_params)
+        params.setdefault("smoothing_grid_level", cfg.ets_smoothing_grid_level)
+        params.setdefault("smoothing_grid_trend", cfg.ets_smoothing_grid_trend)
+        params.setdefault("smoothing_grid_seasonal", cfg.ets_smoothing_grid_seasonal)
+        params.setdefault("validation_size", cfg.ets_validation_size)
+        if cfg.seasonal_period is not None:
+            params.setdefault("seasonal_periods", cfg.seasonal_period)
+    return params
+
+
+def build_experiment_path(cfg: AppConfig) -> Path:
+    """用完整可读参数构建稳定的模型实验相对路径。"""
+    resolved_params = resolve_model_params(cfg)
+    params = _path_token(resolved_params) if resolved_params else "default"
+    scale = cfg.scaler_type if cfg.scale else "off"
+    process = (
+        f"process-denoise-{_path_token(cfg.denoise_method)}_w-{cfg.denoise_window}"
+        f"_detrend-{_path_token(cfg.detrend_method)}"
+        f"_decomp-{_path_token(cfg.decomposition_method)}"
+        f"_period-{_path_token(cfg.seasonal_period)}"
+    )
+    return Path(
+        f"{_path_token(cfg.model_name)}-{_path_token(cfg.setting_strategy_label())}",
+        f"params-{params}",
+        f"hist-{cfg.history_size}_pred-{cfg.predict_horizon}",
+        (
+            f"bt-{_path_token(cfg.resolved_backtest_window_mode())}"
+            f"_train-{cfg.resolved_backtest_train_size()}"
+            f"_h-{cfg.backtest_horizon}_step-{cfg.backtest_step}"
+        ),
+        (
+            f"input-feature-{_path_token(cfg.feature_mode)}"
+            f"_lags-{_path_token(cfg.lags)}_scale-{_path_token(scale)}"
+        ),
+        process,
+        f"interval-{'on' if cfg.return_intervals else 'off'}_alpha-{_path_token(cfg.interval_alpha)}",
+    )
+
+
+def build_eda_path(cfg: AppConfig) -> Path:
+    """构建只依赖数据准备与 EDA 参数的相对路径。"""
+    aggregation = cfg.aggregation_method if cfg.aggregation_enabled else "none"
+    fill_method = cfg.aggregation_fill_method if cfg.aggregation_enabled else "none"
+    return Path(
+        f"freq-{_path_token(cfg.freq)}",
+        f"period-{cfg.eda_period}_nlags-{cfg.eda_nlags}",
+        (
+            f"recommend-{'on' if cfg.eda_recommendation_enabled else 'off'}"
+            f"_preprocessed-{'on' if cfg.eda_run_preprocessed else 'off'}"
+        ),
+        f"aggregation-{_path_token(aggregation)}_fill-{_path_token(fill_method)}",
+    )
 
 
 def prepare_run_artifacts(cfg: AppConfig) -> RunArtifacts:
-    """为本次运行创建五类 setting 子目录。"""
+    """按 data_name 和完整参数路径创建本次运行的产物目录。"""
     # 提取数据名称
     data_name = _resolve_data_name(cfg.data_path)
-    # 构建结果目录
-    setting = _build_setting(cfg.model_name, data_name, cfg.setting_strategy_label())
-    # 创建结果参数实例
+    setting = f"{cfg.model_name}-{cfg.setting_strategy_label()}"
+    experiment_path = build_experiment_path(cfg)
+    eda_path = build_eda_path(cfg)
+    data_root = Path(cfg.results_dir) / data_name
     artifacts = RunArtifacts(
         setting=setting,
+        experiment_path=experiment_path,
+        eda_path=eda_path,
         data_name=data_name,
-        checkpoints_dir=Path(cfg.checkpoints_dir) / setting,
-        train_results_dir=Path(cfg.train_results_dir) / setting,
-        test_results_dir=Path(cfg.test_results_dir) / setting,
-        forecast_results_dir=Path(cfg.forecast_result_dir) / setting,
-        eda_dir=Path(cfg.eda_output_dir) / setting,
+        checkpoints_dir=data_root / "checkpoints" / experiment_path,
+        train_results_dir=data_root / "results_train" / experiment_path,
+        test_results_dir=data_root / "results_test" / experiment_path,
+        forecast_results_dir=data_root / "results_forecast" / experiment_path,
+        eda_dir=data_root / "results_eda" / eda_path,
+        monitor_dir=data_root / "monitor" / experiment_path,
+        custom_monitor_dir=data_root / "custom_monitor" / experiment_path,
     )
-    # 创建特定模型、数据、预测方法结果目录
-    for path in (
-        artifacts.checkpoints_dir,
-        artifacts.train_results_dir,
-        artifacts.test_results_dir,
-        artifacts.forecast_results_dir,
-        artifacts.eda_dir,
-    ):
+    # 创建结果目录：EDA-only 仅创建 EDA 目录，避免散落空模型目录与无意义实验路径。
+    dirs = (
+        [artifacts.eda_dir]
+        if cfg.is_eda_only()
+        else [
+            artifacts.checkpoints_dir,
+            artifacts.train_results_dir,
+            artifacts.test_results_dir,
+            artifacts.forecast_results_dir,
+            artifacts.eda_dir,
+            artifacts.monitor_dir,
+            artifacts.custom_monitor_dir,
+        ]
+    )
+    for path in dirs:
         path.mkdir(parents=True, exist_ok=True)
     
     return artifacts

@@ -207,10 +207,10 @@ marimo/_lsp/
 __marimo__/
 
 # custom
-saved_results/
+results/
 dataset/
 logs/
-.uv-cache/
+.uv_cache/
 .worktrees/
 .mplconfig/
 tests/

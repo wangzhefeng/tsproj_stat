@@ -18,6 +18,8 @@
 - ARIMA 家族主线模型名约定为 `ar / ma / arma / arima / sarima / auto_arima`；若只是在参数层包装，不得再平行新增脚本式入口
 - 轻量统计基线主线模型名约定为 `seasonal_naive / historic_average / croston`；自动统计模型扩展当前约定为 `dynamic_theta / auto_ets / auto_theta`
 - 新增 EDA 能力必须接入 `eda/pipeline.py`，并输出结构化结果与可追踪产物路径
+- EDA 属于数据项目级流程；已接入数据必须通过对应的 `scripts/**/run_eda.sh` 独立执行，模型 shell 必须显式保持 `--do_eda false`，不得重复携带其他 `--eda_*` 参数
+- 频率聚合统一由 `data_provider/data_aggregate.py` 在 DataLoader 前执行；聚合会生成派生 CSV 与审计 JSON，不得混入可逆 `DataProcessor`
 - 趋势去除、去噪、逆变换等可逆预处理统一放在 `data_provider/data_processor.py`
 - 去噪主线约定当前只保留轻量方法：`moving_average / moving_median`；`LOWESS / Kalman / OnOff` 不得直接混入主线
 - 若处理趋势项、季节项或分解，必须通过 `DataProcessor` 主线完成，不允许让 ARIMA 类模型各自再维护一套分解/重组逻辑
@@ -30,8 +32,8 @@
   - `exog_cols` 表示历史外生变量列
   - `future_exog_path` / `future_exog_time_col` / `future_exog_cols` 用于独立未来外生数据
   - 主线 artifact 仍保持单目标 `target_col -> yhat`
-- 结果目录主约定固定为 `saved_results/checkpoints / results_train / results_test / results_forecast / results_eda`；本地监控闭环归属到 `saved_results/monitor`
-- 训练、测试、预测、EDA 结果统一按 `setting={model_name}-{data_name}-{forecast_strategy}` 分组保存；预测策略统一使用 `forecast_strategy`，EDA 归属到 `results_eda/{setting}`
+- 结果根统一为 `results/{data_name}/`，包含 `checkpoints / custom_monitor / monitor / results_eda / results_forecast / results_test / results_train`
+- 模型产物按完整可读 `experiment_path` 分组；EDA 与模型解耦，按频率、周期、诊断和聚合参数构建独立 `eda_path`
 - 新增输出文件时，必须明确归属到上述结果目录命名空间，避免散落输出；测试可使用临时绝对路径
 - `features/` 默认定位为分析特征快照；只有显式设置 `feature_mode=model_input` 时，时间特征和 lag 特征才允许进入模型历史输入
 
@@ -46,8 +48,11 @@
   - `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5`
   - `UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false`
   - `UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false --eda_period 7 --eda_nlags 24 --eda_recommendation_enabled true`
+  - `bash scripts/wind_univariate/run_eda.sh`
+  - `bash scripts/aidc_power_month/A/run_eda.sh`
+  - `bash scripts/aidc_power_month/B/run_eda.sh`
   - `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5 --backtest_n_jobs 2 --monitor_enabled true`
-  - `UV_CACHE_DIR=.uv_cache uv run python run.py --monitor_actuals_path /abs/path/actuals.csv --monitor_actuals_setting naive-demo_series-direct --monitor_actuals_value_col actual --monitor_actuals_run_id manual-backfill-1`
+  - `UV_CACHE_DIR=.uv_cache uv run python run.py --monitor_actuals_path /abs/path/actuals.csv --monitor_actuals_experiment_path naive-direct/params-default/... --monitor_actuals_value_col actual --monitor_actuals_run_id manual-backfill-1`
   - `UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols load --exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4`
 - 若环境未满足上述命令，先修复环境，再继续功能开发；不要跳过验证直接宣称完成
 
@@ -66,12 +71,14 @@
 - 接口行为变更必须补最小必要测试
 - 发现环境、编码、路径、平台兼容问题时，优先修根因，不做静默绕过
 
-## 6. 当前状态（2026-07-09）
+## 6. 当前状态（2026-07-10）
 
 - 主线入口已统一为 `run.py`，CLI 参数名与 `AppConfig` 字段保持一致，如 `--model_name`、`--predict_horizon`、`--do_eda`
-- 运行时环境（`MPLCONFIGDIR`、随机种子）统一在 `utils/runtime_env.py`；matplotlib `Agg` 后端与 warning 定向过滤位于 `eda/report.py` / `eda/diagnostics.py`
+- 运行时环境（`MPLCONFIGDIR`、随机种子）统一在 `utils/runtime_env.py`；matplotlib `Agg` 后端与通用 EDA 绘图位于 `eda/visualization.py`
 - 统计模型当前按 `models/model/` 家族模块维护，fallback 和公共 helper 已独立；registry 位于 `models/registry.py`
 - EDA 子系统已并入主流程，入口为 `eda/pipeline.py`，产出结构化摘要、诊断表、图表路径与 `eda_recommendations.json/csv` 建模建议
+- EDA 运行后由 `eda/report_generator.py` 自动生成中文叙述报告 `EDA_REPORT.md`（8 段，复用 recommendations 不重算阈值）；默认 `eda_generate_report=true`，手写报告（无 auto-generated marker）默认保留跳过，`--eda_report_overwrite true` 强制覆盖；精修参考 `eda/EDA_REPORT_GUIDE.md`
+- wind、AIDC A 日峰和 AIDC B 日峰已提供独立 `run_eda.sh`；66 个模型 shell 统一关闭 EDA，避免同一数据随模型运行重复分析
 - 数据预处理已集中到 `data_provider/data_processor.py`，支持去噪、去趋势与预测逆变换
 - `DataProcessor` 已补充自动季节周期推断与 `seasonal_decompose / stl` 可逆分解；主线可对 `trend_resid / resid_only` 序列建模后再重组趋势项与季节项
 - `DataProcessor` 当前去噪策略统一为 `denoise_method=none|moving_average|moving_median`；`denoise_enabled` 仅作为兼容旧 CLI 的开关
@@ -87,7 +94,8 @@
   - `optional`：依赖额外库，如 `statsforecast`、`prophet`、`tbats`
   - `experimental`：已接入但需要额外验证的模型，如 `croston`、`neuralprophet`、`bayesian_tmt`、`bayesian_var`、`linear_var`、`rar`
 - 分析特征快照输出已更名为 `analysis_feature_snapshot.csv`，以避免与预测主链路混淆；`feature_mode=model_input` 是显式建模输入模式，不改变默认行为
-- 训练、测试、预测、EDA 结果已统一迁移到 `saved_results/` 五类一级目录下，并按 `setting` 自动分组；`eda_output_dir` 真实控制 EDA 落盘根目录，监控日志归属到 `saved_results/monitor/{setting}`
+- 训练、测试、预测和监控已迁移到 `results/{data_name}/{category}/{experiment_path}`；EDA 使用模型无关的 `results_eda/{eda_path}`
+- 通用频率聚合支持 `mean/max/min/sum/median` 与显式 `none/linear/seasonal_slot` 缺失策略，AIDC 日峰脚本从 5min 原始文件生成 `dataset/aidc_power_month/derived/` 派生数据
 - 回测结果已扩展为窗口级明细、汇总指标和图形产物；`backtest_n_jobs>1` 支持窗口级并行并保持 CSV 输出按 `window_id` 稳定排序
 - `auto_select` 默认候选已收紧为 `stable` 模型，并按指标方向选择最优模型：`r2` 越大越好，其余误差指标越小越好
 - `models.stability.build_smoke_matrix()` 已提供 optional/experimental 模型 smoke matrix，状态固定为 `success / dependency_unavailable / fit_failed`
@@ -97,7 +105,6 @@
 
 ## 7. 当前已知问题
 
-- `README.md` 存在与仓库实际状态不一致的描述，变更时必须同步修正
 - 当前环境基线已恢复，但仍需持续验证 `pytest` 与 CLI smoke 命令
 - `uv` 缓存目录在受限环境下仍建议显式配置为仓库内目录
 - ARIMA 家族仍可能出现少量 `ConvergenceWarning`，后续若继续治理，应保持模型层定向处理而非重新回到入口层全局过滤

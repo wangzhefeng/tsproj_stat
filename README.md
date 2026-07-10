@@ -10,9 +10,9 @@
 |- config/             # dataclass 配置与 YAML/env 加载（default.py / loader.py）
 |- models/             # 统计模型抽象、工厂与实现（`models/model/` 为分族包结构）
 |- evaluation/         # 指标、滚动回测与可视化
-|- data_provider/      # 数据加载、通用清洗与可逆预处理
+|- data_provider/      # 数据聚合、加载、通用清洗与可逆预处理
 |- features/           # 分析特征快照（feature_engineering / feature_scaling）
-|- eda/                # EDA 子系统（analyzer/diagnostics/pipeline/recommendations/report）
+|- eda/                # EDA 子系统（诊断、建议、通用可视化与报告）
 |- utils/              # demo 数据、运行时环境、日志、随机种子
 |- scripts/            # 数据集专项运行脚本
 |- run.py              # 唯一 CLI 入口
@@ -21,7 +21,7 @@
 |- LOG.md              # 问题台账、修复记录与待办
 ```
 
-> `dataset/`（数据集）、`logs/`、`saved_results/`（运行输出）、`tests/`、`.venv/` 均在 `.gitignore` 中，属于本地目录，不会进入版本库；全新 clone 后需自行准备数据集并运行生成输出。
+> `dataset/`（数据集）、`logs/`、`results/`（运行输出）、`tests/`、`.venv/` 均在 `.gitignore` 中，属于本地目录，不会进入版本库；全新 clone 后需自行准备数据集并运行生成输出。
 
 ## 安装
 
@@ -55,12 +55,49 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --model_name arima --forecast_strate
 UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false
 ```
 
+当前已接入的数据项目应优先使用独立 EDA 脚本：
+
+```bash
+bash scripts/wind_univariate/run_eda.sh
+bash scripts/aidc_power_month/A/run_eda.sh
+bash scripts/aidc_power_month/B/run_eda.sh
+```
+
+推荐工作流是：每份数据先运行一次对应的 `run_eda.sh`，阅读 `results/{data_name}/results_eda/` 中的诊断与建模建议，再运行任意数量的模型脚本。模型脚本统一保持 `--do_eda false`，不会重复执行数据分析。AIDC A/B 脚本分别从各自 5 分钟原始数据生成或复用日峰派生数据，并独立分析，不自动生成 A/B 比较图。
+
+每次 `run_eda.sh` 还会自动生成一份中文叙述报告 `results/{data_name}/results_eda/.../EDA_REPORT.md`（由 `eda/report_generator.py` 渲染，复用 `eda_recommendations.json` 不重算阈值，含数据口径、趋势、季节性、平稳性、波动、建模建议等 8 段）。手写报告默认不会被覆盖（识别 `auto-generated` marker），需要刷新时加 `--eda_report_overwrite true`；精修参考 `eda/EDA_REPORT_GUIDE.md`。
+
 执行 EDA 并输出建模建议：
 
 ```bash
 UV_CACHE_DIR=.uv_cache uv run python run.py \
   --do_eda true --do_train false --do_test false --do_forecast false \
   --eda_period 7 --eda_nlags 24 --eda_recommendation_enabled true
+```
+
+运行前聚合高频数据（示例：5 分钟负荷聚合为日峰值）：
+
+```bash
+python -u run.py \
+  --data_path dataset/aidc_power_month/A_Loads_5min_20251001_20260708.csv \
+  --time_col time --target_col value --freq D \
+  --aggregation_enabled true --aggregation_source_freq 5min \
+  --aggregation_method max --aggregation_fill_method seasonal_slot \
+  --aggregation_fill_weeks 4 \
+  --aggregation_output_path dataset/aidc_power_month/derived/A_Loads_1day_20251001_20260708.csv
+```
+
+聚合发生在 DataLoader、EDA 和建模之前；派生 CSV 旁会生成 `.aggregate.json` 审计文件。默认不填充缺失时间点，支持显式选择 `linear` 或 `seasonal_slot`。
+
+EDA 多序列比较：
+
+```bash
+python -u run.py \
+  --data_path dataset/aidc_power_month/derived/A_Loads_1day_20251001_20260708.csv \
+  --time_col time --target_col value --freq D \
+  --do_eda true --do_train false --do_test false --do_forecast false \
+  --eda_comparison_paths dataset/aidc_power_month/derived/B_Loads_1day_20251001_20260708.csv \
+  --eda_comparison_labels B
 ```
 
 启用预处理（可选去噪 + 去趋势 + 逆变换）：
@@ -121,7 +158,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 ```bash
 UV_CACHE_DIR=.uv_cache uv run python run.py \
   --monitor_actuals_path /abs/path/actuals.csv \
-  --monitor_actuals_setting naive-demo_series-direct \
+  --monitor_actuals_experiment_path naive-direct/params-default/... \
   --monitor_actuals_value_col actual \
   --monitor_actuals_run_id manual-backfill-1
 ```
@@ -146,33 +183,20 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 
 ## 输出目录
 
-当前结果统一按 `setting = {model_name}-{data_name}-{forecast_strategy}` 落盘，例如 `arima-wind_dataset-direct`。
+结果统一使用 `--results_dir results`，先按派生/原始 `data_name` 分组，再按完整可读参数构建模型实验路径：
 
-- `saved_results/checkpoints/{setting}/model.pkl`
-- `saved_results/results_train/{setting}/train_summary.json`
-- `saved_results/results_train/{setting}/train_series.csv`
-- `saved_results/results_train/{setting}/model_info.json`
-- `saved_results/results_eda/{setting}/eda_summary.json`
-- `saved_results/results_eda/{setting}/eda_diagnostics.csv`
-- `saved_results/results_eda/{setting}/eda_recommendations.json`
-- `saved_results/results_eda/{setting}/eda_recommendations.csv`
-- `saved_results/results_eda/{setting}/postprocessed/*`（仅 `eda_run_preprocessed=true` 且启用预处理时生成）
-- `saved_results/results_eda/{setting}/plots/*.png`
-- `saved_results/results_test/{setting}/backtest_predictions.csv`
-- `saved_results/results_test/{setting}/backtest_metrics.csv`
-- `saved_results/results_test/{setting}/backtest_metrics_summary.csv`
-- `saved_results/results_test/{setting}/test_summary.json`
-- `saved_results/results_test/{setting}/backtest_prediction_plot.png`
-- `saved_results/results_test/{setting}/backtest_residual_plot.png`
-- `saved_results/results_test/{setting}/backtest_error_distribution.png`
-- `saved_results/results_forecast/{setting}/forecast.csv`
-- `saved_results/results_forecast/{setting}/forecast_summary.json`
-- `saved_results/results_forecast/{setting}/forecast_plot.png`
-- `saved_results/results_forecast/{setting}/analysis_feature_snapshot.csv`
-- `saved_results/results_forecast/{setting}/run_summary.json`
-- `saved_results/monitor/{setting}/predictions_log.csv`（仅 `monitor_enabled=true` 时生成）
-- `saved_results/monitor/{setting}/actuals_log.csv`
-- `saved_results/monitor/{setting}/metrics_history.csv`
+```text
+results/{data_name}/
+├── checkpoints/{experiment_path}/
+├── custom_monitor/{experiment_path}/
+├── monitor/{experiment_path}/
+├── results_forecast/{experiment_path}/
+├── results_test/{experiment_path}/
+├── results_train/{experiment_path}/
+└── results_eda/{eda_path}/
+```
+
+`experiment_path` 依次编码模型/策略、模型参数、history/predict、回测窗口、特征输入、预处理和预测区间。EDA 不包含模型名，按频率、周期、nlags、建议开关和聚合语义独立分组。`run_summary.json` 保存完整配置和所有产物路径。
 
 ## 当前主线说明
 
@@ -194,7 +218,8 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
   - `ADF/KPSS` 用于平稳性与差分建议
   - 分解观察与滚动预测思路用于主线测试和预处理设计
 - `features/` 默认只用于生成分析型特征快照；当 `feature_mode=model_input` 时，会把时间特征和 lag 特征并入模型历史输入元信息，默认仍不改变单目标 `yhat` 输出 contract。
-- 训练、测试、预测和 EDA 结果现统一落到 `saved_results/checkpoints / results_train / results_test / results_forecast / results_eda`，并按 `setting` 自动分组。
+- 训练、测试、预测和监控按 `results/{data_name}/{category}/{experiment_path}` 分组；EDA 按独立的 `{eda_path}` 分组。
+- 可选频率聚合由 `data_provider/data_aggregate.py` 在 DataLoader 前执行；`DataProcessor` 仍只负责可逆预处理。
 - EDA 当前会输出结构化建模建议，包括季节周期、差分、预处理和模型族候选；启用 `eda_run_preprocessed` 后，会额外对实际训练尺度序列运行一轮 EDA。
 - 测试阶段当前会额外输出窗口级明细、汇总指标和三类图：预测对比图、残差图、误差分布图。
 - 无 `data_path` 时会加载内置 demo 序列，用于 smoke/test 场景；真实数据读取仍统一走 `data_provider/data_loader.py`。
@@ -242,12 +267,14 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
   - 其余模型同名脚本位于 `scripts/wind_univariate/`
 - 当前每个脚本都显式传入 wind 单变量实验相关的主要 `AppConfig` 字段，并统一使用 `python -u run.py`、`model_name`、`LOG_NAME`
 - 脚本中不展开 `config/config_module/config_class`、多源输入和 monitor actuals 回填字段；这些不属于 wind 单变量单模型运行入口。
-- 脚本运行后会自动把结果写到 `saved_results/checkpoints|results_train|results_test|results_forecast|results_eda/{setting}/`
+- 脚本运行后会自动把结果写到 `results/{data_name}/` 下的对应类别与完整参数路径。
 - 周期类日频脚本默认使用周周期参数，如 `season_length=7`、`period=7` 或 `seasonal_periods=7`；StatsForecast optional 模型显式传入 `freq="D"`。
 - `run_auto_arima.sh` 当前定位为偏快的日常脚本：默认缩短 `history_size`、增大 `backtest_step`、收紧 `auto_arima` 搜索空间，并开启回测进度日志与 `auto_arima` trace
 - `run_sarima.sh` 当前也定位为偏快的日常脚本：默认缩短 `history_size`、增大 `backtest_step`、开启回测进度日志，并通过 `model_params.fit_kwargs.maxiter` 等参数收紧 `SARIMAX` 拟合成本
 - `run_tbats.sh` 与 `run_neuralprophet.sh` 保留为可运行脚本；当前环境 smoke 可能通过 fallback 完成，需结合 `test_summary.json` 或 smoke matrix 的 `used_fallback` 字段判断是否原生模型成功。
 - 当前 `scripts/wind_univariate/` 只覆盖单变量脚本；多变量/多源输入模型建议直接用 CLI 运行。
+- `scripts/wind_univariate/run_eda.sh` 与 `scripts/aidc_power_month/A|B/run_eda.sh` 是数据项目级 EDA 入口；模型脚本只负责训练、回测和预测，并统一关闭 EDA。
+- `scripts/aidc_power_month/A|B/` 各包含22个日频模型脚本；脚本从只读5分钟原始文件生成/复用 `dataset/aidc_power_month/derived/` 日峰 CSV，再进入统一建模主线。
 
 ## EDA 能力
 
@@ -262,7 +289,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 
 ## 监控闭环
 
-- `monitor_enabled=true` 时，预测阶段会把每个未来步的 `yhat` 写入 `saved_results/monitor/{setting}/predictions_log.csv`。
+- `monitor_enabled=true` 时，预测阶段会把每个未来步的 `yhat` 写入 `results/{data_name}/monitor/{experiment_path}/predictions_log.csv`。
 - `evaluation.monitor.ModelMonitor` 和 `run.py --monitor_actuals_path ...` 支持后续回填真实值到 `actuals_log.csv`，并基于最近 `monitor_window` 个匹配样本生成 `metrics_history.csv`。
 - 当前监控是本地文件版，不依赖数据库或服务端组件。
 
@@ -286,7 +313,10 @@ UV_CACHE_DIR=.uv_cache uv run python run.py --model_name croston --model_params 
 UV_CACHE_DIR=.uv_cache uv run python run.py --model_name auto_theta --model_params '{"season_length":1}' --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
 UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false
 UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false --eda_period 7 --eda_nlags 24 --eda_recommendation_enabled true
+bash scripts/wind_univariate/run_eda.sh
+bash scripts/aidc_power_month/A/run_eda.sh
+bash scripts/aidc_power_month/B/run_eda.sh
 UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5 --backtest_n_jobs 2 --monitor_enabled true
-UV_CACHE_DIR=.uv_cache uv run python run.py --monitor_actuals_path /abs/path/actuals.csv --monitor_actuals_setting naive-demo_series-direct --monitor_actuals_value_col actual --monitor_actuals_run_id manual-backfill-1
+UV_CACHE_DIR=.uv_cache uv run python run.py --monitor_actuals_path /abs/path/actuals.csv --monitor_actuals_experiment_path naive-direct/params-default/... --monitor_actuals_value_col actual --monitor_actuals_run_id manual-backfill-1
 UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols load --exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4
 ```

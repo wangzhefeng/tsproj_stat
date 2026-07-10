@@ -16,7 +16,8 @@ def _ensure_positive(value: int, field_name: str) -> None:
 
 
 def _is_allowed_output_dir(output_dir: str) -> bool:
-    return output_dir.startswith("saved_results/") or Path(output_dir).is_absolute()
+    path = Path(output_dir)
+    return path.is_absolute() or path == Path("results") or str(path).startswith("results/")
 
 
 @dataclass
@@ -40,6 +41,12 @@ class AppConfig:
     future_exog_path: str | None = None
     future_exog_time_col: str | None = None
     future_exog_cols: list[str] = field(default_factory=list)
+    aggregation_enabled: bool = False
+    aggregation_source_freq: str | None = None
+    aggregation_method: str = "mean"
+    aggregation_fill_method: str = "none"
+    aggregation_fill_weeks: int = 4
+    aggregation_output_path: str | None = None
     
     # 模型参数
     model_name: str = "arima"
@@ -57,6 +64,10 @@ class AppConfig:
     eda_nlags: int = 24
     eda_run_preprocessed: bool = False
     eda_recommendation_enabled: bool = True
+    eda_comparison_paths: list[str] = field(default_factory=list)
+    eda_comparison_labels: list[str] = field(default_factory=list)
+    eda_generate_report: bool = True
+    eda_report_overwrite: bool = False
     
     # 模型训练
     history_size: int = 90
@@ -110,12 +121,11 @@ class AppConfig:
     return_intervals: bool = False
     interval_alpha: float = 0.05
 
-    # 本地文件监控：默认关闭；开启后 forecast 阶段写入 saved_results/monitor/{setting}。
+    # 本地文件监控：默认关闭；开启后 forecast 阶段写入 results/{data_name}/monitor/{experiment_path}。
     monitor_enabled: bool = False
-    monitor_dir: str = "saved_results/monitor"
     monitor_window: int = 30
     monitor_actuals_path: str | None = None
-    monitor_actuals_setting: str | None = None
+    monitor_actuals_experiment_path: str | None = None
     monitor_actuals_forecast_ts: str | None = None
     monitor_actuals_value_col: str = "y_true"
     monitor_actuals_snapshot: bool = True
@@ -124,12 +134,8 @@ class AppConfig:
     # Log format
     log_format: str = "text"
 
-    # 结果目录：生产输出必须归属 saved_results 五类一级命名空间。
-    checkpoints_dir: str = "saved_results/checkpoints"
-    train_results_dir: str = "saved_results/results_train"
-    test_results_dir: str = "saved_results/results_test"
-    forecast_result_dir: str = "saved_results/results_forecast"
-    eda_output_dir: str = "saved_results/results_eda"
+    # 结果目录：生产输出统一归属 results/{data_name}/ 命名空间。
+    results_dir: str = "results"
 
     def resolved_forecast_strategy(self) -> str:
         """统一解析预测策略。"""
@@ -146,6 +152,10 @@ class AppConfig:
     def setting_strategy_label(self) -> str:
         """构建结果目录 setting 时使用的预测策略标签。"""
         return self.resolved_forecast_strategy()
+
+    def is_eda_only(self) -> bool:
+        """仅执行 EDA：do_eda 开启且模型三阶段（train/test/forecast）全部关闭。"""
+        return self.do_eda and not (self.do_train or self.do_test or self.do_forecast)
 
     def validate(self) -> None:
         """在运行前集中校验配置，避免错误下沉到模型拟合阶段才暴露。"""
@@ -218,26 +228,24 @@ class AppConfig:
         if self.future_exog_path is not None and self.future_exog_cols and self.future_exog_time_col is None:
             raise ValueError("future_exog_time_col is required when future_exog_path and future_exog_cols are set")
 
-        for output_dir in (
-            self.checkpoints_dir,
-            self.train_results_dir,
-            self.test_results_dir,
-            self.forecast_result_dir,
-            self.eda_output_dir,
-            self.monitor_dir,
-        ):
-            if not _is_allowed_output_dir(output_dir):
-                raise ValueError("All output directories must remain under the 'saved_results/' namespace")
+        if self.aggregation_enabled and self.data_path is None:
+            raise ValueError("aggregation_enabled requires data_path")
+        if self.aggregation_enabled and self.aggregation_source_freq is None:
+            raise ValueError("aggregation_enabled requires aggregation_source_freq")
+        if self.aggregation_method not in {"mean", "max", "min", "sum", "median"}:
+            raise ValueError("aggregation_method must be one of {'mean', 'max', 'min', 'sum', 'median'}")
+        if self.aggregation_fill_method not in {"none", "linear", "seasonal_slot"}:
+            raise ValueError("aggregation_fill_method must be one of {'none', 'linear', 'seasonal_slot'}")
+        _ensure_positive(self.aggregation_fill_weeks, "aggregation_fill_weeks")
+        if self.eda_comparison_labels and len(self.eda_comparison_labels) != len(self.eda_comparison_paths):
+            raise ValueError("eda_comparison_labels must be empty or match eda_comparison_paths length")
+        if not _is_allowed_output_dir(self.results_dir):
+            raise ValueError("results_dir must be 'results', a child of 'results/', or an absolute path")
 
 
 DEFAULT_CONFIG = AppConfig()
 
 
 def ensure_output_dirs(cfg: AppConfig) -> None:
-    """创建五类结果根目录；具体 setting 子目录由 app.results 负责创建。"""
-    Path(cfg.checkpoints_dir).mkdir(parents=True, exist_ok=True)
-    Path(cfg.train_results_dir).mkdir(parents=True, exist_ok=True)
-    Path(cfg.test_results_dir).mkdir(parents=True, exist_ok=True)
-    Path(cfg.forecast_result_dir).mkdir(parents=True, exist_ok=True)
-    Path(cfg.eda_output_dir).mkdir(parents=True, exist_ok=True)
-    Path(cfg.monitor_dir).mkdir(parents=True, exist_ok=True)
+    """创建统一结果根；data_name 与实验子目录由 app.results 负责。"""
+    Path(cfg.results_dir).mkdir(parents=True, exist_ok=True)

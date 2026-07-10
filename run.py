@@ -9,6 +9,7 @@ from config import AppConfig, ensure_output_dirs
 from utils.random_seed import set_seed
 from app import ModelApp
 from evaluation.monitor import run_monitor_actuals_backfill
+from data_provider.data_aggregate import resolve_config_aggregation
 from utils.log_util import logger
 from utils.runtime_env import ensure_mpl_config_dir
 ensure_mpl_config_dir()
@@ -117,6 +118,18 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.future_exog_time_col = args.future_exog_time_col
     if getattr(args, "future_exog_cols", None) is not None:
         cfg.future_exog_cols = _parse_csv_list(args.future_exog_cols)
+    if getattr(args, "aggregation_enabled", None) is not None:
+        cfg.aggregation_enabled = _parse_bool(args.aggregation_enabled)
+    if getattr(args, "aggregation_source_freq", None) is not None:
+        cfg.aggregation_source_freq = args.aggregation_source_freq
+    if getattr(args, "aggregation_method", None) is not None:
+        cfg.aggregation_method = args.aggregation_method
+    if getattr(args, "aggregation_fill_method", None) is not None:
+        cfg.aggregation_fill_method = args.aggregation_fill_method
+    if getattr(args, "aggregation_fill_weeks", None) is not None:
+        cfg.aggregation_fill_weeks = args.aggregation_fill_weeks
+    if getattr(args, "aggregation_output_path", None) is not None:
+        cfg.aggregation_output_path = args.aggregation_output_path
     if getattr(args, "model_name", None) is not None:
         cfg.model_name = args.model_name
     if getattr(args, "model_params", None) is not None:
@@ -139,6 +152,14 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.eda_run_preprocessed = _parse_bool(args.eda_run_preprocessed)
     if getattr(args, "eda_recommendation_enabled", None) is not None:
         cfg.eda_recommendation_enabled = _parse_bool(args.eda_recommendation_enabled)
+    if getattr(args, "eda_comparison_paths", None) is not None:
+        cfg.eda_comparison_paths = _parse_csv_list(args.eda_comparison_paths)
+    if getattr(args, "eda_comparison_labels", None) is not None:
+        cfg.eda_comparison_labels = _parse_csv_list(args.eda_comparison_labels)
+    if getattr(args, "eda_generate_report", None) is not None:
+        cfg.eda_generate_report = _parse_bool(args.eda_generate_report)
+    if getattr(args, "eda_report_overwrite", None) is not None:
+        cfg.eda_report_overwrite = _parse_bool(args.eda_report_overwrite)
     if getattr(args, "history_size", None) is not None:
         cfg.history_size = args.history_size
     if getattr(args, "predict_horizon", None) is not None:
@@ -219,14 +240,12 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.interval_alpha = args.interval_alpha
     if getattr(args, "monitor_enabled", None) is not None:
         cfg.monitor_enabled = _parse_bool(args.monitor_enabled)
-    if getattr(args, "monitor_dir", None) is not None:
-        cfg.monitor_dir = args.monitor_dir
     if getattr(args, "monitor_window", None) is not None:
         cfg.monitor_window = args.monitor_window
     if getattr(args, "monitor_actuals_path", None) is not None:
         cfg.monitor_actuals_path = args.monitor_actuals_path
-    if getattr(args, "monitor_actuals_setting", None) is not None:
-        cfg.monitor_actuals_setting = args.monitor_actuals_setting
+    if getattr(args, "monitor_actuals_experiment_path", None) is not None:
+        cfg.monitor_actuals_experiment_path = args.monitor_actuals_experiment_path
     if getattr(args, "monitor_actuals_forecast_ts", None) is not None:
         cfg.monitor_actuals_forecast_ts = args.monitor_actuals_forecast_ts
     if getattr(args, "monitor_actuals_value_col", None) is not None:
@@ -235,16 +254,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.monitor_actuals_snapshot = _parse_bool(args.monitor_actuals_snapshot)
     if getattr(args, "monitor_actuals_run_id", None) is not None:
         cfg.monitor_actuals_run_id = args.monitor_actuals_run_id
-    if getattr(args, "checkpoints_dir", None) is not None:
-        cfg.checkpoints_dir = args.checkpoints_dir
-    if getattr(args, "train_results_dir", None) is not None:
-        cfg.train_results_dir = args.train_results_dir
-    if getattr(args, "test_results_dir", None) is not None:
-        cfg.test_results_dir = args.test_results_dir
-    if getattr(args, "forecast_result_dir", None) is not None:
-        cfg.forecast_result_dir = args.forecast_result_dir
-    if getattr(args, "eda_output_dir", None) is not None:
-        cfg.eda_output_dir = args.eda_output_dir
+    if getattr(args, "results_dir", None) is not None:
+        cfg.results_dir = args.results_dir
     
     return cfg
 
@@ -271,6 +282,12 @@ def parse_args() -> AppConfig:
     parser.add_argument("--future_exog_path", type=str, default=None)      # 未来数据的路径 -------------- 未来数据
     parser.add_argument("--future_exog_time_col", type=str, default=None)  # 未来数据时间列
     parser.add_argument("--future_exog_cols", type=str, default=None)      # 未来数据外生变量
+    parser.add_argument("--aggregation_enabled", default=None)
+    parser.add_argument("--aggregation_source_freq", type=str, default=None)
+    parser.add_argument("--aggregation_method", type=str, default=None)
+    parser.add_argument("--aggregation_fill_method", type=str, default=None)
+    parser.add_argument("--aggregation_fill_weeks", type=int, default=None)
+    parser.add_argument("--aggregation_output_path", type=str, default=None)
     # 模型参数：model_params 使用 JSON 对象文本，避免为每类模型扩散专用 CLI 字段。
     parser.add_argument("--model_name", type=str, default=None)
     parser.add_argument("--model_params", type=str, default=None)
@@ -284,6 +301,10 @@ def parse_args() -> AppConfig:
     parser.add_argument("--eda_nlags", type=int, default=None)         # TODO
     parser.add_argument("--eda_run_preprocessed", default=None)        # TODO
     parser.add_argument("--eda_recommendation_enabled", default=None)  # TODO
+    parser.add_argument("--eda_comparison_paths", type=str, default=None)
+    parser.add_argument("--eda_comparison_labels", type=str, default=None)
+    parser.add_argument("--eda_generate_report", default=None)
+    parser.add_argument("--eda_report_overwrite", default=None)
     # 模型训练
     parser.add_argument("--history_size", type=int, default=None)
     parser.add_argument("--predict_horizon", type=int, default=None)
@@ -334,22 +355,17 @@ def parse_args() -> AppConfig:
     parser.add_argument("--interval_alpha", type=float, default=None)
     # 本地监控
     parser.add_argument("--monitor_enabled", default=None)
-    parser.add_argument("--monitor_dir", type=str, default=None)
     parser.add_argument("--monitor_window", type=int, default=None)
     parser.add_argument("--monitor_actuals_path", type=str, default=None)
-    parser.add_argument("--monitor_actuals_setting", type=str, default=None)
+    parser.add_argument("--monitor_actuals_experiment_path", type=str, default=None)
     parser.add_argument("--monitor_actuals_forecast_ts", type=str, default=None)
     parser.add_argument("--monitor_actuals_value_col", type=str, default=None)
     parser.add_argument("--monitor_actuals_snapshot", default=None)
     parser.add_argument("--monitor_actuals_run_id", type=str, default=None)
     # 日志格式
     parser.add_argument("--log_format", type=str, default=None)
-    # 模型结果输出路径
-    parser.add_argument("--checkpoints_dir", type=str, default=None)
-    parser.add_argument("--train_results_dir", type=str, default=None)
-    parser.add_argument("--test_results_dir", type=str, default=None)
-    parser.add_argument("--forecast_result_dir", type=str, default=None)
-    parser.add_argument("--eda_output_dir", type=str, default=None)
+    # 统一结果根目录
+    parser.add_argument("--results_dir", type=str, default=None)
     args = parser.parse_args()
 
     if getattr(args, "config", None) is not None:
@@ -393,6 +409,7 @@ def main() -> None:
     logger.info(f"{'=' * 104}")
     logger.info("Loading config...")
     cfg = parse_args()
+    aggregation_result = resolve_config_aggregation(cfg)
     
     # Set seed
     logger.info("Set seed...")
@@ -409,7 +426,7 @@ def main() -> None:
     # Run model
     logger.info(f"{'=' * 104}")
     logger.info("Run model...")
-    result = ModelApp(cfg).run()
+    result = ModelApp(cfg, aggregation_result=aggregation_result).run()
     
     # model result
     logger.info("Run finished...")

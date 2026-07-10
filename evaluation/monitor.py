@@ -26,7 +26,7 @@ class ModelMonitor:
     _ACT_COLS = ["forecast_ts", "horizon_step", "y_true"]
     _METRICS_COLS = ["snapshot_ts", "run_id", "window", "mae", "rmse", "mape"]
 
-    def __init__(self, monitor_dir: str | Path, setting: str, window: int = 30):
+    def __init__(self, monitor_dir: str | Path, setting: str | Path | None, window: int = 30):
         """
         Args:
             monitor_dir: 监控文件根目录。
@@ -35,7 +35,7 @@ class ModelMonitor:
         """
         if window <= 0:
             raise ValueError("window must be > 0")
-        self.monitor_dir = Path(monitor_dir) / setting
+        self.monitor_dir = Path(monitor_dir) if setting is None else Path(monitor_dir) / setting
         self.window = window
         self._pred_path = self.monitor_dir / "predictions_log.csv"
         self._act_path = self.monitor_dir / "actuals_log.csv"
@@ -245,12 +245,17 @@ def run_monitor_actuals_backfill(cfg: AppConfig) -> dict[str, Any] | None:
     if cfg.monitor_actuals_path is None:
         return None
     # 监控数据保存路径
+    from app.results import build_experiment_path
+
     data_name = "demo_series" if cfg.data_path is None else Path(cfg.data_path).stem
-    setting = cfg.monitor_actuals_setting or f"{cfg.model_name}-{data_name}-{cfg.setting_strategy_label()}"
+    experiment_path = Path(cfg.monitor_actuals_experiment_path) if cfg.monitor_actuals_experiment_path else build_experiment_path(cfg)
+    if experiment_path.is_absolute() or ".." in experiment_path.parts:
+        raise ValueError("monitor_actuals_experiment_path must be a relative path under the data monitor directory")
     # 读取回填数据
     actuals_df = pd.read_csv(cfg.monitor_actuals_path)
     # 创建 Monitor
-    monitor = ModelMonitor(monitor_dir=cfg.monitor_dir, setting=setting, window=cfg.monitor_window)
+    monitor_root = Path(cfg.results_dir) / data_name / "monitor" / experiment_path
+    monitor = ModelMonitor(monitor_dir=monitor_root, setting=None, window=cfg.monitor_window)
     # 真实值回填
     monitor.fill_actuals_frame(
         actuals_df,

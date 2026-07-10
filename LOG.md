@@ -251,6 +251,46 @@
 - 清理项：删除 README 中已失效的"数据生成脚本""迁移说明"两节；压缩 LOG 验证记录冗余条目；移除 CLAUDE 常见陷阱中指向已删目录的行
 - 影响范围：`CLAUDE.md`、`AGENTS.md`、`README.md`、`LOG.md`
 
+### 2026-07-09 / Step 39
+
+- 新增 `utils/aggregate_aidc_loads.py` 预处理工具，将 `dataset/aidc_power_month/` 下 A、B 两个 5min 负荷文件聚合为 1hour(均值) 与 1day(最大值) 两个频率版本（各 2 个 `time,value` 文件，共 4 个），聚合前对缺失值做季节性填充（±4 周内同一(星期几, 时刻)观测均值，线性兜底）
+- 原因：新接入的 aidc 电力负荷数据为 5min 频率，需降频为框架可直接 `--data_path` + `--freq` 消费的 1h/1d 版本；缺失以"缺失整行"形式存在，需先正则化到完整 5min 网格暴露为 NaN 再填充
+- 影响范围：新增 `utils/aggregate_aidc_loads.py`；产出 `dataset/aidc_power_month/{A,B}_Loads_1{hour,day}_20251001_20260708.csv`（`dataset/` 本地、gitignore）
+- 备注：原始数据 **2026-03-31 整天（24h）在 A、B 中均完全缺失**，采用 ±4 周内同一(星期几, 时刻)观测均值填充以保留日内/周度负荷曲线形状（刻意避免被长期上升趋势带偏的全局均值；该数据 10 月 ~9500 → 7 月 ~15000）；线性插值仅作窗口无样本时的兜底。其余缺口为稀疏小缺口，同法填充
+
+### 2026-07-09 / Step 40
+
+- 新增 `utils/viz_aidc_loads.py` 可视化工具，对 `dataset/aidc_power_month/` 下 A/B 两路 × {5min,1hour,1day} 共 6 个负荷文件生成时序图：6 张单文件时序图（A/B 不混图）+ A/B 各 1 张三频率叠加图，共 8 张 PNG，中文标题/标签
+- 原因：需要快速查看各路负荷在不同频率下的趋势与形态
+- 影响范围：新增 `utils/viz_aidc_loads.py`；产物 `dataset/aidc_power_month/plots/*.png`（本地、gitignore）
+- 备注：遵循仓库绘图约定（Agg 后端、dpi=150、tight_layout、不用 bbox_inches）；中文经配置 CJK 字体（Heiti TC 等，本机已确认可用）渲染，无方块字；三频率叠加图采用 Okabe-Ito 色盲安全 3 色（已通过 dataviz 校验器 CVD/对比度，替换不达标的 tab: 绿橙对）；产物位置按用户显式要求放在 `dataset/` 下（偏离"结果归 saved_results/"规则）
+
+### 2026-07-10 / Step 41
+
+- 将 AIDC 专属聚合逻辑重构为 `data_provider/data_aggregate.py` 通用前置阶段，支持单目标频率聚合、显式缺失策略、派生 CSV 原子写入和 `.aggregate.json` 审计；A/B 日峰各生成 281 行，分别记录 476/475 个补齐时间点
+- 将 `utils/viz_aidc_loads.py` 的重复单序列绘图移除；通用 EDA 绘图收口到 `eda/visualization.py`，新增显式 `eda_comparison_paths/labels` 多序列比较图
+- 结果根由 `saved_results/` 迁移为 data-first 的 `results/{data_name}/{category}/{experiment_path}`；EDA 使用模型无关的完整可读参数路径，monitor actuals 改用 `monitor_actuals_experiment_path`
+- 通过一次性迁移工具 dry-run 后迁移 184 个历史类别目录、828 个历史文件，更新迁移后 JSON 路径，并仅在旧目录为空后移除 `saved_results/`；迁移完成并确认无需兼容其他旧环境后已删除该一次性工具
+- AIDC 44 个日频 shell 改为读取 5min 原始文件并显式生成 `dataset/aidc_power_month/derived/*_1day_*.csv`；全部脚本保留 `python -u run.py`，项目脚本统一改用 `--results_dir results`
+- 修复回测绘图部分 timestamp 缺失时被 groupby 静默丢行的问题：全空回退步长，部分缺失明确报错，完整时间戳才排序和聚合
+- 验证：主线 compileall、44 个 AIDC shell 语法、A/B 聚合及缓存复用、A 路 AR 完整 train/test/forecast、A/B EDA comparison、timestamp 三态检查和历史迁移均通过；按本次约定未新增自动化测试
+
+### 2026-07-10 / Step 42
+
+- 将 EDA shell 从模型运行职责中解耦，新增 `scripts/wind_univariate/run_eda.sh`、`scripts/aidc_power_month/A/run_eda.sh` 和 `scripts/aidc_power_month/B/run_eda.sh` 三个数据项目级入口
+- 66 个模型 shell 继续显式设置 `--do_eda false`，并移除不会生效的 `eda_period / eda_nlags / eda_run_preprocessed / eda_recommendation_enabled` 参数
+- AIDC A/B EDA 分别从各自 5min 原始文件生成或复用日峰派生数据，独立落盘到聚合语义正确的 EDA 路径，不配置 A/B comparison
+- 推荐工作流调整为“每份数据先独立运行一次 EDA，再按分析结论运行任意模型脚本”；不增加重复运行锁或 Python EDA-only 早退逻辑
+- 验证：69 个 shell 均通过 `bash -n`；静态核对 66 个模型脚本各含一次 `--do_eda false` 且不含其他 `--eda_*` 参数；三个 EDA shell 实跑成功，每套产出 12 个文件（含 8 张单序列图），A/B 均复用已有聚合派生数据且未生成 `series_comparison.png`；主线 `compileall` 与 `git diff --check` 通过
+
+### 2026-07-10 / Step 43
+
+- 新增 `eda/report_generator.py`：读取一次 EDA 运行的 `eda_summary.json`/`eda_recommendations.json`/`data_quality.json` 与聚合审计 JSON，自动生成中文叙述报告 `EDA_REPORT.md`（8 段结构，对齐手工范本）；复用 `eda_recommendations.json` 已算建议、不重算阈值，仅负责叙述解释（平稳性方向、ARCH/White/BP 折中、FFT≈N 伪周期、谐波、BDS/forecastability 警示）
+- 在 `ModelApp.eda` 接入生成器（`eda_generate_report` 默认开，报告失败不阻断 EDA），新增 `--eda_generate_report`/`--eda_report_overwrite` 两个 CLI 参数；`eda/__init__.py` 导出 `generate_eda_report`
+- 覆盖策略采用 marker 保护：手写报告（无 marker）默认保留跳过，自动报告每次刷新，`--eda_report_overwrite true` 强制覆盖
+- 新增 `eda/EDA_REPORT_GUIDE.md` 参考文档（生成原理、降级矩阵、数据字典、叙述决策表、风格规则、Agent 精修流程）
+- 验证：`compileall` 通过；A（手写保留）、B（新生成含聚合行）、wind（降级-无聚合）三类 `run_eda.sh` 实跑通过；降级探针（缺 recommendations/data_quality/summary）均优雅处理无报错；naive 模型 smoke（`do_eda=false`）无回归
+
 ## 待办任务
 
 | ID | 任务 | 优先级 | 完成条件 |

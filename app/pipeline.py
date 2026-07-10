@@ -5,13 +5,14 @@ import uuid
 from pathlib import Path
 import json
 from datetime import datetime
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 import numpy as np
 import pandas as pd
 
 from config import AppConfig
 from data_provider.data_loader import DataLoader
+from data_provider.data_aggregate import AggregationResult
 from data_provider.data_processor import DataProcessor
 from features.feature_engineering import FeatureEngineer
 from features.feature_scaling import FeatureScaler
@@ -33,6 +34,7 @@ from app.results import (
     forecast_timestamps,
     model_info_payload,
     prepare_run_artifacts,
+    resolve_model_params,
     write_json,
 )
 
@@ -96,8 +98,9 @@ class ModelApp:
     训练、回测、预测和结果汇总顺序执行。
     """
 
-    def __init__(self, cfg: AppConfig):
+    def __init__(self, cfg: AppConfig, aggregation_result: AggregationResult | None = None):
         self.cfg = cfg
+        self.aggregation_result = aggregation_result
         self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
         configure_logging(log_format=cfg.log_format, run_id=self.run_id)
         self.artifacts = prepare_run_artifacts(cfg)
@@ -145,16 +148,7 @@ class ModelApp:
         当前主要服务 ETS：平滑网格和 seasonal_period 可以通过通用 CLI 字段传入，
         最终仍以 model_params 的形式交给模型工厂。
         """
-        params = dict(self.cfg.model_params)
-        if self.cfg.model_name == "ets":
-            params.setdefault("tune_smoothing_params", self.cfg.ets_tune_smoothing_params)
-            params.setdefault("smoothing_grid_level", self.cfg.ets_smoothing_grid_level)
-            params.setdefault("smoothing_grid_trend", self.cfg.ets_smoothing_grid_trend)
-            params.setdefault("smoothing_grid_seasonal", self.cfg.ets_smoothing_grid_seasonal)
-            params.setdefault("validation_size", self.cfg.ets_validation_size)
-            if self.cfg.seasonal_period is not None:
-                params.setdefault("seasonal_periods", self.cfg.seasonal_period)
-        return params
+        return resolve_model_params(self.cfg)
 
     def run(self) -> dict[str, str]:
         # ------------------------------
@@ -172,13 +166,25 @@ class ModelApp:
         # out
         out: dict[str, str] = {
             "setting": self.artifacts.setting,
+            "experiment_path": str(self.artifacts.experiment_path),
+            "eda_path": str(self.artifacts.eda_path),
             "data_name": self.artifacts.data_name,
             "checkpoints_dir": str(self.artifacts.checkpoints_dir),
             "train_results_dir": str(self.artifacts.train_results_dir),
             "test_results_dir": str(self.artifacts.test_results_dir),
             "forecast_results_dir": str(self.artifacts.forecast_results_dir),
             "eda_dir": str(self.artifacts.eda_dir),
+            "monitor_dir": str(self.artifacts.monitor_dir),
+            "custom_monitor_dir": str(self.artifacts.custom_monitor_dir),
         }
+        if self.aggregation_result is not None:
+            out.update(
+                {
+                    "aggregation_data_path": str(self.aggregation_result.data_path),
+                    "aggregation_audit_path": str(self.aggregation_result.audit_path),
+                    "aggregation_regenerated": str(self.aggregation_result.regenerated).lower(),
+                }
+            )
         # ------------------------------
         # EDA（失败不阻断后续阶段）
         # ------------------------------
@@ -196,29 +202,48 @@ class ModelApp:
         # ------------------------------
         # 准备目标序列（失败则中断，无法继续）
         # ------------------------------
-        logger.info(f"{'=' * 100}")
-        logger.info(f"Running _prepare_target_series...")
-        logger.info(f"{'=' * 100}")
-        prepared = self._prepare_target_series(df)
-        logger.info(f"Prepare info:\n {prepared.metadata}")
-        out.update(prepared.metadata)
-        if self.cfg.do_eda and self.cfg.eda_run_preprocessed and prepared.processor.enabled:
-            try:
-                post_dir = self.artifacts.eda_dir / "postprocessed"
-                post_info = run_eda(
-                    df=prepared.df,
-                    time_col=self.cfg.time_col,
-                    target_col=self.cfg.target_col,
-                    freq=self.cfg.freq,
-                    output_dir=str(post_dir),
-                    period=self.cfg.eda_period,
-                    nlags=self.cfg.eda_nlags,
-                    recommendation_enabled=self.cfg.eda_recommendation_enabled,
-                )
-                out.update({f"postprocessed_{key}": value for key, value in post_info.items()})
-            except Exception as exc:
-                logger.error(f"[EDA:postprocessed] failed: {exc}")
-                out["postprocessed_eda_error"] = str(exc)
+        # EDA-only 运行：仅当需要预处理后 EDA 时才执行 prepare，否则跳过整条建模链路。
+        eda_only = self.cfg.is_eda_only()
+        if (not eda_only) or self.cfg.eda_run_preprocessed:
+            logger.info(f"{'=' * 100}")
+            logger.info(f"Running _prepare_target_series...")
+            logger.info(f"{'=' * 100}")
+            prepared = self._prepare_target_series(df)
+            logger.info(f"Prepare info:\n {prepared.metadata}")
+            out.update(prepared.metadata)
+            if self.cfg.do_eda and self.cfg.eda_run_preprocessed and prepared.processor.enabled:
+                try:
+                    post_dir = self.artifacts.eda_dir / "postprocessed"
+                    post_info = run_eda(
+                        df=prepared.df,
+                        time_col=self.cfg.time_col,
+                        target_col=self.cfg.target_col,
+                        freq=self.cfg.freq,
+                        output_dir=str(post_dir),
+                        period=self.cfg.eda_period,
+                        nlags=self.cfg.eda_nlags,
+                        recommendation_enabled=self.cfg.eda_recommendation_enabled,
+                    )
+                    out.update({f"postprocessed_{key}": value for key, value in post_info.items()})
+                except Exception as exc:
+                    logger.error(f"[EDA:postprocessed] failed: {exc}")
+                    out["postprocessed_eda_error"] = str(exc)
+        if eda_only:
+            logger.info("EDA-only run: skipping auto_select/train/test/forecast/feature stages.")
+            # EDA-only 不产出模型实验目录，从结果中移除指向这些未创建目录的路径键。
+            for key in (
+                "setting",
+                "experiment_path",
+                "checkpoints_dir",
+                "train_results_dir",
+                "test_results_dir",
+                "forecast_results_dir",
+                "monitor_dir",
+                "custom_monitor_dir",
+            ):
+                out.pop(key, None)
+            out["eda_only"] = "true"
+            return self._write_run_summary(out, summary_dir=self.artifacts.eda_dir)
         # ------------------------------
         # 自动模型选择（可选，失败不阻断后续）
         # ------------------------------
@@ -310,7 +335,12 @@ class ModelApp:
         df = self.loader.load_data()
         if self.loader.quality_report is not None:
             try:
-                qr_path = self.artifacts.train_results_dir / "data_quality.json"
+                quality_dir = (
+                    self.artifacts.eda_dir
+                    if self.cfg.is_eda_only()
+                    else self.artifacts.train_results_dir
+                )
+                qr_path = quality_dir / "data_quality.json"
                 write_json(qr_path, self.loader.quality_report.to_dict())
             except Exception:
                 pass
@@ -453,10 +483,15 @@ class ModelApp:
             target_shift_columns=target_shift_cols,
         )
 
-    def _write_run_summary(self, out: dict[str, str]) -> dict[str, str]:
-        """写出本次运行的总索引，方便从 forecast 目录反查各阶段产物。"""
-        summary_path = self.artifacts.forecast_results_dir / "run_summary.json"
-        summary_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    def _write_run_summary(self, out: dict[str, str], summary_dir: Path | None = None) -> dict[str, str]:
+        """写出本次运行的总索引，方便从产物目录反查各阶段结果。
+
+        summary_dir 默认指向 forecast_results_dir；EDA-only 传入 eda_dir，避免触碰模型实验目录。
+        """
+        summary_path = (summary_dir or self.artifacts.forecast_results_dir) / "run_summary.json"
+        payload = dict(out)
+        payload["config"] = asdict(self.cfg)
+        summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         result = dict(out)
         result["summary_path"] = str(summary_path)
         return result
@@ -477,8 +512,26 @@ class ModelApp:
             period=self.cfg.eda_period,
             nlags=self.cfg.eda_nlags,
             recommendation_enabled=self.cfg.eda_recommendation_enabled,
+            comparison_paths=self.cfg.eda_comparison_paths,
+            comparison_labels=self.cfg.eda_comparison_labels,
+            current_label=self.artifacts.data_name,
         )
-        
+        if self.cfg.eda_generate_report:
+            try:
+                from eda.report_generator import generate_eda_report
+
+                report_path = generate_eda_report(
+                    output_dir=str(self.artifacts.eda_dir),
+                    cfg=self.cfg,
+                    aggregation_result=self.aggregation_result,
+                    data_name=self.artifacts.data_name,
+                    force=self.cfg.eda_report_overwrite,
+                )
+                if report_path:
+                    result["eda_report_path"] = report_path
+            except Exception as exc:
+                logger.error(f"[EDA:report] failed: {exc}")
+                result["eda_report_error"] = str(exc)
         return result
     
     def train(self, prepared: PrepareResult) -> dict[str, str]:
@@ -722,8 +775,8 @@ class ModelApp:
         }
         if self.cfg.monitor_enabled:
             monitor = ModelMonitor(
-                monitor_dir=self.cfg.monitor_dir,
-                setting=self.artifacts.setting,
+                monitor_dir=self.artifacts.monitor_dir,
+                setting=None,
                 window=self.cfg.monitor_window,
             )
             monitor.log_forecast(
