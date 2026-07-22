@@ -31,6 +31,7 @@ class Tester:
         verbose: bool = False,
         progress_every: int = 10,
         n_jobs: int = 1,
+        processor_builder: object = None,
     ):
         self.model_name = model_name
         self.model_params = model_params or {}
@@ -47,6 +48,7 @@ class Tester:
         self.verbose = verbose
         self.progress_every = progress_every
         self.n_jobs = n_jobs
+        self.processor_builder = processor_builder
         self.factory = ModelFactory()
 
     def evaluate(self, df: pd.DataFrame) -> BacktestResult:
@@ -67,4 +69,5 @@ class Tester:
             verbose=self.verbose,
             progress_every=self.progress_every,
             n_jobs=self.n_jobs,
+            processor_builder=self.processor_builder,
         )

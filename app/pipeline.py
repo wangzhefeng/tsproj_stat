@@ -294,7 +294,7 @@ class ModelApp:
         logger.info(f"{'=' * 100}")
         try:
             with timed_stage("test"):
-                testing_info = self.test(prepared.df)
+                testing_info = self.test(df, self._new_processor)
             logger.info(f"testing info:\n {testing_info}")
             out.update(testing_info)
         except Exception as exc:
@@ -441,6 +441,22 @@ class ModelApp:
             processor=processor,
             model_input_feature_columns=model_input_feature_columns,
             metadata=metadata,
+        )
+
+    def _new_processor(self):
+        """返回与 _prepare_target_series 同配但未拟合的 DataProcessor，供回测按窗口重建。"""
+        cfg = self.cfg
+        return DataProcessor(
+            detrend_method=cfg.detrend_method,
+            denoise_enabled=cfg.denoise_enabled,
+            denoise_method=cfg.denoise_method,
+            denoise_window=cfg.denoise_window,
+            seasonal_period=cfg.seasonal_period,
+            decomposition_method=cfg.decomposition_method,
+            decomposition_target=cfg.decomposition_target,
+            decomposition_model=cfg.decomposition_model,
+            acf_max_lag=cfg.acf_max_lag,
+            seasonality_strength_threshold=cfg.seasonality_strength_threshold,
         )
 
     def _build_model_input_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
@@ -616,7 +632,7 @@ class ModelApp:
             "train_summary_path": train_summary_path,
         }
 
-    def test(self, df: pd.DataFrame) -> dict[str, str]:
+    def test(self, df: pd.DataFrame, processor_builder=None) -> dict[str, str]:
         """执行 rolling backtest，并保存窗口级预测、指标汇总和诊断图。"""
         if not self.cfg.do_test:
             return {}
@@ -637,6 +653,7 @@ class ModelApp:
             verbose=self.cfg.backtest_verbose,
             progress_every=self.cfg.backtest_progress_every,
             n_jobs=self.cfg.backtest_n_jobs,
+            processor_builder=processor_builder,
         )
         result = tester.evaluate(df[[self.cfg.time_col, *self.model_history_input_cols]].copy())
         # 回测产物分为窗口指标、逐点预测、汇总指标和图形，便于后续误差分析。

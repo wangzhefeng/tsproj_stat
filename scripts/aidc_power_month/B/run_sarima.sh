@@ -24,15 +24,15 @@ python -u run.py \
   --aggregation_fill_weeks 4 \
   --aggregation_output_path dataset/aidc_power_month/derived/B_Loads_1day_20251001_20260708.csv \
   --model_name "$model_name" \
-  --model_params '{"order":[1,1,1],"seasonal_order":[1,1,1,7],"enforce_stationarity":false,"enforce_invertibility":false,"simple_differencing":true,"fit_kwargs":{"disp":false,"maxiter":20}}' \
+  --model_params '{"order":[1,1,1],"seasonal_order":[1,1,1,7],"enforce_stationarity":false,"enforce_invertibility":false,"fit_kwargs":{"disp":false,"maxiter":20}}' \
   --forecast_strategy direct \
   --do_train true \
   --do_test true \
   --do_forecast true \
   --do_eda false \
-  --history_size 120 \
+  --history_size 150 \
   --predict_horizon 30 \
-  --backtest_train_size 120 \
+  --backtest_train_size 150 \
   --backtest_horizon 30 \
   --backtest_step 30 \
   --backtest_window_mode sliding \

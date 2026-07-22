@@ -2,18 +2,18 @@
 
 set -euo pipefail
 
-# AIDC 负荷（B路，日峰）单变量脚本：从 dataset/aidc_power_month/B_Loads_5min_20251001_20260708.csv 聚合生成 derived/B_Loads_1day_20251001_20260708.csv，time 为时间列，value 为目标列。
-# seasonal_naive 使用日频周周期，作为低成本季节基线。
+# AIDC 负荷（A路，日峰）单变量脚本：从 dataset/aidc_power_month/A_Loads_5min_20251001_20260708.csv 聚合生成 derived/A_Loads_1day_20251001_20260708.csv，time 为时间列，value 为目标列。
+# SARIMA 季节差分关闭(D=0)：seasonal_order=[1,0,1,7]，对应 EDA 的 D=0 建议；保留周季节 AR/MA 项但不做季节差分，避免弱季节性下过度差分。
 cd "$(dirname "$0")/../../.."
 
-model_name=seasonal_naive
-export LOG_NAME="$model_name"
+model_name=sarima
+export LOG_NAME="sarima_D0"
 
 # 运行完整主流程：训练、rolling backtest 和未来预测。
 python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \
-  --data_path dataset/aidc_power_month/B_Loads_5min_20251001_20260708.csv \
+  --data_path dataset/aidc_power_month/A_Loads_5min_20251001_20260708.csv \
   --time_col time \
   --target_col value \
   --freq D \
@@ -22,9 +22,9 @@ python -u run.py \
   --aggregation_method max \
   --aggregation_fill_method seasonal_slot \
   --aggregation_fill_weeks 4 \
-  --aggregation_output_path dataset/aidc_power_month/derived/B_Loads_1day_20251001_20260708.csv \
+  --aggregation_output_path dataset/aidc_power_month/derived/A_Loads_1day_20251001_20260708.csv \
   --model_name "$model_name" \
-  --model_params '{"season_length":7}' \
+  --model_params '{"order":[1,1,1],"seasonal_order":[1,0,1,7],"enforce_stationarity":false,"enforce_invertibility":false,"fit_kwargs":{"disp":false,"maxiter":20}}' \
   --forecast_strategy direct \
   --do_train true \
   --do_test true \
@@ -36,7 +36,7 @@ python -u run.py \
   --backtest_horizon 30 \
   --backtest_step 30 \
   --backtest_window_mode sliding \
-  --backtest_verbose false \
+  --backtest_verbose true \
   --backtest_progress_every 10 \
   --backtest_n_jobs 1 \
   --feature_mode analysis_snapshot \

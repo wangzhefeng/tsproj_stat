@@ -214,3 +214,6 @@ logs/
 .worktrees/
 .mplconfig/
 tests/
+
+# macOS
+.DS_Store

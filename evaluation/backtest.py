@@ -42,6 +42,7 @@ def rolling_backtest(
     verbose: bool = False,
     progress_every: int = 10,
     n_jobs: int = 1,
+    processor_builder: Callable[[], object] | None = None,
 ) -> BacktestResult:
     """执行滚动回测。
 
@@ -102,16 +103,27 @@ def rolling_backtest(
             test_x_future = test_slice[future_cols].astype(float).reset_index(drop=True)
         test_time = test_slice[time_col] if time_col is not None and time_col in test_slice.columns else None
 
+        proc = processor_builder() if processor_builder is not None else None
+        use_proc = proc is not None and getattr(proc, "enabled", False)
         try:
+            if use_proc:
+                train_y_model = proc.fit_transform(train_y)
+                if train_x_hist is not None and target_col in train_x_hist.columns:
+                    train_x_hist = train_x_hist.copy()
+                    train_x_hist[target_col] = train_y_model.values
+            else:
+                train_y_model = train_y
             # 每个回测窗口都通过统一推理入口运行，保证 test 与 forecast 策略一致。
             pred = run_point_inference(
                 model_builder=model_builder,
-                history=train_y,
+                history=train_y_model,
                 horizon=horizon,
                 forecast_strategy=strategy,
                 X_hist=train_x_hist,
                 X_future=test_x_future,
             ).astype(float).reset_index(drop=True)
+            if use_proc:
+                pred = proc.inverse_forecast(pred).astype(float).reset_index(drop=True)
         except Exception as exc:
             # 部分模型在个别窗口可能拟合失败；记录失败窗口，避免一个窗口拖垮整次评估。
             return {

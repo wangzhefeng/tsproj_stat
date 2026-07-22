@@ -30,9 +30,9 @@ python -u run.py \
   --do_test true \
   --do_forecast true \
   --do_eda false \
-  --history_size 120 \
+  --history_size 150 \
   --predict_horizon 30 \
-  --backtest_train_size 120 \
+  --backtest_train_size 150 \
   --backtest_horizon 30 \
   --backtest_step 30 \
   --backtest_window_mode sliding \

@@ -32,6 +32,6 @@ python -u run.py \
   --eda_nlags 24 \
   --eda_run_preprocessed false \
   --eda_recommendation_enabled true \
-  --history_size 120 \
+  --history_size 150 \
   --predict_horizon 30 \
   --results_dir results

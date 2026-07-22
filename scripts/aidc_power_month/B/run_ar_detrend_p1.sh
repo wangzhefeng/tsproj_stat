@@ -3,11 +3,11 @@
 set -euo pipefail
 
 # AIDC 负荷（B路，日峰）单变量脚本：从 dataset/aidc_power_month/B_Loads_5min_20251001_20260708.csv 聚合生成 derived/B_Loads_1day_20251001_20260708.csv，time 为时间列，value 为目标列。
-# seasonal_naive 使用日频周周期，作为低成本季节基线。
+# 分支B 对照实验：线性去趋势(detrend_method=linear) + 平稳残差 AR(1)。与"差分 ARIMA"分支A对照，回答 EDA 第8节的核心问题（差分 vs 线性去趋势哪个更稳），不同时叠加两种趋势处理。
 cd "$(dirname "$0")/../../.."
 
-model_name=seasonal_naive
-export LOG_NAME="$model_name"
+model_name=ar
+export LOG_NAME="ar_detrend_p1"
 
 # 运行完整主流程：训练、rolling backtest 和未来预测。
 python -u run.py \
@@ -24,7 +24,7 @@ python -u run.py \
   --aggregation_fill_weeks 4 \
   --aggregation_output_path dataset/aidc_power_month/derived/B_Loads_1day_20251001_20260708.csv \
   --model_name "$model_name" \
-  --model_params '{"season_length":7}' \
+  --model_params '{"p":1}' \
   --forecast_strategy direct \
   --do_train true \
   --do_test true \
@@ -47,7 +47,7 @@ python -u run.py \
   --denoise_enabled false \
   --denoise_method none \
   --denoise_window 3 \
-  --detrend_method none \
+  --detrend_method linear \
   --seasonal_period 7 \
   --decomposition_method none \
   --decomposition_target trend_resid \

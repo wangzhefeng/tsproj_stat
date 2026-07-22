@@ -3,11 +3,11 @@
 set -euo pipefail
 
 # AIDC 负荷（B路，日峰）单变量脚本：从 dataset/aidc_power_month/B_Loads_5min_20251001_20260708.csv 聚合生成 derived/B_Loads_1day_20251001_20260708.csv，time 为时间列，value 为目标列。
-# seasonal_naive 使用日频周周期，作为低成本季节基线。
+# Theta period=1：纯趋势无季节，契合周季节性更弱（强度0.069）的 B 路结构；Theta 方法的甜区即近线性趋势。
 cd "$(dirname "$0")/../../.."
 
-model_name=seasonal_naive
-export LOG_NAME="$model_name"
+model_name=theta
+export LOG_NAME="theta_p1"
 
 # 运行完整主流程：训练、rolling backtest 和未来预测。
 python -u run.py \
@@ -24,7 +24,7 @@ python -u run.py \
   --aggregation_fill_weeks 4 \
   --aggregation_output_path dataset/aidc_power_month/derived/B_Loads_1day_20251001_20260708.csv \
   --model_name "$model_name" \
-  --model_params '{"season_length":7}' \
+  --model_params '{"period":1}' \
   --forecast_strategy direct \
   --do_train true \
   --do_test true \
