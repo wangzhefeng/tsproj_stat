@@ -336,3 +336,4 @@
 - 2026-05-05：多源输入 contract 已调整为 `endog_cols` 不包含 `target_col`；应用层内部仍会把 `target_col` 放在模型历史输入第一列，保持单目标 `target_col -> yhat` 产物契约。
 - 2026-05-05：EDA recommendations 和 monitor 当前采用本地文件版，不引入数据库或服务端组件；`features/` 仍默认只输出分析快照，只有 `feature_mode=model_input` 时才进入模型输入链路。
 - 2026-05-06：monitor actuals 回填入口已收口到 `evaluation.monitor.run_monitor_actuals_backfill()`；`run.py` 不再保留独立 helper，只负责解析配置并调用统一 monitor 入口。
+- 2026-07-29：AIDC A/B 路 5min 原始数据已更新并重命名为 `*_20251001_20260728.csv`；按既有参数（5min→D，seasonal_slot 填充 4 周）生成日频派生数据后经人工调整，`dataset/aidc_power_month/derived/` 当前仅保留 `A_Loads_1day_mean_20251001_20260728.csv` 与 `B_Loads_1day_mean_20251001_20260728.csv`（各 301 行，2025-10-01 → 2026-07-28，mean 聚合）；max 日峰版本、旧 `20260708` 派生文件及 `.aggregate.json` 审计文件均已清除（审计缺失时重跑同路径聚合会直接重算覆盖，属预期行为）。注意：`scripts/aidc_power_month/**` 仍引用旧的 `20260708` max 文件名，跑模型脚本前需先更新为 mean 新文件。
