@@ -29,4 +29,4 @@ dev = [
 [tool.pytest.ini_options]
 python_files = ["tests/test_*.py"]
 pythonpath = ["."]
-addopts = "-q"
+addopts = "-q -p no:cacheprovider"

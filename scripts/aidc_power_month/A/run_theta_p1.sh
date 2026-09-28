@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# AIDC 负荷（A路，日峰）单变量脚本：从 dataset/aidc_power_month/A_Loads_5min_20251001_20260708.csv 聚合生成 derived/A_Loads_1day_20251001_20260708.csv，time 为时间列，value 为目标列。
+# AIDC 负荷（A路，日均）单变量脚本：从 dataset/aidc_power_month/A_Loads_5min_20251001_20260728.csv 聚合生成 derived/A_Loads_1day_mean_20251001_20260728.csv，time 为时间列，value 为目标列。
 # Theta period=1：纯趋势无季节，契合周季节性弱（强度0.096）的结构；Theta 方法的甜区即近线性趋势。
 cd "$(dirname "$0")/../../.."
 
@@ -10,19 +10,19 @@ model_name=theta
 export LOG_NAME="theta_p1"
 
 # 运行完整主流程：训练、rolling backtest 和未来预测。
-python -u run.py \
+.venv/bin/python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \
-  --data_path dataset/aidc_power_month/A_Loads_5min_20251001_20260708.csv \
+  --data_path dataset/aidc_power_month/A_Loads_5min_20251001_20260728.csv \
   --time_col time \
   --target_col value \
   --freq D \
   --aggregation_enabled true \
   --aggregation_source_freq 5min \
-  --aggregation_method max \
+  --aggregation_method mean \
   --aggregation_fill_method seasonal_slot \
   --aggregation_fill_weeks 4 \
-  --aggregation_output_path dataset/aidc_power_month/derived/A_Loads_1day_20251001_20260708.csv \
+  --aggregation_output_path dataset/aidc_power_month/derived/A_Loads_1day_mean_20251001_20260728.csv \
   --model_name "$model_name" \
   --model_params '{"period":1}' \
   --forecast_strategy direct \

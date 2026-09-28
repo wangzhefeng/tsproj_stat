@@ -2,25 +2,25 @@
 
 set -euo pipefail
 
-# AIDC A 路日峰数据项目级 EDA：先生成或复用日频派生数据，再独立执行 EDA。
+# AIDC A 路日均数据项目级 EDA：先生成或复用日频派生数据，再独立执行 EDA。
 cd "$(dirname "$0")/../../.."
 
 model_name=naive
 export LOG_NAME=eda_A_Loads_1day
 
-python -u run.py \
+.venv/bin/python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \
-  --data_path dataset/aidc_power_month/A_Loads_5min_20251001_20260708.csv \
+  --data_path dataset/aidc_power_month/A_Loads_5min_20251001_20260728.csv \
   --time_col time \
   --target_col value \
   --freq D \
   --aggregation_enabled true \
   --aggregation_source_freq 5min \
-  --aggregation_method max \
+  --aggregation_method mean \
   --aggregation_fill_method seasonal_slot \
   --aggregation_fill_weeks 4 \
-  --aggregation_output_path dataset/aidc_power_month/derived/A_Loads_1day_20251001_20260708.csv \
+  --aggregation_output_path dataset/aidc_power_month/derived/A_Loads_1day_mean_20251001_20260728.csv \
   --model_name "$model_name" \
   --model_params '{}' \
   --forecast_strategy direct \

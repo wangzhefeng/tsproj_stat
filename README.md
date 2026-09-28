@@ -31,7 +31,8 @@ uv sync --extra dev
 ```
 
 当前项目统一使用根目录 `.venv` 的 `uv` 虚拟环境。新增或更新依赖时，统一使用 `uv add`，不要直接用 `pip install` 维护项目依赖。
-为避免受限环境下的 `matplotlib` 缓存告警，项目默认使用根目录 `.mplconfig/` 作为本地 `MPLCONFIGDIR`。
+运行、测试与脚本一律直接调用 `.venv/bin/python`，不经过 `uv run`，也不设置 `UV_CACHE_DIR`（Hermes/MC 会话需加 `env -u PYTHONPATH` 前缀，普通 shell 可省略）。
+`matplotlib` 默认使用用户级缓存目录（`~/.matplotlib`）；仅在该目录不可写时回退到系统临时目录，仓库根目录不落盘 `.mplconfig`、`.pytest_cache`、`.uv_cache` 等缓存目录。
 
 常用依赖管理命令：
 
@@ -46,13 +47,13 @@ uv sync --extra dev
 完整流程（训练 + 回测 + 预测）：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py --model_name arima --forecast_strategy direct --do_train true --do_test true --do_forecast true
+.venv/bin/python run.py --model_name arima --forecast_strategy direct --do_train true --do_test true --do_forecast true
 ```
 
 仅执行 EDA：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false
+.venv/bin/python run.py --do_eda true --do_train false --do_test false --do_forecast false
 ```
 
 当前已接入的数据项目应优先使用独立 EDA 脚本：
@@ -70,7 +71,7 @@ bash scripts/aidc_power_month/B/run_eda.sh
 执行 EDA 并输出建模建议：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py \
+.venv/bin/python run.py \
   --do_eda true --do_train false --do_test false --do_forecast false \
   --eda_period 7 --eda_nlags 24 --eda_recommendation_enabled true
 ```
@@ -103,13 +104,13 @@ python -u run.py \
 启用预处理（可选去噪 + 去趋势 + 逆变换）：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py --denoise_method moving_median --denoise_window 5 --detrend_method linear
+.venv/bin/python run.py --denoise_method moving_median --denoise_window 5 --detrend_method linear
 ```
 
 启用 ETS 调参与季节指数平滑：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py \
+.venv/bin/python run.py \
   --model_name ets \
   --model_params '{"trend":"add","seasonal":"add"}' \
   --seasonal_period 5 \
@@ -124,7 +125,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 启用 ARIMA 家族分解预处理（自动周期推断 + 趋势/季节重组）：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py \
+.venv/bin/python run.py \
   --model_name ar \
   --model_params '{"p":2}' \
   --decomposition_method seasonal_decompose \
@@ -135,7 +136,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 启用预处理后 EDA 对比：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py \
+.venv/bin/python run.py \
   --do_eda true --do_train false --do_test false --do_forecast false \
   --decomposition_method seasonal_decompose \
   --decomposition_target resid_only \
@@ -146,7 +147,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 启用并行回测和本地监控：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py \
+.venv/bin/python run.py \
   --model_name naive \
   --do_train true --do_test true --do_forecast true \
   --backtest_n_jobs 2 \
@@ -156,7 +157,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 回填监控实际值并生成指标快照：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py \
+.venv/bin/python run.py \
   --monitor_actuals_path /abs/path/actuals.csv \
   --monitor_actuals_experiment_path naive-direct/params-default/... \
   --monitor_actuals_value_col actual \
@@ -166,7 +167,7 @@ UV_CACHE_DIR=.uv_cache uv run python run.py \
 多源输入预测（历史内生 + 历史外生 + 独立未来外生）：
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run python run.py \
+.venv/bin/python run.py \
   --data_path /abs/path/history.csv \
   --time_col ds \
   --target_col y \
@@ -197,6 +198,8 @@ results/{data_name}/
 ```
 
 `experiment_path` 依次编码模型/策略、模型参数、history/predict、回测窗口、特征输入、预处理和预测区间。EDA 不包含模型名，按频率、周期、nlags、建议开关和聚合语义独立分组。`run_summary.json` 保存完整配置和所有产物路径。
+
+`checkpoints/` 下的 `model.pkl`/`model_meta.json` 是 train 阶段的归档产物（训练快照与依赖版本，供可追溯与离线检查）；forecast/test 的多步推理按策略在推理时逐 step fit，不消费 checkpoint。`--do_train false --do_forecast true` 表示在 forecast 原点即时训练，输出与同数据 train+forecast 一致。forecast 原点显式定义为数据末尾（history 窗口 = 尾部 `history_size` 行），历史评估由 `do_test` rolling backtest 承担。
 
 ## 当前主线说明
 
@@ -304,19 +307,19 @@ results/{data_name}/
 ## 验证
 
 ```bash
-UV_CACHE_DIR=.uv_cache uv run pytest -q
-UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5
-UV_CACHE_DIR=.uv_cache uv run python run.py --model_name ets --model_params '{"trend":"add","seasonal":"add"}' --seasonal_period 5 --denoise_method moving_median --denoise_window 3 --decomposition_method seasonal_decompose --decomposition_target trend_resid --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
-UV_CACHE_DIR=.uv_cache uv run python run.py --model_name ar --model_params '{"p":2}' --decomposition_method seasonal_decompose --decomposition_target resid_only --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
-UV_CACHE_DIR=.uv_cache uv run python run.py --model_name seasonal_naive --model_params '{"season_length":7}' --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
-UV_CACHE_DIR=.uv_cache uv run python run.py --model_name croston --model_params '{"alpha":0.2}' --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
-UV_CACHE_DIR=.uv_cache uv run python run.py --model_name auto_theta --model_params '{"season_length":1}' --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
-UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false
-UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false --eda_period 7 --eda_nlags 24 --eda_recommendation_enabled true
+.venv/bin/python -m pytest -q
+.venv/bin/python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5
+.venv/bin/python run.py --model_name ets --model_params '{"trend":"add","seasonal":"add"}' --seasonal_period 5 --denoise_method moving_median --denoise_window 3 --decomposition_method seasonal_decompose --decomposition_target trend_resid --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
+.venv/bin/python run.py --model_name ar --model_params '{"p":2}' --decomposition_method seasonal_decompose --decomposition_target resid_only --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
+.venv/bin/python run.py --model_name seasonal_naive --model_params '{"season_length":7}' --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
+.venv/bin/python run.py --model_name croston --model_params '{"alpha":0.2}' --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
+.venv/bin/python run.py --model_name auto_theta --model_params '{"season_length":1}' --do_train false --do_test false --do_forecast true --history_size 60 --predict_horizon 4
+.venv/bin/python run.py --do_eda true --do_train false --do_test false --do_forecast false
+.venv/bin/python run.py --do_eda true --do_train false --do_test false --do_forecast false --eda_period 7 --eda_nlags 24 --eda_recommendation_enabled true
 bash scripts/wind_univariate/run_eda.sh
 bash scripts/aidc_power_month/A/run_eda.sh
 bash scripts/aidc_power_month/B/run_eda.sh
-UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5 --backtest_n_jobs 2 --monitor_enabled true
-UV_CACHE_DIR=.uv_cache uv run python run.py --monitor_actuals_path /abs/path/actuals.csv --monitor_actuals_experiment_path naive-direct/params-default/... --monitor_actuals_value_col actual --monitor_actuals_run_id manual-backfill-1
-UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols load --exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4
+.venv/bin/python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5 --backtest_n_jobs 2 --monitor_enabled true
+.venv/bin/python run.py --monitor_actuals_path /abs/path/actuals.csv --monitor_actuals_experiment_path naive-direct/params-default/... --monitor_actuals_value_col actual --monitor_actuals_run_id manual-backfill-1
+.venv/bin/python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols load --exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4
 ```

@@ -10,8 +10,8 @@ model_name=seasonal_naive
 export LOG_NAME="$model_name"
 
 # 运行完整主流程：训练、rolling backtest 和未来预测。
-# 脚本入口按 wind_univariate 约定保持 python -u run.py。
-python -u run.py \
+# 脚本入口统一为 .venv/bin/python -u run.py（项目根 .venv 直调）。
+.venv/bin/python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \
   --data_path dataset/wind_dataset.csv \

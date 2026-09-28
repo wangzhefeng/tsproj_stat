@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# AIDC 负荷（A路，日峰）单变量脚本：从 dataset/aidc_power_month/A_Loads_5min_20251001_20260708.csv 聚合生成 derived/A_Loads_1day_20251001_20260708.csv，time 为时间列，value 为目标列。
+# AIDC 负荷（A路，日均）单变量脚本：从 dataset/aidc_power_month/A_Loads_5min_20251001_20260728.csv 聚合生成 derived/A_Loads_1day_mean_20251001_20260728.csv，time 为时间列，value 为目标列。
 # dynamic_theta 属于 optional StatsForecast 模型，显式传入日频和周季节长度。
 cd "$(dirname "$0")/../../.."
 
@@ -10,19 +10,19 @@ model_name=dynamic_theta
 export LOG_NAME="$model_name"
 
 # 运行完整主流程：训练、rolling backtest 和未来预测。
-python -u run.py \
+.venv/bin/python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \
-  --data_path dataset/aidc_power_month/A_Loads_5min_20251001_20260708.csv \
+  --data_path dataset/aidc_power_month/A_Loads_5min_20251001_20260728.csv \
   --time_col time \
   --target_col value \
   --freq D \
   --aggregation_enabled true \
   --aggregation_source_freq 5min \
-  --aggregation_method max \
+  --aggregation_method mean \
   --aggregation_fill_method seasonal_slot \
   --aggregation_fill_weeks 4 \
-  --aggregation_output_path dataset/aidc_power_month/derived/A_Loads_1day_20251001_20260708.csv \
+  --aggregation_output_path dataset/aidc_power_month/derived/A_Loads_1day_mean_20251001_20260728.csv \
   --model_name "$model_name" \
   --model_params '{"season_length":7,"freq":"D"}' \
   --forecast_strategy direct \

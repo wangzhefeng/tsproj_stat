@@ -18,11 +18,9 @@ set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"        # scripts/aidc_power_month
 ROOT="$(cd "$DIR/../.." && pwd)"            # 项目根
 
-# 自动启用项目 venv（若存在），使子脚本里的 bare `python` 指向 .venv
-if [[ -x "$ROOT/.venv/bin/python" ]]; then
-  export PATH="$ROOT/.venv/bin:$PATH"
-else
-  echo "⚠️  未找到 $ROOT/.venv/bin/python —— 请先 `uv sync`，否则子脚本的 python 调用会失败。" >&2
+# 子脚本统一使用 .venv/bin/python 直调；此处仅做存在性预检。
+if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
+  echo "⚠️  未找到 $ROOT/.venv/bin/python —— 请先 `uv sync --extra dev`。" >&2
 fi
 
 TS="$(date +%Y%m%d_%H%M%S)"

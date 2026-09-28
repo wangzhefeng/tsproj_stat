@@ -8,7 +8,7 @@ cd "$(dirname "$0")/../.."
 model_name=naive
 export LOG_NAME=eda_wind_dataset
 
-python -u run.py \
+.venv/bin/python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \
   --data_path dataset/wind_dataset.csv \

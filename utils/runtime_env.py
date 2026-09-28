@@ -1,21 +1,29 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 
-def ensure_mpl_config_dir(base_dir: str | Path | None = None) -> str:
-    """确保 matplotlib 使用项目内缓存目录。
+def ensure_mpl_config_dir() -> str:
+    """确保 matplotlib 有可写的配置/缓存目录。
 
-    受限环境下默认用户目录可能不可写；在入口启动早期设置 MPLCONFIGDIR，
-    可以避免 EDA/可视化阶段产生无关缓存告警。
+    默认使用 matplotlib 自己的用户级目录（~/.matplotlib）；仅当该目录不可写时
+    （受限环境，见 LOG.md P07）回退到系统临时目录。不在仓库根目录落盘任何缓存。
     """
     existing = os.environ.get("MPLCONFIGDIR")
     if existing:
         return existing
 
-    root = Path(base_dir) if base_dir is not None else Path.cwd()
-    target = (root / ".mplconfig").resolve()
-    target.mkdir(parents=True, exist_ok=True)
-    os.environ["MPLCONFIGDIR"] = str(target)
-    return str(target)
+    default_dir = Path.home() / ".matplotlib"
+    try:
+        default_dir.mkdir(parents=True, exist_ok=True)
+        probe = default_dir / ".write_probe"
+        probe.touch()
+        probe.unlink()
+        # 默认目录可写，无需覆盖 MPLCONFIGDIR。
+        return str(default_dir)
+    except OSError:
+        target = Path(tempfile.mkdtemp(prefix="mplconfig-"))
+        os.environ["MPLCONFIGDIR"] = str(target)
+        return str(target)

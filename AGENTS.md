@@ -13,6 +13,7 @@
 
 - 预测策略主线：`single_step / direct / recursive / dirrec`；模型层主线收口为 `predict_one()`，多步推理由应用层统一编排
 - 新增模型必须接入 `models/factory.py`，并实现统一 `fit(y, X_hist=None, X_future=None) / predict_one(X_future_one=None)` 接口；`predict(horizon, ...)` 仅保留迁移期兼容入口
+- 新增模型必须在 registry metadata 标明稳定性分层（`stable / optional / experimental`）
 - 统计模型主实现位于 `models/model/` 包内，按模型家族分文件维护；新增模型不得回退到单文件堆叠
 - ARIMA 阶数搜索 helper 统一内聚在 `models/model/arima_family.py`；模型 registry 统一位于 `models/registry.py`
 - ARIMA 家族主线模型名约定为 `ar / ma / arma / arima / sarima / auto_arima`；若只是在参数层包装，不得再平行新增脚本式入口
@@ -21,6 +22,10 @@
 - EDA 属于数据项目级流程；已接入数据必须通过对应的 `scripts/**/run_eda.sh` 独立执行，模型 shell 必须显式保持 `--do_eda false`，不得重复携带其他 `--eda_*` 参数
 - 频率聚合统一由 `data_provider/data_aggregate.py` 在 DataLoader 前执行；聚合会生成派生 CSV 与审计 JSON，不得混入可逆 `DataProcessor`
 - 趋势去除、去噪、逆变换等可逆预处理统一放在 `data_provider/data_processor.py`
+- forecast 原点约定：原点显式定义为数据末尾，history 窗口 = 尾部 `history_size` 行；必须先切分再在 history 窗口内 `fit_transform`（预处理不得接触窗口外数据）；尾部不再预留 horizon 行，历史评估统一由 `do_test` rolling backtest 承担
+- 回测窗口不变量：`backtest_train_size` 未显式设置时默认等于 `history_size`（回测与 final fit 同窗口）；解析优先级为 `backtest_train_size` > 兼容旧字段 `backtest_initial_train_size` > `history_size`
+- 显式失败策略约定：回测窗口失败与 forecast 输出 NaN 默认 RAISE；容忍须显式开关（`backtest_allow_failed_windows` / `forecast_allow_nan_fill`），且产物必须打标（`survivor_bias` / `forecast_nan_filled`）
+- checkpoint 语义约定：train 阶段的 `model.pkl`/`model_meta.json` 是归档产物（训练快照 + 依赖版本，供可追溯与离线检查）；forecast/test 的多步推理由 `models/inference` 按策略在推理时逐 step fit，不消费 checkpoint——这是设计决定而非缺陷；`--do_train false --do_forecast true` 表示在 forecast 原点即时训练，是合法轻量用法，输出与同数据 train+forecast 一致
 - 去噪主线约定当前只保留轻量方法：`moving_average / moving_median`；`LOWESS / Kalman / OnOff` 不得直接混入主线
 - 若处理趋势项、季节项或分解，必须通过 `DataProcessor` 主线完成，不允许让 ARIMA 类模型各自再维护一套分解/重组逻辑
 - `ETSModel` 作为统一指数平滑入口维护 `SES / DES / TES`，不得再平行拆出脚本式 `ses/des/tes` 入口
@@ -39,22 +44,26 @@
 
 ## 3. 依赖与质量基线
 
-- 依赖来源：`pyproject.toml`
+- 项目约定单一事实来源：所有 AI 编码工具（Codex、Claude Code、Hermes Agent 等）共同遵守本文件；项目约定只改 `AGENTS.md`，不写入任何工具专属配置文件
+- 依赖来源：`pyproject.toml` + `uv.lock`
 - Python 环境统一使用项目根目录 `.venv` 的 `uv` 虚拟环境
-- 安装、增加、更新 Python 依赖统一使用 `uv add`；环境同步统一使用 `uv sync --extra dev`
+- 安装、增加、更新 Python 依赖统一使用 `uv add`；环境同步统一使用 `uv sync --extra dev`；uv 只用于依赖管理与环境同步
+- 运行、测试、脚本一律直接调用 `.venv/bin/python`，不经过 `uv run`，不设置 `UV_CACHE_DIR`；MC/Hermes 会话需加 `env -u PYTHONPATH` 前缀，普通 shell 可省略
+- 仓库根目录不得产生 `.uv_cache` / `.pytest_cache` / `.mplconfig` 缓存目录：pytest 经 `pyproject.toml` addopts `-p no:cacheprovider` 从源头禁用缓存；matplotlib 默认用用户级 `~/.matplotlib`，不可写时回退系统临时目录（`utils/runtime_env.py`）
 - Python 基线：`3.12`（以 `.python-version` 与当前开发环境为准）
-- 默认验证基线：`UV_CACHE_DIR=.uv_cache uv run pytest -q`
-- CLI 烟雾验证基线：
-  - `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5`
-  - `UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false`
-  - `UV_CACHE_DIR=.uv_cache uv run python run.py --do_eda true --do_train false --do_test false --do_forecast false --eda_period 7 --eda_nlags 24 --eda_recommendation_enabled true`
+- 默认验证基线：`.venv/bin/python -m pytest -q`
+- CLI 烟雾验证基线（前缀均为 `.venv/bin/python`，MC/Hermes 会话加 `env -u PYTHONPATH`）：
+  - `.venv/bin/python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5`
+  - `.venv/bin/python run.py --do_eda true --do_train false --do_test false --do_forecast false`
+  - `.venv/bin/python run.py --do_eda true --do_train false --do_test false --do_forecast false --eda_period 7 --eda_nlags 24 --eda_recommendation_enabled true`
   - `bash scripts/wind_univariate/run_eda.sh`
   - `bash scripts/aidc_power_month/A/run_eda.sh`
   - `bash scripts/aidc_power_month/B/run_eda.sh`
-  - `UV_CACHE_DIR=.uv_cache uv run python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5 --backtest_n_jobs 2 --monitor_enabled true`
-  - `UV_CACHE_DIR=.uv_cache uv run python run.py --monitor_actuals_path /abs/path/actuals.csv --monitor_actuals_experiment_path naive-direct/params-default/... --monitor_actuals_value_col actual --monitor_actuals_run_id manual-backfill-1`
-  - `UV_CACHE_DIR=.uv_cache uv run python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols load --exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4`
+  - `.venv/bin/python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5 --backtest_n_jobs 2 --monitor_enabled true`
+  - `.venv/bin/python run.py --monitor_actuals_path /abs/path/actuals.csv --monitor_actuals_experiment_path naive-direct/params-default/... --monitor_actuals_value_col actual --monitor_actuals_run_id manual-backfill-1`
+  - `.venv/bin/python run.py --data_path /abs/path/history.csv --time_col ds --target_col y --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' --endog_cols load --exog_cols temp --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4`
 - 若环境未满足上述命令，先修复环境，再继续功能开发；不要跳过验证直接宣称完成
+- 优先级判断：环境可运行 > 测试通过 > 功能正确 > 代码整洁 > 文档完善
 
 ## 4. 文档同步
 
@@ -106,5 +115,8 @@
 ## 7. 当前已知问题
 
 - 当前环境基线已恢复，但仍需持续验证 `pytest` 与 CLI smoke 命令
-- `uv` 缓存目录在受限环境下仍建议显式配置为仓库内目录
 - ARIMA 家族仍可能出现少量 `ConvergenceWarning`，后续若继续治理，应保持模型层定向处理而非重新回到入口层全局过滤
+- 已知限制（T18 逐项评估后记录，暂不影响主线正确性）：
+  - 分解模式的未来趋势外推为常数（`_future_trend` 平推 `_last_trend`），长 horizon 下趋势项不再增长；需要趋势外推时请用 `detrend_method=linear`
+  - `detrend_method=moving_average` 的趋势窗口复用 `denoise_window`（默认 3），跨职责参数耦合；需要独立趋势窗口时当前无单独参数
+  - `return_intervals` 在 `recursive / dirrec` 策略下区间列为 NaN（不伪造不可靠区间）；需要区间时用 `single_step / direct`

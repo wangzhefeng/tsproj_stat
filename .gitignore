@@ -209,8 +209,6 @@ __marimo__/
 # custom
 .agents/
 .claude/
-.mplconfig/
-.uv_cache/
 .worktrees/
 results/
 dataset/
