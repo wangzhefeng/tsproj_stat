@@ -32,6 +32,7 @@ class Tester:
         progress_every: int = 10,
         n_jobs: int = 1,
         processor_builder: object = None,
+        allow_failed_windows: bool = False,
     ):
         self.model_name = model_name
         self.model_params = model_params or {}
@@ -49,6 +50,7 @@ class Tester:
         self.progress_every = progress_every
         self.n_jobs = n_jobs
         self.processor_builder = processor_builder
+        self.allow_failed_windows = allow_failed_windows
         self.factory = ModelFactory()
 
     def evaluate(self, df: pd.DataFrame) -> BacktestResult:
@@ -70,4 +72,5 @@ class Tester:
             progress_every=self.progress_every,
             n_jobs=self.n_jobs,
             processor_builder=self.processor_builder,
+            allow_failed_windows=self.allow_failed_windows,
         )

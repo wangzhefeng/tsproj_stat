@@ -53,8 +53,13 @@ class AutoSelector:
         X_hist: pd.DataFrame | None = None,
         target_col: str = "y",
         time_col: str = "ds",
+        processor_builder=None,
     ) -> str:
-        """评估全部候选模型，并返回有效得分最优的模型名。"""
+        """评估全部候选模型，并返回有效得分最优的模型名。
+
+        y 必须是原始（未预处理、未缩放）历史序列；processor_builder 提供与
+        test 链路一致的 per-window DataProcessor，保证选型分数与最终评估同口径（T15）。
+        """
         n = len(y)
         total_needed = self.initial_train_size + self.horizon
         if n < total_needed:
@@ -88,6 +93,10 @@ class AutoSelector:
                     step=step,
                     forecast_strategy=self.forecast_strategy,
                     verbose=False,
+                    # 选型需要对候选保持稳健：单个窗口失败不应拖垮整个候选评估；
+                    # 失败窗口由 summary 的 survivor_bias/failed_windows 披露。
+                    allow_failed_windows=True,
+                    processor_builder=processor_builder,
                 )
                 score = result.summary.get(self.metric, float("inf"))
                 self._scores[model_name] = float(score)

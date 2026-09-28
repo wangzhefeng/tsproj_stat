@@ -13,6 +13,14 @@ import pandas as pd
 AGGREGATION_METHODS = {"mean", "max", "min", "sum", "median"}
 FILL_METHODS = {"none", "linear", "seasonal_slot"}
 
+# 填充方向披露（T16）：linear 的 limit_direction="both" 与 seasonal_slot 的 ±fill_weeks
+# 双向窗口都会用未来观测回填过去的缺失，不是 as-of 操作；离线数据准备可接受，但必须披露。
+_FILL_DISCLOSURE = {
+    "none": (False, "no filling; as-of safe"),
+    "linear": (True, "linear interpolation with limit_direction='both'; past gaps may use future observations (not as-of)"),
+    "seasonal_slot": (True, "bidirectional ±fill_weeks same (weekday, minute-of-day) window; past gaps use future observations (not as-of)"),
+}
+
 
 @dataclass(frozen=True)
 class AggregationResult:
@@ -181,6 +189,8 @@ def aggregate_csv(
         "output_rows": len(aggregated),
         "inserted_timestamp_count": inserted_count,
         "filled_value_count": filled_count,
+        "fill_uses_future": _FILL_DISCLOSURE[fill_method][0],
+        "fill_direction_note": _FILL_DISCLOSURE[fill_method][1],
         "duplicate_timestamp_count": int(frame[time_col].duplicated().sum()),
         "time_range_start": str(aggregated[time_col].iloc[0]),
         "time_range_end": str(aggregated[time_col].iloc[-1]),

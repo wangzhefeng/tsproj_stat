@@ -43,11 +43,13 @@ def rolling_backtest(
     progress_every: int = 10,
     n_jobs: int = 1,
     processor_builder: Callable[[], object] | None = None,
+    allow_failed_windows: bool = False,
 ) -> BacktestResult:
     """执行滚动回测。
 
     expanding 窗口从序列开头逐步扩张；sliding 窗口保持固定 train_size。
-    单个窗口失败时记录错误并跳过，只要仍有成功窗口就继续产出评估结果。
+    默认 RAISE：任一窗口失败即中止（避免汇总指标带存活偏差）；
+    显式 allow_failed_windows=True 时才跳过失败窗口，且 summary 打标 survivor_bias。
     """
     n = len(df)
     if train_size + horizon > n:
@@ -68,6 +70,8 @@ def rolling_backtest(
         if col != target_col and col not in feature_cols:
             feature_cols.append(col)
     future_cols = [col for col in future_exog_cols if col in df.columns]
+    # 回测的未来外生直接取 df 真实值 = perfect foresight；必须在 summary 中披露（T16）。
+    future_exog_policy = "perfect_foresight" if future_cols else "none"
 
     total_windows = ((n - train_size - horizon) // step) + 1
     started_at = time.perf_counter()
@@ -177,6 +181,12 @@ def rolling_backtest(
         window_id, train_start, start = window
         if result["failed"]:
             failed_window = result["failed_window"]
+            if not allow_failed_windows:
+                raise RuntimeError(
+                    f"[Backtest] window {window_id}/{total_windows} failed "
+                    f"(train_start={train_start}, train_end={start}): {failed_window['error']}"
+                    "；如需容忍失败窗口，请显式设置 backtest_allow_failed_windows=true"
+                )
             failed_windows.append(failed_window)
             logger.warning(
                 f"[Backtest] window {window_id}/{total_windows} failed "
@@ -205,13 +215,16 @@ def rolling_backtest(
     predictions_df = pd.DataFrame(prediction_rows)
     summary_values: dict[str, float | int | str] = {
         # 汇总指标采用窗口级指标均值，窗口级明细仍保留在 metrics_df 中。
+        # survivor_bias 打标：存在被跳过的失败窗口时，汇总指标只在成功窗口上平均。
         "window_count": int(len(metrics_df)),
         "failed_windows": int(len(failed_windows)),
+        "survivor_bias": bool(failed_windows),
         "horizon": int(horizon),
         "train_size": int(train_size),
         "step": int(step),
         "window_mode": resolved_window_mode,
         "forecast_strategy": strategy,
+        "future_exog_policy": future_exog_policy,
         "mae": float(metrics_df["mae"].mean()),
         "rmse": float(metrics_df["rmse"].mean()),
         "mape": float(metrics_df["mape"].mean()),

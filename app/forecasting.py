@@ -14,15 +14,27 @@ os.environ.setdefault("LOG_NAME", LOGGING_LABEL)
 from utils.log_util import logger
 
 
-def _validate_forecast(yhat: pd.Series, horizon: int, model_name: str) -> pd.Series:
+def _validate_forecast(
+    yhat: pd.Series,
+    horizon: int,
+    model_name: str,
+    allow_nan_fill: bool = False,
+) -> pd.Series:
     """校验预测长度和数值有效性。
 
-    NaN 可用前后向填充修复；inf 通常代表模型数值发散，必须直接失败。
+    默认 RAISE：NaN 代表模型输出无效，直接失败（T14）；
+    显式 allow_nan_fill=True 时才 ffill/bfill 修补并由调用方打标。
+    inf 通常代表模型数值发散，必须直接失败。
     """
     if len(yhat) != horizon:
         raise ValueError(f"[{model_name}] forecast length {len(yhat)} != horizon {horizon}")
     nan_count = int(yhat.isna().sum())
     if nan_count > 0:
+        if not allow_nan_fill:
+            raise ValueError(
+                f"[{model_name}] {nan_count}/{horizon} NaN in forecast output"
+                "；如需容忍，请显式设置 forecast_allow_nan_fill=true"
+            )
         logger.warning(
             f"[{model_name}] {nan_count}/{horizon} NaN in forecast, filling with forward/backward fill"
         )
@@ -44,10 +56,14 @@ class Forecaster:
         model_name: str,
         model_params: dict | None = None,
         forecast_strategy: str | None = None,
+        allow_nan_fill: bool = False,
     ):
         self.model_name = model_name
         self.model_params = model_params or {}
         self.forecast_strategy = normalize_forecast_strategy(forecast_strategy)
+        self.allow_nan_fill = allow_nan_fill
+        # 最近一次预测中被填充的 NaN 数量（未填充为 0），供 forecast_summary 打标。
+        self.last_nan_filled = 0
         self.factory = ModelFactory()
 
     def forecast(
@@ -66,7 +82,8 @@ class Forecaster:
             X_hist=X_hist,
             X_future=X_future,
         )
-        return _validate_forecast(yhat, horizon, self.model_name)
+        self.last_nan_filled = int(yhat.isna().sum()) if self.allow_nan_fill else 0
+        return _validate_forecast(yhat, horizon, self.model_name, allow_nan_fill=self.allow_nan_fill)
 
     def forecast_with_intervals(
         self,
@@ -86,7 +103,13 @@ class Forecaster:
             X_future=X_future,
             alpha=alpha,
         )
-        yhat = _validate_forecast(pd.Series(result["yhat"].values, name="yhat"), len(result), self.model_name)
+        yhat = _validate_forecast(
+            pd.Series(result["yhat"].values, name="yhat"),
+            len(result),
+            self.model_name,
+            allow_nan_fill=self.allow_nan_fill,
+        )
+        self.last_nan_filled = int(pd.Series(result["yhat"].values).isna().sum()) if self.allow_nan_fill else 0
         result = result.copy()
         result["yhat"] = yhat.values
         return result.reset_index(drop=True)

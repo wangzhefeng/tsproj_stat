@@ -37,7 +37,13 @@ def _warn_if_dep_mismatch(saved_deps: dict[str, str]) -> None:
 
 
 def save_model(model, path: str, meta: dict | None = None) -> None:
-    """保存模型到 path，同时将元数据写入同目录的 model_meta.json。"""
+    """保存模型到 path，同时将元数据写入同目录的 model_meta.json。
+
+    归档语义（T11 起明确）：model.pkl 是 train 阶段的训练快照，用于可追溯性
+    （模型类别、参数、依赖版本、训练窗口）。主线 forecast/test 的多步推理由
+    models/inference 按策略在推理时逐 step fit，不消费该 checkpoint；
+    load_model 仅供离线检查或外部消费者使用。
+    """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("wb") as f:
@@ -60,7 +66,11 @@ def save_model(model, path: str, meta: dict | None = None) -> None:
 
 
 def load_model(path: str):
-    """加载模型，并校验依赖版本兼容性（仅 warning，不阻断）。"""
+    """加载模型，并校验依赖版本兼容性（仅 warning，不阻断）。
+
+    仅用于离线检查与外部消费；主线 forecast/test 链路不经过本函数
+    （推理按策略在调用时 fit，见 save_model 的归档语义说明）。
+    """
     p = Path(path)
     meta_path = p.parent / "model_meta.json"
     if meta_path.exists():

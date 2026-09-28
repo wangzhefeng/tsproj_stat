@@ -118,6 +118,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.future_exog_time_col = args.future_exog_time_col
     if getattr(args, "future_exog_cols", None) is not None:
         cfg.future_exog_cols = _parse_csv_list(args.future_exog_cols)
+    if getattr(args, "exog_future_known", None) is not None:
+        cfg.exog_future_known = _parse_bool(args.exog_future_known)
     if getattr(args, "aggregation_enabled", None) is not None:
         cfg.aggregation_enabled = _parse_bool(args.aggregation_enabled)
     if getattr(args, "aggregation_source_freq", None) is not None:
@@ -180,6 +182,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.backtest_progress_every = args.backtest_progress_every
     if getattr(args, "backtest_n_jobs", None) is not None:
         cfg.backtest_n_jobs = args.backtest_n_jobs
+    if getattr(args, "backtest_allow_failed_windows", None) is not None:
+        cfg.backtest_allow_failed_windows = _parse_bool(args.backtest_allow_failed_windows)
     if getattr(args, "feature_mode", None) is not None:
         cfg.feature_mode = args.feature_mode
     if getattr(args, "enable_datetime_features", None) is not None:
@@ -238,6 +242,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.return_intervals = _parse_bool(args.return_intervals)
     if getattr(args, "interval_alpha", None) is not None:
         cfg.interval_alpha = args.interval_alpha
+    if getattr(args, "forecast_allow_nan_fill", None) is not None:
+        cfg.forecast_allow_nan_fill = _parse_bool(args.forecast_allow_nan_fill)
     if getattr(args, "monitor_enabled", None) is not None:
         cfg.monitor_enabled = _parse_bool(args.monitor_enabled)
     if getattr(args, "monitor_window", None) is not None:
@@ -281,7 +287,8 @@ def parse_args() -> AppConfig:
     parser.add_argument("--freq", type=str, default=None)                  # 历史数据频率
     parser.add_argument("--future_exog_path", type=str, default=None)      # 未来数据的路径 -------------- 未来数据
     parser.add_argument("--future_exog_time_col", type=str, default=None)  # 未来数据时间列
-    parser.add_argument("--future_exog_cols", type=str, default=None)      # 未来数据外生变量
+    parser.add_argument("--future_exog_cols", type=str, default=None)  # 未来数据外生变量
+    parser.add_argument("--exog_future_known", default=None)           # 外生未来是否已知（默认 true=已知；false=需预报，回测会 RAISE）
     parser.add_argument("--aggregation_enabled", default=None)
     parser.add_argument("--aggregation_source_freq", type=str, default=None)
     parser.add_argument("--aggregation_method", type=str, default=None)
@@ -317,6 +324,7 @@ def parse_args() -> AppConfig:
     parser.add_argument("--backtest_verbose", default=None)                       # 是否在终端打印回测进度
     parser.add_argument("--backtest_progress_every", type=int, default=None)      # 每多少个窗口打印一次进度
     parser.add_argument("--backtest_n_jobs", type=int, default=None)              # 窗口级回测并行数，1 表示保持串行路径
+    parser.add_argument("--backtest_allow_failed_windows", default=None)          # 默认 false：任一窗口失败即中止
     # 特征工程
     parser.add_argument("--feature_mode", type=str, default=None)
     parser.add_argument("--enable_datetime_features", default=None)
@@ -353,6 +361,7 @@ def parse_args() -> AppConfig:
     # 概率预测
     parser.add_argument("--return_intervals", default=None)
     parser.add_argument("--interval_alpha", type=float, default=None)
+    parser.add_argument("--forecast_allow_nan_fill", default=None)                # 默认 false：预测含 NaN 即失败
     # 本地监控
     parser.add_argument("--monitor_enabled", default=None)
     parser.add_argument("--monitor_window", type=int, default=None)

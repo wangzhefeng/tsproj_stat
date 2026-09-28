@@ -41,6 +41,9 @@ class AppConfig:
     future_exog_path: str | None = None
     future_exog_time_col: str | None = None
     future_exog_cols: list[str] = field(default_factory=list)
+    # 外生变量未来可知性声明（T16）：True=日历类等已知未来（回测可用真实未来值）；
+    # False=天气类等需预报外生——回测的真实未来值评估为 perfect foresight，主线暂不支持，显式 RAISE
+    exog_future_known: bool = True
     aggregation_enabled: bool = False
     aggregation_source_freq: str | None = None
     aggregation_method: str = "mean"
@@ -75,13 +78,17 @@ class AppConfig:
     
     # 模型测试
     backtest_train_size: int | None = None
-    backtest_initial_train_size: int = 30
+    # 兼容旧字段；两者都未显式设置时，回测训练窗口默认等于 history_size（T13 不变量：
+    # 回测与 final fit 同窗口，保证回测结论可外推到部署行为）。
+    backtest_initial_train_size: int | None = None
     backtest_horizon: int = 7
     backtest_step: int = 7
     backtest_window_mode: str = "expanding"
     backtest_verbose: bool = False
     backtest_progress_every: int = 10
     backtest_n_jobs: int = 1
+    # 失败窗口容忍开关：默认 False（任一窗口失败即 RAISE）；显式开启才跳过并打标 survivor_bias
+    backtest_allow_failed_windows: bool = False
     
     # 特征工程
     feature_mode: str = "analysis_snapshot"
@@ -120,6 +127,8 @@ class AppConfig:
     # 概率预测：仅在模型或推理策略支持时返回区间；否则区间列可为 NaN。
     return_intervals: bool = False
     interval_alpha: float = 0.05
+    # forecast NaN 容忍开关：默认 False（输出含 NaN 即 RAISE）；显式开启才 ffill/bfill 修补并在 forecast_summary 打标
+    forecast_allow_nan_fill: bool = False
 
     # 本地文件监控：默认关闭；开启后 forecast 阶段写入 results/{data_name}/monitor/{experiment_path}。
     monitor_enabled: bool = False
@@ -142,8 +151,8 @@ class AppConfig:
         return normalize_forecast_strategy(self.forecast_strategy)
 
     def resolved_backtest_train_size(self) -> int:
-        """优先使用新字段 backtest_train_size，兼容旧字段 backtest_initial_train_size。"""
-        return int(self.backtest_train_size or self.backtest_initial_train_size)
+        """显式 backtest_train_size > 兼容旧字段 backtest_initial_train_size > history_size。"""
+        return int(self.backtest_train_size or self.backtest_initial_train_size or self.history_size)
 
     def resolved_backtest_window_mode(self) -> str:
         """标准化回测窗口模式，当前支持 expanding 与 sliding。"""

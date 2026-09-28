@@ -239,6 +239,18 @@ class DataLoader:
             raise ValueError("Future exogenous data has fewer rows than requested horizon")
         return prepared.iloc[:horizon].reset_index(drop=True)
     
+    def split_history(self, df: pd.DataFrame, history_size: int) -> pd.DataFrame:
+        """取序列尾部 history_size 行作为建模历史窗口。
+
+        forecast 原点显式定义为数据末尾：历史窗口以数据最后一行结束，
+        不再从尾部预留 horizon 行。历史评估能力由 do_test 的 rolling backtest 承担。
+        """
+        if len(df) < history_size:
+            raise ValueError("Not enough samples for requested history_size")
+        history = df.iloc[-history_size:].reset_index(drop=True)
+        logger.info(f"history shape: {history.shape}")
+        return history
+
     def split_history_future(self, df: pd.DataFrame, history_size: int, horizon: int) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         从序列尾部切出训练历史窗口和未来评估窗口。

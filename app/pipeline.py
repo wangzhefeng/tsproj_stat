@@ -259,14 +259,36 @@ class ModelApp:
                     horizon=self.cfg.backtest_horizon,
                     forecast_strategy=self.cfg.resolved_forecast_strategy(),
                 )
+                # T15：选型用原始（未预处理/未缩放）history 窗口 + per-window processor，
+                # 与 test 链路同口径，避免在预处理后的 history_y 上评估导致选错模型。
+                raw_history_df = self.loader.split_history(df, self.cfg.history_size)
                 best_model = selector.select(
-                    y=prepared.history_y,
-                    X_hist=prepared.history_model_input_df,
+                    y=raw_history_df[self.cfg.target_col].astype(float).reset_index(drop=True),
+                    X_hist=raw_history_df[self.model_history_input_cols].astype(float).reset_index(drop=True),
                     target_col=self.cfg.target_col,
                     time_col=self.cfg.time_col,
+                    processor_builder=self._new_processor,
                 )
                 logger.info(f"[AutoSelect] overriding model_name: {self.cfg.model_name!r} → {best_model!r}")
                 self.cfg.model_name = best_model
+                # auto_select 改选后必须按最终模型名重建产物目录（P12），
+                # 否则结果会写入原始模型名的 experiment_path。
+                self.artifacts = prepare_run_artifacts(self.cfg)
+                out.update(
+                    {
+                        "setting": self.artifacts.setting,
+                        "experiment_path": str(self.artifacts.experiment_path),
+                        "eda_path": str(self.artifacts.eda_path),
+                        "data_name": self.artifacts.data_name,
+                        "checkpoints_dir": str(self.artifacts.checkpoints_dir),
+                        "train_results_dir": str(self.artifacts.train_results_dir),
+                        "test_results_dir": str(self.artifacts.test_results_dir),
+                        "forecast_results_dir": str(self.artifacts.forecast_results_dir),
+                        "eda_dir": str(self.artifacts.eda_dir),
+                        "monitor_dir": str(self.artifacts.monitor_dir),
+                        "custom_monitor_dir": str(self.artifacts.custom_monitor_dir),
+                    }
+                )
                 out["auto_selected_model"] = best_model
                 out["auto_select_scores"] = selector.scores
             except Exception as exc:
@@ -353,12 +375,18 @@ class ModelApp:
         如果这里失败，说明后续 train/test/forecast 都缺少基本输入，应直接中断。
         """
         local_df = df.copy()
-        # ------------------------------
-        # 数据预处理
-        # ------------------------------
         metadata: dict[str, str] = {}
 
-        # 数据预处理
+        # T16：声明为「需预报」的外生（exog_future_known=false）不得在回测中使用真实未来值。
+        if not self.cfg.exog_future_known:
+            overlap = [c for c in self.cfg.future_exog_cols if c in local_df.columns]
+            if overlap:
+                raise ValueError(
+                    f"exog_future_known=false 但回测会对未来外生 {overlap} 使用 df 真实值"
+                    "（perfect foresight）；主线暂不支持需预报外生的回测，"
+                    "请改用已知未来外生或移出 future_exog_cols"
+                )
+
         processor = DataProcessor(
             detrend_method=self.cfg.detrend_method,
             denoise_enabled=self.cfg.denoise_enabled,
@@ -370,23 +398,24 @@ class ModelApp:
             decomposition_model=self.cfg.decomposition_model,
             acf_max_lag=self.cfg.acf_max_lag,
             seasonality_strength_threshold=self.cfg.seasonality_strength_threshold,
-        ) 
+        )
+
+        # 数据分割：forecast 原点显式定义为数据末尾，history = 尾部 history_size 行。
+        # 必须先切分再预处理：DataProcessor 只在 history 窗口内 fit_transform，
+        # 保证分解季节模板、detrend 与去噪不接触任何原点之后的数据（P09）。
+        history_df = self.loader.split_history(df=local_df, history_size=self.cfg.history_size)
         if processor.enabled:
-            local_df[self.cfg.target_col] = processor.fit_transform(local_df[self.cfg.target_col])
+            history_df[self.cfg.target_col] = processor.fit_transform(
+                history_df[self.cfg.target_col]
+            ).values
             metadata["processor_applied"] = "true"
             metadata["processor_detrend_method"] = self.cfg.detrend_method
             metadata["processor_denoise_enabled"] = str(processor.denoise_enabled).lower()
             metadata["processor_denoise_method"] = processor.denoise_method
             metadata["processor_decomposition_method"] = self.cfg.decomposition_method
             metadata["processor_decomposition_target"] = self.cfg.decomposition_target
-            logger.info(f"After data processing, df:\n {local_df}")
-        
-        # 数据分割：预测阶段只使用 history_size 长度的历史窗口，最后 horizon 行保留为未来区间。
-        history_df, _future = self.loader.split_history_future(
-            df=local_df,
-            history_size=self.cfg.history_size,
-            horizon=self.cfg.predict_horizon,
-        )
+            logger.info(f"After data processing, history_df shape={history_df.shape}, head:\n {history_df.head()}")
+
         history_y = history_df[self.cfg.target_col].astype(float).reset_index(drop=True)
         history_endog_cols = [self.cfg.target_col, *self.effective_endog_cols]
         history_endog_df = history_df[history_endog_cols].astype(float).reset_index(drop=True)
@@ -398,6 +427,18 @@ class ModelApp:
         if self.cfg.feature_mode == "model_input":
             feature_frame, model_input_feature_columns = self._build_model_input_features(history_df)
             if model_input_feature_columns:
+                # lag 特征头部 warmup 行为 NaN：整行丢弃（而非 bfill 未来值），
+                # 同步收缩所有 history 视图保持对齐。
+                warmup = max(self.cfg.lags) if self.cfg.lags else 0
+                if warmup > 0:
+                    history_df = history_df.iloc[warmup:].reset_index(drop=True)
+                    history_y = history_y.iloc[warmup:].reset_index(drop=True)
+                    history_endog_df = history_endog_df.iloc[warmup:].reset_index(drop=True)
+                    if history_exog_df is not None:
+                        history_exog_df = history_exog_df.iloc[warmup:].reset_index(drop=True)
+                    history_model_input_df = history_model_input_df.iloc[warmup:].reset_index(drop=True)
+                    feature_frame = feature_frame.iloc[warmup:].reset_index(drop=True)
+                    metadata["feature_warmup_dropped_rows"] = str(warmup)
                 history_model_input_df = pd.concat(
                     [history_model_input_df, feature_frame[model_input_feature_columns].reset_index(drop=True)],
                     axis=1,
@@ -405,9 +446,8 @@ class ModelApp:
                 metadata["feature_mode"] = self.cfg.feature_mode
                 metadata["model_input_feature_columns"] = ",".join(model_input_feature_columns)
         history_time = pd.to_datetime(history_df[self.cfg.time_col]).reset_index(drop=True)
-        logger.info(f"After data split history_df:\n {history_df}")
-        logger.info(f"After data split history_y:\n {history_y}")
-        logger.info(f"After data split history_time:\n {history_time}")
+        logger.info(f"After data split history_df shape={history_df.shape}, head:\n {history_df.head()}")
+        logger.info(f"history_y length={len(history_y)}, history_time range=[{history_time.iloc[0] if not history_time.empty else None}, {history_time.iloc[-1] if not history_time.empty else None}]")
         
         # 数据缩放：当前仅缩放目标列，并同步回多源输入中的 target_col。
         if self.cfg.scale:
@@ -418,7 +458,7 @@ class ModelApp:
             history_model_input_df[self.cfg.target_col] = history_y.values
             metadata["history_scaled"] = "true"
             metadata["history_scaler_type"] = self.cfg.scaler_type
-            logger.info(f"After scale history_y:\n {history_y}")
+            logger.info(f"After scale history_y length={len(history_y)}, head: {history_y.head().tolist()}")
 
         future_exog_df = None
         if self.cfg.future_exog_path is not None:
@@ -430,7 +470,9 @@ class ModelApp:
             metadata["future_exog_rows"] = str(len(future_exog_df))
 
         return PrepareResult(
-            df=local_df,
+            # df 语义为「建模窗口数据」：预处理后 EDA 与特征快照均作用于实际建模的
+            # history 窗口（含预处理结果），与 train/forecast 输入保持一致。
+            df=history_df.reset_index(drop=True),
             history_df=history_df.reset_index(drop=True),
             history_y=history_y,
             history_endog_df=history_endog_df,
@@ -474,7 +516,8 @@ class ModelApp:
                 feature_cols.append(col)
         for lag in self.cfg.lags:
             col = f"lag_{lag}"
-            feature_df[col] = df[self.cfg.target_col].shift(lag).bfill().ffill().astype(float)
+            # 头部 lag 行无真实历史可用，保留 NaN 由调用方整行丢弃，不做 bfill 回填（T18）
+            feature_df[col] = df[self.cfg.target_col].shift(lag).astype(float)
             feature_cols.append(col)
         return feature_df, feature_cols
 
@@ -654,6 +697,7 @@ class ModelApp:
             progress_every=self.cfg.backtest_progress_every,
             n_jobs=self.cfg.backtest_n_jobs,
             processor_builder=processor_builder,
+            allow_failed_windows=self.cfg.backtest_allow_failed_windows,
         )
         result = tester.evaluate(df[[self.cfg.time_col, *self.model_history_input_cols]].copy())
         # 回测产物分为窗口指标、逐点预测、汇总指标和图形，便于后续误差分析。
@@ -720,6 +764,7 @@ class ModelApp:
             model_name=self.cfg.model_name,
             model_params=self.resolved_model_params,
             forecast_strategy=self.cfg.resolved_forecast_strategy(),
+            allow_nan_fill=self.cfg.forecast_allow_nan_fill,
         )
         if self.cfg.return_intervals:
             interval_df = forecaster.forecast_with_intervals(
@@ -778,11 +823,17 @@ class ModelApp:
                 "exog_cols": self.cfg.exog_cols,
                 "future_exog_cols": self.cfg.future_exog_cols,
                 "time_col": self.cfg.time_col,
+                # forecast 原点显式定义为数据末尾：origin = history 窗口最后一个时间戳。
+                "forecast_origin": prepared.history_time.iloc[-1].isoformat()
+                if not prepared.history_time.empty
+                else None,
                 "last_history_timestamp": prepared.history_time.iloc[-1].isoformat()
                 if not prepared.history_time.empty
                 else None,
                 "history_points_plotted": int(min(len(prepared.history_df), self.cfg.history_size)),
                 "feature_mode": self.cfg.feature_mode,
+                # NaN 填充打标：0 表示无填充；>0 仅在 forecast_allow_nan_fill=true 时可能出现。
+                "forecast_nan_filled": int(forecaster.last_nan_filled),
             },
         )
         result = {

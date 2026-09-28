@@ -16,6 +16,16 @@
 | P06 | 历史命名不完全统一，如 `FeatureScalering.py` | 增加认知负担，影响长期可维护性 | P2 | 已修复 |
 | P07 | `matplotlib` 默认缓存目录 `/Users/wangzf/.matplotlib` 不可写 | 首次运行会回退到临时目录，影响稳定性与性能 | P2 | 已修复 |
 | P08 | 部分统计模型与检验在验证中仍会产生 warning | 不阻塞通过，但会影响日志整洁度与信噪比 | P2 | 部分修复 |
+| P09 | forecast 链路预处理在全量数据上 `fit_transform` 后才切分 history/future；decomposition 的季节模板直接取自全序列末尾（含尾部未来 horizon 行），linear detrend、`moving_median center=True` 去噪同样见到未来值 | forecast 输出借未来真实信息，精度虚高；回测链路已按窗口 refit（72e8006，干净），两条链路口径不一致，回测无法暴露此问题 | P0 | 已修复（Step 46：先 split 再在 history 窗口内 fit_transform） |
+| P10 | `split_history_future` 把尾部 horizon 行切出后赋给 `_future` 直接丢弃，forecast 原点 = 数据末尾前 horizon 点 | 最新 horizon 行观测既不训练也不评估，静默浪费；要预测数据末尾之后需人为垫占位行，该约定无文档声明 | P0 | 已修复（Step 46：原点显式=数据末尾，forecast_summary 记录 `forecast_origin`） |
+| P11 | `do_train` 保存的 `model.pkl` 无任何加载方，forecast 永远新建模型现 fit | 训练/部署分离语义缺失；同跑一次同数据 fit 多遍；`train_summary.json` 描述的模型从未被下游使用 | P1 | 已修复（Step 47：明确归档语义，forecast-only 与 train+forecast 输出一致性有测试钉死） |
+| P12 | artifacts 在 `__init__` 按原始 model_name 建好，auto_select 事后改写 `cfg.model_name` 但不重建目录 | auto_select 改选后结果写入原模型名目录，实验目录归属不可信 | P1 | 已修复（Step 48：改选后重建 artifacts 并刷新 run 输出路径键） |
+| P13 | `backtest_train_size` 默认 None → 落到 `backtest_initial_train_size=30`，与 `history_size=90` 不一致 | 默认配置下回测用 30 点窗口、final fit 用 90 点窗口，回测结论不能外推到部署行为 | P1 | 已修复（Step 49：未显式设置时默认等于 history_size） |
+| P14 | 回测失败窗口静默跳过、指标只在成功窗口平均；forecast 输出 NaN 被 ffill/bfill 静默修补 | 汇总指标带存活偏差且不打标；用户无法区分模型真实输出与填充值 | P2 | 已修复（Step 51：默认 RAISE，显式开关容忍 + survivor_bias/forecast_nan_filled 打标） |
+| P15 | auto_select 在全序列预处理+缩放后的 history_y 上内部回测，test 用原始 df + per-window processor | 选型分数与最终评估分数口径不一致，可能选错模型 | P2 | 已修复（Step 52：auto_select 改用原始 history 窗口 + per-window processor，与 test 同管线） |
+| P16 | 回测未来外生直接取 df 真实值，不区分已知未来与需预报外生；`seasonal_slot` 填充用 ±weeks 双向窗口且审计 JSON 未披露非 as-of 性 | 天气类外生评估为 perfect foresight；派生数据早期回测窗口的训练数据含未来填充信息且无披露 | P2 | 已修复（Step 53：`exog_future_known` 声明 + 回测 perfect_foresight 披露 + 聚合审计 fill 方向披露） |
+| P17 | `scripts/aidc_power_month/**` 66 个模型 shell 仍引用已删除的 `20260708` max 数据文件名 | 模型脚本直接运行全部失败，批量实验入口不可用 | P2 | 已修复（Step 50：更新为 `20260728` mean 版本，A/B 实跑通过） |
+| P18 | `tests/` 在 .gitignore 且本地整个缺失，历史 75 passed 基线不可执行 | 无回归安全网，阻碍上述全部修复的验证 | P0 | 已修复 |
 
 ## 修复记录
 
@@ -291,20 +301,141 @@
 - 新增 `eda/EDA_REPORT_GUIDE.md` 参考文档（生成原理、降级矩阵、数据字典、叙述决策表、风格规则、Agent 精修流程）
 - 验证：`compileall` 通过；A（手写保留）、B（新生成含聚合行）、wind（降级-无聚合）三类 `run_eda.sh` 实跑通过；降级探针（缺 recommendations/data_quality/summary）均优雅处理无报错；naive 模型 smoke（`do_eda=false`）无回归
 
-## 待办任务
+### 2026-09-15 / Step 44
 
+- 固化三条项目规范：AGENTS.md 单一事实来源、`.venv` 直调、仓库根目录禁止缓存落盘
+- 规则 1（单一事实来源）：`CLAUDE.md` 收敛为一行 `@AGENTS.md` 引用；仍有效的约定（优先级判断「环境可运行 > 测试通过 > 功能正确 > 代码整洁 > 文档完善」、新模型必须标明 stability 分层）已合并进 `AGENTS.md`，过期内容（uv run 验证命令、saved_results 路径、inference_strategy 等）不照搬；仓库根不存在 `.agents/` / `.claude/` 约定副本，无需处理
+- 规则 2（.venv 直调）：`AGENTS.md` 第 3 节验证基线、`README.md` 全部运行/验证命令由 `UV_CACHE_DIR=.uv_cache uv run ...` 改为 `.venv/bin/python ...`（注明 MC/Hermes 会话加 `env -u PYTHONPATH` 前缀，普通 shell 可省略）；83 个 `scripts/**/*.sh` 由 `python -u run.py` 改为 `.venv/bin/python -u run.py`，`scripts/aidc_power_month/run_all.sh` 的 PATH 注入改为 `.venv/bin/python` 存在性预检；uv 仅保留依赖管理（`uv add` / `uv sync --extra dev`）
+- 规则 3（禁止缓存落盘）：`pyproject.toml` pytest addopts 增加 `-p no:cacheprovider` 从源头禁用 `.pytest_cache`；`utils/runtime_env.py` 的 `MPLCONFIGDIR` 逻辑改为默认用户级 `~/.matplotlib`、不可写时回退 `tempfile` 系统临时目录，不再在仓库根创建 `.mplconfig`；删除存量 `.uv_cache/`、`.pytest_cache/`、`.mplconfig/`（均确认仅为可再生缓存）；`.gitignore` 移除已无产出方的 `.mplconfig/`、`.uv_cache/` 条目，保留 `.pytest_cache/` 作防御
+- 影响范围：`AGENTS.md`、`CLAUDE.md`、`README.md`、`pyproject.toml`、`utils/runtime_env.py`、`.gitignore`、`scripts/**`（84 个 shell）、`LOG.md`
+- 验证：见「验证记录」2026-09-15 条目
+
+### 2026-09-15 / Step 45（T09）
+
+- 恢复 `tests/` 回归基线：从 git 历史 a89d446（2026-05-05 最后快照，27 个文件）恢复后按当前接口逐一校准，并新增聚合前级测试
+- 接口漂移修复：`inference_strategy`/`pred_method` → `forecast_strategy`（test_app_config、test_backtest_smoke、test_cli_overrides）；`checkpoints_dir`/`train_results_dir` 等旧目录参数 → `results_dir`（test_pipeline、test_multisource_pipeline）；`monitor_actuals_setting` → `monitor_actuals_experiment_path`（test_cli_overrides、test_monitor）；`endog_cols` 不再允许含 `target_col`（test_multisource_pipeline）；multisource 与 pipeline 断言改按 `results/{data_name}/{category}/{experiment_path}` 现行布局
+- 新增 `tests/test_data_aggregate.py`：聚合派生 CSV + 审计 JSON 内容、同配置复用（regenerated=False）、参数变更重算、非法 method 与自覆盖拒绝
+- 最终规模：28 个测试文件、116 passed（命令与结果见验证记录）
+- 影响范围：`tests/`（本地维护、gitignore，不进版本库）
+- 验证：见「验证记录」2026-09-15 条目
+
+### 2026-09-15 / Step 46（T10）
+
+- 修复 forecast 链路预处理泄漏（P09）：`app/pipeline.py` `_prepare_target_series` 改为先 `split_history`（尾部 `history_size` 行）再在该窗口内 `fit_transform`；DataProcessor 的分解季节模板、detrend、去噪不再接触窗口外数据；回测链路 per-window refit 语义不动
+- 修复 forecast 原点（P10）：`DataLoader` 新增 `split_history(df, history_size)`，原点显式 = 数据末尾，不再从尾部切出 horizon 行丢弃；`split_history_future` 保留为独立工具方法但不再是主链路入口；历史评估能力由 `do_test` rolling backtest 承担，不新增隐式切分配置
+- `PrepareResult.df` 语义调整为「建模窗口数据」：预处理后 EDA 与特征快照作用于实际建模的 history 窗口，与 train/forecast 输入一致
+- `forecast_summary.json` 新增 `forecast_origin` 字段（= history 窗口最后时间戳 = 数据末尾）
+- 新增 `tests/test_forecast_leakage.py`：原点=数据末尾、窗口外数据污染不影响预处理结果（detrend/moving_median/seasonal_decompose 三参数化）、与手工窗口 fit 结果一致
+- AGENTS.md 第 2 节新增 forecast 原点约定声明
+- 影响范围：`app/pipeline.py`、`data_provider/data_loader.py`、`tests/test_forecast_leakage.py`、`AGENTS.md`、`LOG.md`
+- 验证：见「验证记录」2026-09-15 条目
+
+### 2026-09-15 / Step 47（T11）
+
+- 方向判断（二选一）：选「明确归档语义」，不做 checkpoint 加载复用。依据：`models/inference.run_point_inference` 对全部策略都在推理内部逐 step fit（direct 拟合 horizon 次、recursive/dirrec 在增长历史上逐步重 fit），pickle 的已拟合模型无法被该编排消费；且 train fit（`X_future=全 horizon 外生`）与推理第 1 步 fit（`X_future=首行前缀`）输入不保证一致，强行复用会对 fit 期使用 X_future 的模型静默改语义
+- 落地：`models/persistence.py` 的 `save_model`/`load_model` docstring 写明归档语义；`AGENTS.md` 第 2 节、`README.md` 输出目录节新增 checkpoint 语义约定（归档产物 / 推理按策略 fit / `--do_train false --do_forecast true` = 原点即时训练且输出一致）
+- 新增 `test_pipeline_forecast_output_independent_of_checkpoint`：同数据 train+forecast 与 forecast-only 的 yhat 逐点一致；`model_meta.json` 记录真实训练信息（model_class/model_name/train_rows）
+- 影响范围：`models/persistence.py`、`AGENTS.md`、`README.md`、`tests/test_pipeline.py`、`LOG.md`
+- 验证：见「验证记录」2026-09-15 条目
+
+### 2026-09-15 / Step 48（T12）
+
+- 修复 auto_select 结果目录归属（P12）：`app/pipeline.py` auto_select 改选后立即 `prepare_run_artifacts(self.cfg)` 重建产物目录，并同步刷新 run 输出 dict 的全部路径键；train/test/forecast/monitor 产物均落入最终模型名的 experiment_path
+- 新增 `test_pipeline_auto_select_rebuilds_artifacts_for_selected_model`：断言 setting、`train_summary_path` 目录与 `train_summary.model_name` 均为改选后的模型名
+- 影响范围：`app/pipeline.py`、`tests/test_pipeline.py`、`LOG.md`
+
+### 2026-09-15 / Step 49（T13）
+
+- 对齐回测与 final fit 训练窗口默认值（P13）：`backtest_initial_train_size` 默认值 30 移除（改为 None 兼容字段），`resolved_backtest_train_size()` 解析优先级调整为 `backtest_train_size` > `backtest_initial_train_size` > `history_size`
+- 影响面提示：未显式设置回测窗口的脚本/命令，回测训练窗口由 30 变为 `history_size`，experiment_path 的 `bt-*_train-*` token 随之变化，新旧结果落在不同目录
+- AGENTS.md 第 2 节记录「回测与 final fit 同窗口」不变量；新增 `test_backtest_train_size_defaults_to_history_size` 与 `test_backtest_train_size_explicit_overrides_default`
+- 影响范围：`config/default.py`、`AGENTS.md`、`tests/test_app_config.py`、`LOG.md`
+- 验证（T11–T13 收口）：见「验证记录」2026-09-15 条目
+
+### 2026-09-15 / Step 50（T17）
+
+- 更新 `scripts/aidc_power_month/**` 数据引用（P17）：5min 原始文件 `20260708` → `20260728`；日频派生 `*_Loads_1day_20251001_20260708.csv` → `*_Loads_1day_mean_20251001_20260728.csv`；`--aggregation_method max` → `mean`（对齐当前 derived 目录实际产物）；脚本注释「日峰」→「日均」
+- `scripts/aidc_power_month/logs/` 下的历史运行日志保留原样不改写
+- 影响范围：`scripts/aidc_power_month/**`（92 个 shell）
+- 验证：全部 shell `bash -n` 通过；A/B 两路 `run_naive.sh` 实跑通过（exit 0），聚合审计复用命中（`aggregation_regenerated=false`）
+
+### 2026-09-15 / Step 51（T14）
+
+- 回测失败窗口改显式策略（P14 前半）：`rolling_backtest` 新增 `allow_failed_windows=False`，默认任一窗口失败即 RAISE；显式容忍时维持跳过并在 summary 打标 `survivor_bias`（窗口级明细与 failed_windows 保留）；全窗口失败仍 RAISE
+- forecast NaN 改显式策略（P14 后半）：`_validate_forecast` 默认遇 NaN 即 RAISE；显式 `forecast_allow_nan_fill=true` 才 ffill/bfill 修补，并由 `Forecaster.last_nan_filled` 写入 `forecast_summary.json` 的 `forecast_nan_filled` 打标
+- 新增 AppConfig 字段与 CLI：`backtest_allow_failed_windows`、`forecast_allow_nan_fill`（默认均 false）；Tester/Forecaster/pipeline 完成透传
+- AutoSelector 显式传 `allow_failed_windows=True`：选型需对候选稳健，失败窗口由 summary 披露
+- 新增测试：部分失败默认 RAISE / 容忍后 survivor_bias 打标 / forecast NaN 默认 RAISE / 显式容忍填充 / inf 不可容忍 / forecast_summary 打标为 0
+- 影响范围：`evaluation/backtest.py`、`app/forecasting.py`、`app/testing.py`、`app/pipeline.py`、`models/selector.py`、`config/default.py`、`run.py`、`tests/test_backtest_smoke.py`、`tests/test_forecasting.py`（新增）、`tests/test_pipeline.py`、`AGENTS.md`、`LOG.md`
+- 验证：见「验证记录」2026-09-15 条目
+
+### 2026-09-15 / Step 52（T15）
+
+- 统一 auto_select 与 test 口径（P15）：`AutoSelector.select` 新增 `processor_builder` 透传给 `rolling_backtest`；pipeline auto_select 改用原始（未预处理/未缩放）history 窗口 + `self._new_processor`，与 test 链路同为 per-window processor 管线
+- 新增 `test_auto_selector_matches_per_window_processor_pipeline`：同一数据、同一窗口参数下 selector 分数与直接 `rolling_backtest` 逐分一致；对照组证明 processor 真正参与评估
+- 影响范围：`models/selector.py`、`app/pipeline.py`、`tests/test_auto_selector.py`、`LOG.md`
+- 验证：全量 pytest 132 passed
+
+### 2026-09-15 / Step 53（T16）
+
+- 聚合填充方向披露：`data_aggregate.py` 审计 JSON 新增 `fill_uses_future` 与 `fill_direction_note`；`linear`（limit_direction=both）与 `seasonal_slot`（±fill_weeks 双向窗口）均披露为非 as-of；不影响 `_can_reuse`（仍只比对 config）
+- 外生未来可知性声明：新增 AppConfig/CLI `exog_future_known`（默认 true=已知未来）；声明为需预报（false）且未来外生列在 df 中时，建模链路硬 RAISE（回测 perfect foresight 暂不支持）；`rolling_backtest` summary 新增 `future_exog_policy`（`perfect_foresight`/`none`）披露
+- 新增测试：三种 fill_method 的审计披露、回测 summary 的 future_exog_policy 两态、pipeline 对 exog_future_known=false 的 RAISE
+- 影响范围：`data_provider/data_aggregate.py`、`evaluation/backtest.py`、`app/pipeline.py`、`config/default.py`、`run.py`、`tests/test_data_aggregate.py`、`tests/test_backtest_smoke.py`、`tests/test_pipeline.py`、`LOG.md`
+- 验证：全量 pytest 135 passed
+
+### 2026-09-15 / Step 54（T18 收尾评估）
+
+- 修复「lag 特征 bfill」：`_build_model_input_features` 不再 `bfill().ffill()`；`feature_mode=model_input` 时头部 `max(lags)` 个 warmup 行整行丢弃，所有 history 视图同步收缩对齐，metadata 记录 `feature_warmup_dropped_rows`；新增对齐与无回填测试
+- 修复「日志 dump 整个 DataFrame」：`_prepare_target_series` 的预处理/切分/缩放日志改为 shape + head/范围摘要
+- 记录为已知限制（AGENTS.md 第 7 节）：分解模式趋势常数外推（建议用 `detrend_method=linear` 替代）、`detrend_method=moving_average` 复用 `denoise_window`、`recursive/dirrec` 区间列为 NaN
+- 影响范围：`app/pipeline.py`、`tests/test_pipeline.py`、`AGENTS.md`、`LOG.md`
+- 验证：见「验证记录」2026-09-15 条目
+
+## 待办任务
 | ID | 任务 | 优先级 | 完成条件 |
 | --- | --- | --- | --- |
-| T01 | 持续保持本地最小可运行环境 | P0 | `uv run pytest -q` 可执行，且 `uv run python run.py` smoke 命令可运行 |
+| T01 | 持续保持本地最小可运行环境 | P0 | `.venv/bin/python -m pytest -q` 可执行，且 `.venv/bin/python run.py` smoke 命令可运行 |
 | T02 | 处理 `src/ts_forecast_framework/` 历史残留 | P1 | 已由人工删除，文档状态同步完成 |
 | T03 | 评估并统一历史命名 | P2 | 已完成主线文件命名收口；剩余历史残留需持续巡检 |
 | T04 | 增补环境初始化标准流程 | P1 | README 中提供基于 `uv venv` / `uv sync` 的可复现安装路径 |
-| T05 | 处理 `matplotlib` 缓存目录不可写问题 | P2 | 已提供项目级 `.mplconfig/` 方案，并纳入主线运行约定 |
+| T05 | 处理 `matplotlib` 缓存目录不可写问题 | P2 | 默认用户级 `~/.matplotlib`，不可写时回退系统临时目录（Step 44 起，替代原项目级 `.mplconfig/` 方案） |
 | T06 | 持续治理 ARIMA 拟合 `ConvergenceWarning` | P2 | 保持模型层定向处理，不把低价值 warning 再推回入口层 |
 | T07 | 持续校准 EDA 建模建议规则 | P2 | recommendations 输出字段稳定，并通过真实数据集复核建议质量 |
 | T08 | 扩展监控闭环使用示例 | P2 | 已在 README 和 CLI smoke 中提供 forecast 记录、actuals 回填和 metrics 快照示例 |
+| T09 | 恢复 tests/ 回归基线：从 git 历史恢复或按现有接口重建最小测试集（对应 P18） | P0 | 已完成（Step 45）：`.venv/bin/python -m pytest -q` 116 passed；覆盖 backtest / forecast / DataProcessor / 聚合前级主链路 |
+| T10 | 修复 forecast 链路泄漏与原点（对应 P09、P10） | P0 | 已完成（Step 46）：定向测试证明预处理只见 history 窗口；AIDC 真实数据 forecast 原点=2026-07-28=数据末尾；AGENTS.md 已声明 origin 约定 |
+| T11 | 打通 checkpoint 复用或明确归档语义（对应 P11） | P1 | 已完成（Step 47）：判定为归档语义并写入 AGENTS.md/README/persistence docstring；forecast-only 输出与重训一致由测试钉死 |
+| T12 | 修复 auto_select 结果目录归属（对应 P12） | P1 | 已完成（Step 48）：改选后结果写入最终模型名 experiment_path；测试断言目录与 train_summary.model_name 一致 |
+| T13 | 对齐回测与 final fit 训练窗口默认值（对应 P13） | P1 | 已完成（Step 49）：未显式设置时默认等于 history_size；AGENTS.md 已记录不变量 |
+| T14 | 回测失败窗口与 forecast NaN 改显式策略（对应 P14） | P2 | 已完成（Step 51）：默认 RAISE；显式开关容忍并打标 survivor_bias / forecast_nan_filled |
+| T15 | 统一 auto_select 与 test 的预处理/回测口径（对应 P15） | P2 | 已完成（Step 52）：auto_select 复用 per-window processor 管线，同一数据两种入口分数一致（测试钉死） |
+| T16 | 外生变量与聚合填充的 as-of 披露（对应 P16） | P2 | 已完成（Step 53）：`exog_future_known` 声明 + 回测 `future_exog_policy` 披露 + 审计 `fill_uses_future`/`fill_direction_note`；文档同步 |
+| T17 | 更新 `scripts/aidc_power_month/**` 数据文件名到 `20260728` mean 版本（对应 P17） | P2 | 已完成（Step 50）：全部 shell `bash -n` 通过；A/B `run_naive.sh` 实跑通过 |
+| T18 | 收尾评估：分解模式趋势常数外推、detrend 复用 `denoise_window`、lag 特征 bfill、日志 dump 整个 DataFrame、区间预测空壳 | P3 | 已完成（Step 54）：lag bfill 与日志 dump 已修复；其余三项记录为 AGENTS.md 已知限制 |
 
 ## 验证记录
+
+### 2026-09-15（Step 44）
+
+| 命令 | 结果 |
+| --- | --- |
+| `env -u PYTHONPATH .venv/bin/python -m compileall -q run.py app config data_provider models evaluation eda features utils` | 通过 |
+| `env -u PYTHONPATH .venv/bin/python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5` | 通过（exit 0，train/test/forecast 全阶段产物落盘） |
+| `env -u PYTHONPATH .venv/bin/python -m pytest -q` | 89 passed / 24 failed；`tests/` 已从 git 历史 a89d446（2026-05-05 最后快照）恢复到本地作为 T09 起点，24 个失败全部为旧接口测试（`inference_strategy`/`saved_results` 目录参数等，接口在 Step 36–43 已变更），按 T09 待办逐一对齐，不属于 Step 44 范围 |
+| `bash -n` 抽查（`run_naive.sh`、`run_all.sh`、`A/run_eda.sh`） | 通过 |
+| 验证全部跑完后 `ls -a` 检查仓库根 | 无 `.uv_cache` / `.pytest_cache` / `.mplconfig` 新生成 |
+| `env -u PYTHONPATH .venv/bin/python -m pytest -q`（Step 45 / T09 收口） | 116 passed in 13.54s，0 failed |
+| Step 46 / T10：`pytest tests/test_forecast_leakage.py` 等定向测试 + 全量 | 121 passed；AIDC 真实数据 forecast `forecast_origin=2026-07-28T00:00:00`=CSV 末行，预测区间 2026-07-29 起（数据末尾之后） |
+| Step 46 收口：`compileall` + naive CLI smoke（.venv 直调） | 均通过 |
+| Step 47–49 / T11–T13 收口：`env -u PYTHONPATH .venv/bin/python -m pytest` | 125 passed in 16.02s，0 failed |
+| Step 47–49 收口：`compileall` + naive CLI smoke（.venv 直调） | 均通过 |
+| Step 50 / T17：全部 aidc shell `bash -n`；A/B `run_naive.sh` 实跑 | 全部通过（exit 0），聚合审计复用命中（regenerated=false） |
+| Step 51 / T14：`env -u PYTHONPATH .venv/bin/python -m pytest` | 131 passed in 17.92s，0 failed |
+| Step 52 / T15：全量 pytest | 132 passed，0 failed |
+| Step 53 / T16：全量 pytest | 135 passed，0 failed |
+| Step 54 / T18 收口：全量 pytest | 136 passed in 16.61s，0 failed |
+| Step 54 收口：`compileall`、naive CLI smoke、naive+monitor+并行回测 smoke（均 .venv 直调） | 均通过；仓库根无缓存目录新生成 |
 
 ### 2026-05-01 ~ 2026-05-05（Step 1–35 增量验证，已归档）
 
@@ -337,3 +468,5 @@
 - 2026-05-05：EDA recommendations 和 monitor 当前采用本地文件版，不引入数据库或服务端组件；`features/` 仍默认只输出分析快照，只有 `feature_mode=model_input` 时才进入模型输入链路。
 - 2026-05-06：monitor actuals 回填入口已收口到 `evaluation.monitor.run_monitor_actuals_backfill()`；`run.py` 不再保留独立 helper，只负责解析配置并调用统一 monitor 入口。
 - 2026-07-29：AIDC A/B 路 5min 原始数据已更新并重命名为 `*_20251001_20260728.csv`；按既有参数（5min→D，seasonal_slot 填充 4 周）生成日频派生数据后经人工调整，`dataset/aidc_power_month/derived/` 当前仅保留 `A_Loads_1day_mean_20251001_20260728.csv` 与 `B_Loads_1day_mean_20251001_20260728.csv`（各 301 行，2025-10-01 → 2026-07-28，mean 聚合）；max 日峰版本、旧 `20260708` 派生文件及 `.aggregate.json` 审计文件均已清除（审计缺失时重跑同路径聚合会直接重算覆盖，属预期行为）。注意：`scripts/aidc_power_month/**` 仍引用旧的 `20260708` max 文件名，跑模型脚本前需先更新为 mean 新文件。
+- 2026-09-14：以 tsproj_ml 核心不变量（严格 as-of、缺失/异常=RAISE、回测与 final fit 同窗口、结果身份可追溯）为参照完成全线诊断，新增 P09–P18 与 T09–T18。修复顺序：先 T09 恢复测试基线拿到安全网，再 T10 修 forecast 链路；两项完成前不建议基于本项目输出业务预测。
+- 2026-09-15：`CLAUDE.md` 已删除（Step 44 曾收敛为 `@AGENTS.md` 引用）；`AGENTS.md` 为唯一项目约定入口。
