@@ -46,6 +46,7 @@
 
 - 项目约定单一事实来源：所有 AI 编码工具（Codex、Claude Code、Hermes Agent 等）共同遵守本文件；项目约定只改 `AGENTS.md`，不写入任何工具专属配置文件
 - 依赖来源：`pyproject.toml` + `uv.lock`
+- `tests/` 纳入版本控制，与生产代码一同审核；只忽略测试缓存，不忽略测试源码。算法测试应验证数值或行为，不能仅以输出长度、类名或路径键代替正确性断言。
 - Python 环境统一使用项目根目录 `.venv` 的 `uv` 虚拟环境
 - 安装、增加、更新 Python 依赖统一使用 `uv add`；环境同步统一使用 `uv sync --extra dev`；uv 只用于依赖管理与环境同步
 - 运行、测试、脚本一律直接调用 `.venv/bin/python`，不经过 `uv run`，不设置 `UV_CACHE_DIR`；MC/Hermes 会话需加 `env -u PYTHONPATH` 前缀，普通 shell 可省略

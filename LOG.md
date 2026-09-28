@@ -2,7 +2,7 @@
 
 ## 项目状态概览
 
-统计预测主线（训练 → 回测 → 预测 → EDA）已成型并稳定：25 个模型、7 个家族，统一 `fit/predict` 契约，可逆预处理与多源输入齐备。早期迁移/清理（`todo_*`、`models/models_todo`、`eda/eda_todo`、`src/`）均已完成并删除。`tests/` 本地维护、已 gitignore（不进版本库）。开发统一在 `dev` 分支进行，定期向 `main` 合并（2026-07-09 起 `dev` 已与 `main` 同步）。
+统计预测主线（训练 → 回测 → 预测 → EDA）已成型并稳定：25 个模型、7 个家族，统一 `fit/predict` 契约，可逆预处理与多源输入齐备。早期迁移/清理（`todo_*`、`models/models_todo`、`eda/eda_todo`、`src/`）均已完成并删除。`tests/` 自 Step 55 起移出 gitignore，测试源码随生产代码一同审核和版本化。开发统一在 `dev` 分支进行，定期向 `main` 合并（2026-09-28 将本地 `main` 快进合并到 `dev`，随后在 `dev` 完成 Step 55）。
 
 ## 当前问题
 
@@ -26,6 +26,7 @@
 | P16 | 回测未来外生直接取 df 真实值，不区分已知未来与需预报外生；`seasonal_slot` 填充用 ±weeks 双向窗口且审计 JSON 未披露非 as-of 性 | 天气类外生评估为 perfect foresight；派生数据早期回测窗口的训练数据含未来填充信息且无披露 | P2 | 已修复（Step 53：`exog_future_known` 声明 + 回测 perfect_foresight 披露 + 聚合审计 fill 方向披露） |
 | P17 | `scripts/aidc_power_month/**` 66 个模型 shell 仍引用已删除的 `20260708` max 数据文件名 | 模型脚本直接运行全部失败，批量实验入口不可用 | P2 | 已修复（Step 50：更新为 `20260728` mean 版本，A/B 实跑通过） |
 | P18 | `tests/` 在 .gitignore 且本地整个缺失，历史 75 passed 基线不可执行 | 无回归安全网，阻碍上述全部修复的验证 | P0 | 已修复 |
+| P19 | LinearVAR 多步预测用增长后的 history 长度计算未来外生索引，每一步都重复读取未来第 0 行 | lag 0 预测错误、lag 1 历史追加错误，未来行数不足也不报错；direct 推理同样受影响 | P1 | 已修复（Step 55：索引加上当前预测步偏移） |
 
 ## 修复记录
 
@@ -392,6 +393,17 @@
 - 影响范围：`app/pipeline.py`、`tests/test_pipeline.py`、`AGENTS.md`、`LOG.md`
 - 验证：见「验证记录」2026-09-15 条目
 
+### 2026-09-28 / Step 55（测试价值审计与 LinearVAR 回归修复）
+
+- 本地 `main` → `dev` 快进合并至 `63461f0`，继续在 `dev` 开发。
+- 按用户确认移除 `.gitignore` 的 `tests/` 规则；30 个本地测试源码文件纳入本批提交范围，`__pycache__` 仍忽略；同步 AGENTS/README 的版本化约定。
+- 加强原有弱断言：中位数去噪的真实数值、滚动/线性趋势逆变换、STL 非整周期结尾的未来相位；MAPE/SMAPE 改为独立期望值及零分母截断口径。
+- NeuralProphet 的导入失败通过显式 `ImportError` 注入，验证可读告警与真实趋势回退预测；保留独立 fake-backend 成功路径。
+- 删除仅检查类名的 registry 冗余测试（工厂/持久化测试保留行为覆盖）；AR/ETS/seasonal_naive/croston 的四个 pipeline smoke 收敛为参数化用例，读取实际 CSV、summary、图形产物并验证数值、未来时间轴与原点。
+- 新数值断言暴露 P19；用户确认纳入最小生产修复。根因是 `_resolve_feature_value` 用 `abs_idx - len(history)` 恒得 0，修复为 `step_idx + abs_idx - len(history)`，同时修复预测输入和历史追加两个调用方。
+- LinearVAR 的 lag 0、lag 1、未来行数不足用例修复前真实失败，修复后通过；多源 pipeline 测试进一步核验回测数值、预测数值/时间轴和持久化训练快照。
+- 本批仅修改上述必要生产逻辑与测试、文档，未变更依赖或其他模型行为。
+
 ## 待办任务
 | ID | 任务 | 优先级 | 完成条件 |
 | --- | --- | --- | --- |
@@ -415,6 +427,14 @@
 | T18 | 收尾评估：分解模式趋势常数外推、detrend 复用 `denoise_window`、lag 特征 bfill、日志 dump 整个 DataFrame、区间预测空壳 | P3 | 已完成（Step 54）：lag bfill 与日志 dump 已修复；其余三项记录为 AGENTS.md 已知限制 |
 
 ## 验证记录
+
+### 2026-09-28（Step 55）
+
+- 修复前：`env -u PYTHONPATH .venv/bin/python -m pytest tests/test_multisource_models.py -q --tb=short`：3 failed / 2 passed；lag 0 的期望 `[19, 7, 23]` 实际为 `[19, 19, 19]`；lag 1 历史追加亦错；短未来表未抛异常。
+- 修复后：多源模型与 pipeline 定向测试通过；本批相关文件定向验证 43 passed。
+- 全量：`env -u PYTHONPATH .venv/bin/python -m pytest -o addopts='-p no:cacheprovider' -q --durations=5`：138 passed，14 个 ARIMA ConvergenceWarning，无失败/跳过。
+- 进程内临时故障注入：15 项检测全部触发预期断言失败，包括去噪 no-op、逆变换 no-op、季节相位错位、LinearVAR 全零预测、MAPE/SMAPE 恒零、NeuralProphet 错误回退/静默告警、pipeline 预处理失效；未向生产源码写入故障。
+- `git diff --check` 通过；`git status --short --untracked-files=all` 可见全部 30 个测试源码；`git check-ignore -v tests/__pycache__/...` 确认缓存仍被忽略。
 
 ### 2026-09-15（Step 44）
 

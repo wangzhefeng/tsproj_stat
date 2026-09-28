@@ -307,7 +307,9 @@ class LinearVARModel(FallbackMixin, BaseStatModel):
         hist_len = len(history)
         if abs_idx < hist_len:
             return float(history.iloc[abs_idx][col])
-        future_idx = abs_idx - hist_len
+        # history 每步增长，未来表仍以最初 forecast 原点为基准。
+        # 预测特征与追加历史行共用此映射，避免每一步都重复使用未来第 0 行。
+        future_idx = step_idx + abs_idx - hist_len
         if future_exog is not None and col in future_exog.columns and future_idx < len(future_exog):
             return float(future_exog.iloc[future_idx][col])
         if self.require_future_exog:

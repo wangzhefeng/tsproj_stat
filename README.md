@@ -21,7 +21,7 @@
 |- LOG.md              # 问题台账、修复记录与待办
 ```
 
-> `dataset/`（数据集）、`logs/`、`results/`（运行输出）、`tests/`、`.venv/` 均在 `.gitignore` 中，属于本地目录，不会进入版本库；全新 clone 后需自行准备数据集并运行生成输出。
+> `dataset/`（数据集）、`logs/`、`results/`（运行输出）、`.venv/` 均在 `.gitignore` 中，属于本地目录，不会进入版本库；全新 clone 后需自行准备数据集并运行生成输出。`tests/` 测试源码纳入版本控制，测试缓存仍忽略。
 
 ## 安装
 
@@ -305,6 +305,10 @@ results/{data_name}/
 详细问题与修复进度请见 `LOG.md`。
 
 ## 验证
+
+测试除接口烟雾验证外，还检查去噪数值、趋势与季节相位还原、MAPE/SMAPE 的比例与零分母口径，以及预测 CSV 的数值和时间轴。NeuralProphet 依赖失败路径通过显式注入验证，不依赖本机恰好缺包。
+
+LinearVAR 多步预测按原始 forecast 原点逐行消费未来外生值；回归测试覆盖 lag 0/1、显式未来输入覆盖、未来行数不足报错，以及 train/test/forecast 与归档模型的数值一致性。
 
 ```bash
 .venv/bin/python -m pytest -q

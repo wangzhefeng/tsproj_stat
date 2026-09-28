@@ -213,7 +213,6 @@ __marimo__/
 results/
 dataset/
 logs/
-tests/
 
 # macOS
 .DS_Store
