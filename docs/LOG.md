@@ -2,7 +2,7 @@
 
 ## 项目状态概览
 
-统计预测主线（训练 → 回测 → 预测 → EDA）已成型并稳定：25 个模型、7 个家族，统一 `fit/predict` 契约，可逆预处理与多源输入齐备。早期迁移/清理（`todo_*`、`models/models_todo`、`eda/eda_todo`、`src/`）均已完成并删除。`tests/` 自 Step 55 起移出 gitignore，测试源码随生产代码一同审核和版本化。开发统一在 `dev` 分支进行，定期向 `main` 合并（2026-09-28 将本地 `main` 快进合并到 `dev`，随后在 `dev` 完成 Step 55）。
+统计预测主线（训练 → 回测 → 预测 → EDA）已有 29 个模型、7 个家族，统一 `fit/predict` 契约；新增 native、多季节分解、校准区间、外生回归与面板批量执行，验收边界见项目内 `.hermes/plans/IMPLEMENTATION.md`。早期迁移/清理（`todo_*`、`models/models_todo`、`eda/eda_todo`、`src/`）均已完成并删除。`tests/` 自 Step 55 起移出 gitignore，测试源码随生产代码一同审核和版本化。开发统一在 `dev` 分支进行，当前 StatsForecast 扩展尚未提交。
 
 ## 当前问题
 
@@ -29,6 +29,27 @@
 | P19 | LinearVAR 多步预测用增长后的 history 长度计算未来外生索引，每一步都重复读取未来第 0 行 | lag 0 预测错误、lag 1 历史追加错误，未来行数不足也不报错；direct 推理同样受影响 | P1 | 已修复（Step 55：索引加上当前预测步偏移） |
 
 ## 修复记录
+
+### 2026-09-29 / 类型检查收尾
+
+- 原扫描范围 `app config data_provider models evaluation run.py` 的 230 项诊断已清零。根因包括缺少 pandas 类型声明、可选对象/异构结果字典类型不完整、数组与索引边界，以及第三方动态接口推断错误。
+- 通过 `uv add --optional dev 'pandas-stubs==3.0.0.260204'` 增加开发依赖；锁文件对比确认所有原有包版本未变。没有关闭诊断、添加 type-ignore 或扩大 Any 来掩盖模型对象；异构 SARIMAX fit kwargs 保留动态配置类型。
+- StatsForecast / Prophet / VAR 的声明差异在局部精确 Protocol 边界处理；SARIMAX 包装器按委托的结果接口标注。StatsForecast 小数置信水平没有取整。
+- 数值测试先复现 Theta 区间为 NaN、VAR 把下界当成点预测，再修正实际 API 和解包顺序；MSTL 长于拟合段的逆变换复用多周期未来模板，补充相位数值断言。
+- `AGENTS.md` 已指向 `.hermes/plans/IMPLEMENTATION.md`。该计划目录被当前 `.gitignore` 忽略，此次未修改忽略规则；此处保留可纳入版本控制的收尾记录。
+- 当前同范围 Pyright：40 个文件、0 error / 0 warning，报告 `results/statsforecast_validation/results_test/typecheck-final.json`；此前 `type-review.json` 为修复前历史对照，不能当作当前状态。
+- 全量 pytest：191 passed、40 warnings（38 个收敛警告、2 个 MA 初始化警告），报告 `results/statsforecast_validation/results_test/pytest-typecheck.xml`。新增后端区间测试修复前为 2 failed / 2 passed，修复后均通过。
+- 12 组 CLI 已重放：11 组成功、1 组非法原生区间请求预期失败；继续核验 checkpoint 重载、预测数值/时间轴/区间、回测指标和监控文件。精确命令与产物见 `results/statsforecast_validation/results_test/final_validation_report.json`。
+- 未提交、未推送；未改动其他会话正在迁移的脚本、历史工具及忽略配置。业务精度实验仍不在本次类型治理验收范围。
+
+### 2026-09-29 / StatsForecast 扩展与收尾
+
+- 三阶段已落地：native 原生多步及单次拟合区间、StatsForecast 数组适配/能力门禁；ARIMA 外生通路与 sf_auto_arima、MSTL、Conformal；面板批量、受限固定参数更新及三个额外统计候选。默认 direct 和既有依赖锁定不变。
+- 修复外生输入相关问题：递归目标列名丢失、未命名目标覆盖协变量、阶数搜索与最终拟合回归输入不一致；fallback 仍校验未来 schema，AutoARIMA fallback 保留外生回归。
+- 修复批量汇总读取失败仍被标为成功的问题；仅在任务产物全部可读后发布到批量汇总，失败任务不贡献部分结果。
+- checkpoint 元数据增加 StatsForecast 版本；验证重载后预测数值一致。
+- 模型分层为 stable 12 / optional 11 / experimental 6；新候选不加入默认自动选型。
+- 详见项目内 `.hermes/plans/IMPLEMENTATION.md` 的逐项测试映射、运行证据和范围限制；未提交、未推送、未升级依赖，未重跑业务数据全量实验。
 
 ### 2026-05-01 / Step 1
 
@@ -428,6 +449,14 @@
 
 ## 验证记录
 
+### 2026-09-29（StatsForecast 最终验收）
+
+- `env -u PYTHONPATH .venv/bin/python -m pytest -o addopts='-p no:cacheprovider' -q --tb=short --junitxml=results/statsforecast_validation/results_test/pytest-final.xml`：187 passed，38 个 statsmodels ConvergenceWarning。
+- compileall 与 `git diff --check` 通过；持久化测试文件换行规范化前后 AST 一致。
+- 12 组 CLI 验收：11 组成功；1 组非法 native 区间请求按预期 exit 1。包括 EDA、并行回测和监控；panel 的四个独立任务全部通过。核验了训练归档、后端版本、回测指标、预测数值/时间轴/区间及模型重载。
+- 正式结果位于 `results/statsforecast_validation/final/`，命令与产物索引见 `results/statsforecast_validation/results_test/final_validation_report.json`。数据为 demo/合成序列，不代表业务数据精度结论。
+- Pyright 对照基线 249 个错误、当前 230 个错误；增量仅剩上游 AutoARIMA.predict 的 `List[int]` 与实际支持的小数置信水平签名冲突，`alpha=0.125` 已运行验证。未用 type-ignore，不声明类型检查全绿。详细报告位于同目录 `type-review.json`。
+
 ### 2026-09-28（Step 55）
 
 - 修复前：`env -u PYTHONPATH .venv/bin/python -m pytest tests/test_multisource_models.py -q --tb=short`：3 failed / 2 passed；lag 0 的期望 `[19, 7, 23]` 实际为 `[19, 19, 19]`；lag 1 历史追加亦错；短未来表未抛异常。
@@ -490,3 +519,10 @@
 - 2026-07-29：AIDC A/B 路 5min 原始数据已更新并重命名为 `*_20251001_20260728.csv`；按既有参数（5min→D，seasonal_slot 填充 4 周）生成日频派生数据后经人工调整，`dataset/aidc_power_month/derived/` 当前仅保留 `A_Loads_1day_mean_20251001_20260728.csv` 与 `B_Loads_1day_mean_20251001_20260728.csv`（各 301 行，2025-10-01 → 2026-07-28，mean 聚合）；max 日峰版本、旧 `20260708` 派生文件及 `.aggregate.json` 审计文件均已清除（审计缺失时重跑同路径聚合会直接重算覆盖，属预期行为）。注意：`scripts/aidc_power_month/**` 仍引用旧的 `20260708` max 文件名，跑模型脚本前需先更新为 mean 新文件。
 - 2026-09-14：以 tsproj_ml 核心不变量（严格 as-of、缺失/异常=RAISE、回测与 final fit 同窗口、结果身份可追溯）为参照完成全线诊断，新增 P09–P18 与 T09–T18。修复顺序：先 T09 恢复测试基线拿到安全网，再 T10 修 forecast 链路；两项完成前不建议基于本项目输出业务预测。
 - 2026-09-15：`CLAUDE.md` 已删除（Step 44 曾收敛为 `@AGENTS.md` 引用）；`AGENTS.md` 为唯一项目约定入口。
+- 2026-09-29：`wind_dataset.csv` 迁移至 `dataset/wind/`；`scripts/wind_univariate/` 全部 23 个 shell 的 `--data_path` 与注释同步改为 `dataset/wind/wind_dataset.csv`（`data_name` 取文件 stem，`results/wind_dataset/` 结果路径不受影响），README 数据集描述两处同步更新。验证：全目录 grep 无旧路径残留、`bash -n scripts/wind_univariate/*.sh` 通过、`run_eda.sh` 真实执行成功（6574 行加载，产物落在 `results/wind_dataset/results_eda/`）。
+- 2026-09-29：经用户授权删除 `dataset/aidc_power_month/` 下全部 6 个 `*.aggregate.json` 审计文件与 `scripts/aidc_power_month/logs/`（7 月 13 日批跑日志）；`run_all.sh` 日志输出路径改为项目根 `logs/aidc_power_month/run_all_<时间戳>/`（已 gitignore）。验证：`bash -n` 通过、A 路 run_naive 端到端真实跑通且日志落在新路径，测试产物已清理。注意：1day 派生数据经人工调整且审计已删，重跑任一 A/B 模型脚本会触发重聚合并覆盖人工调整，如需保留请在重跑前备份。
+- 2026-09-29：经用户授权清理 `utils/`：删除 `utils/todo/`（`data_gen2.py`、`data_gene1.py`，自述"Historical reference only"、零引用）、`.DS_Store` 与 `__pycache__`；保留 4 个在用模块（`log_util` 被 13 处主线导入、`demo_data` 被 `data_loader` 导入、`random_seed`/`runtime_env` 被 `run.py` 导入）。验证：全仓无残留引用、`pytest -q` 通过、naive CLI smoke 通过。
+- 2026-09-29：文档系统规范化——文档统一收敛 `docs/`，按渐进式披露拆分：根 README 重写为概要+索引（381→38 行），新增 `docs/README.md`（总索引+维护规则）与 11 个主题小文件（setup/usage/data/preprocessing/models/strategies/exogenous/testing/eda/monitoring/limitations，各 ≤60 行）；`.hermes/plans/IMPLEMENTATION.md` 副本收编为 `docs/statsforecast-extension.md`（原文件保留在 .hermes 工作区，gitignored）。待办：AGENTS.md §3/§4/§7 三处同步修改因写入审批超时未落盘，需用户批准后补。
+- 2026-09-29：AGENTS.md 修改经用户重新审批落盘（§3 smoke 路径 A/B→route_A/route_B；§4 升级为"文档同步与检查"含定期人工核查条款；§7 实施记录引用改指 docs/statsforecast-extension.md）；`eda/EDA_REPORT_GUIDE.md` 经用户指令 git mv 至 `docs/eda_report_guide.md`，同步更新 `eda/report_generator.py` 页脚引用、AGENTS.md §6、docs/README.md 与 docs/eda.md 链接。验证：全仓无残留旧引用（LOG 历史条目除外）、EDA smoke 真实跑通且新生成报告页脚指向 docs/eda_report_guide.md、相关单测通过。
+- 2026-09-29：结果路径按 scripts 组织重构——新增一等 CLI 参数 `--results_data_name`（默认 data_path stem，显式覆盖支持层级路径，绝对路径/`..` 拒绝），落地于 `config/default.py`、`run.py`、`app/results.py`（`_resolve_data_name`）、`app/batch.py`、`evaluation/monitor.py`；AIDC route 脚本（60 个）统一传 `aidc_power_month/route_A|B`。存量结果迁移：当前窗口 `A|B_Loads_1day_mean_20251001_20260728` → `results/aidc_power_month/route_A|route_B/`；过期窗口（`20260708` 系列 4 个 + 非 mean 的 `20260728` 2 个，数据文件已不存在）归档到 `results/aidc_power_month/_archive/`。新增 `tests/test_app_config.py::test_results_data_name_overrides_data_name_resolution`。验证：全量 pytest 192 passed、`route_A/run_eda.sh` 真实跑通（data_name=aidc_power_month/route_A，EDA 报告落新路径且未触发重聚合）、docs/usage.md 与 docs/data.md 同步。注意：monitor 回填旧实验路径时需带 `--results_data_name` 或使用新的相对 experiment path。
+- 2026-09-29：清理 `results/abs/` 空目录树（54 个空目录、0 文件）——系 results_data_name 首版实现 bug（`strip("/")` 先于校验执行，非法值 `/abs` 被洗成合法名）在测试运行时真实 mkdir 的残留；bug 已于同日修复，残留经用户确认删除。教训落地：`test_results_data_name_overrides_data_name_resolution` 补合法层级名分支（`results_dir` 指向 `tmp_path` 并断言目录真实展开），杜绝此类副作用再写进仓库 `results/`。验证：该测试 9 项全过，测试运行后 `results/` 根无新增目录。

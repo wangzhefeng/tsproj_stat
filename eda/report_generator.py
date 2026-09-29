@@ -682,7 +682,7 @@ def build_footer(ctx: dict) -> list[str]:
         "",
         "本报告由 `eda/report_generator.py` 依据同目录下的 `eda_summary.json`、"
         "`eda_diagnostics.csv`、`eda_recommendations.json` 与 `plots/` 图表，"
-        "以及派生数据旁的聚合审计 JSON 自动生成；如需精修，可参考 `eda/EDA_REPORT_GUIDE.md`。",
+        "以及派生数据旁的聚合审计 JSON 自动生成；如需精修，可参考 `docs/eda_report_guide.md`。",
         "",
     ]
 
