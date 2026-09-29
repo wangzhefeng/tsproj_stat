@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# 单变量风电脚本：使用 dataset/wind_dataset.csv，DATE 为时间列，WIND 为目标列。
+# 单变量风电脚本：使用 dataset/wind/wind_dataset.csv，DATE 为时间列，WIND 为目标列。
 # theta 是轻量统计预测模型，这里显式设置日频周周期。
 cd "$(dirname "$0")/../.."
 
@@ -14,7 +14,7 @@ export LOG_NAME="$model_name"
 .venv/bin/python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \
-  --data_path dataset/wind_dataset.csv \
+  --data_path dataset/wind/wind_dataset.csv \
   --time_col DATE \
   --target_col WIND \
   --freq D \

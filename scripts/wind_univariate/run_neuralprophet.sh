@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# 单变量风电脚本：使用 dataset/wind_dataset.csv，DATE 为时间列，WIND 为目标列。
+# 单变量风电脚本：使用 dataset/wind/wind_dataset.csv，DATE 为时间列，WIND 为目标列。
 # NeuralProphet 属于 experimental 扩展模型；当前 smoke 可运行，但可能因 holidays 兼容问题走趋势 fallback。
 cd "$(dirname "$0")/../.."
 
@@ -14,7 +14,7 @@ export LOG_NAME="$model_name"
 .venv/bin/python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \
-  --data_path dataset/wind_dataset.csv \
+  --data_path dataset/wind/wind_dataset.csv \
   --time_col DATE \
   --target_col WIND \
   --freq D \

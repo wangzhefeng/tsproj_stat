@@ -11,7 +11,7 @@ export LOG_NAME=eda_wind_dataset
 .venv/bin/python -u run.py \
   --project_name tsproj_stat \
   --seed 2026 \
-  --data_path dataset/wind_dataset.csv \
+  --data_path dataset/wind/wind_dataset.csv \
   --time_col DATE \
   --target_col WIND \
   --freq D \
