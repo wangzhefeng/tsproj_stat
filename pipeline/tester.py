@@ -38,6 +38,7 @@ class Tester:
         interval_method: str = "none",
         interval_alpha: float = 0.05,
         conformal_n_windows: int = 20,
+        levels: list[float] | None = None,
         refit_every: int = 1,
         ignore_unsupported_inputs: bool = False,
     ):
@@ -61,6 +62,7 @@ class Tester:
         self.interval_method = interval_method
         self.interval_alpha = interval_alpha
         self.conformal_n_windows = conformal_n_windows
+        self.levels = levels
         self.refit_every = refit_every
         self.ignore_unsupported_inputs = ignore_unsupported_inputs
         self.factory = ModelFactory()
@@ -88,5 +90,6 @@ class Tester:
             interval_method=self.interval_method,
             interval_alpha=self.interval_alpha,
             conformal_n_windows=self.conformal_n_windows,
+            levels=self.levels,
             refit_every=self.refit_every,
         )

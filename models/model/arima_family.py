@@ -139,6 +139,7 @@ class ARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
         self.selected_score = None
         self._fallback = NaiveModel()
         self._result = None
+        self._train_y = None
 
     def fit(
         self,
@@ -147,6 +148,7 @@ class ARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
         X_future: pd.DataFrame | None = None,
     ) -> "ARIMAModel":
         series = to_univariate_series(y).astype(float)
+        self._train_y = series
         exog = self._fit_exog(y, X_hist, X_future)
         self._fallback.fit(series)
         try:
@@ -181,6 +183,13 @@ class ARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
         if not isinstance(forecast, pd.Series):
             forecast = pd.Series(forecast)
         return forecast.reset_index(drop=True).rename("yhat")
+
+    def fitted_values(self) -> pd.Series:
+        if self._result is None or self._train_y is None:
+            raise ValueError(
+                f"{type(self).__name__} has no fitted result; fitted values unavailable"
+            )
+        return pd.Series(self._result.fittedvalues, name="fitted").reset_index(drop=True)
 
     def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
         import pandas as pd, numpy as np
@@ -247,6 +256,7 @@ class SARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
             self.fit_kwargs.update(fit_kwargs)
         self._fallback = TrendFallbackModel()
         self._result = None
+        self._train_y = None
 
     def fit(
         self,
@@ -255,6 +265,7 @@ class SARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
         X_future: pd.DataFrame | None = None,
     ) -> "SARIMAModel":
         series = to_univariate_series(y).astype(float)
+        self._train_y = series
         exog = self._fit_exog(y, X_hist, X_future)
         self._fallback.fit(series)
         try:
@@ -288,6 +299,13 @@ class SARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
         if self._result is None:
             return self._fallback_predict(horizon)
         return pd.Series(self._result.forecast(steps=horizon, exog=exog), name="yhat").reset_index(drop=True)
+
+    def fitted_values(self) -> pd.Series:
+        if self._result is None or self._train_y is None:
+            raise ValueError(
+                f"{type(self).__name__} has no fitted result; fitted values unavailable"
+            )
+        return pd.Series(self._result.fittedvalues, name="fitted").reset_index(drop=True)
 
     def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
         import pandas as pd, numpy as np
@@ -342,6 +360,7 @@ class AutoARIMAModel(ExogenousMixin, BaseStatModel):
         self.error_action = error_action
         self.suppress_warnings = suppress_warnings
         self._result = None
+        self._train_y: pd.Series | None = None
         self._fallback: ARIMAModel | None = None
 
     def fit(
@@ -351,6 +370,7 @@ class AutoARIMAModel(ExogenousMixin, BaseStatModel):
         X_future: pd.DataFrame | None = None,
     ) -> "AutoARIMAModel":
         series = to_univariate_series(y).astype(float)
+        self._train_y = series
         exog = self._fit_exog(y, X_hist, X_future)
         self._result = None
         try:
@@ -427,12 +447,23 @@ class StatsForecastAutoARIMAModel(ExogenousMixin, BaseStatModel):
                            max_order=max_order, stepwise=stepwise, ic=ic,
                            approximation=approximation, start_p=min(2, max_p), start_q=min(2, max_q))
         self._result = None
+        self._train_y: pd.Series | None = None
 
     def fit(self, y, X_hist=None, X_future=None):
         from statsforecast.models import AutoARIMA
         exog = self._fit_exog(y, X_hist, X_future)
-        self._result = AutoARIMA(**self.params).fit(to_univariate_series(y).to_numpy(dtype=float), X=exog)
+        self._train_y = to_univariate_series(y).astype(float)
+        self._result = AutoARIMA(**self.params).fit(self._train_y.to_numpy(dtype=float), X=exog)
         return self
+
+    def fitted_values(self) -> pd.Series:
+        # SF 2.0.1 forecast(fitted=True) 需重传训练序列。
+        if self._result is None or self._train_y is None:
+            raise ValueError(
+                f"{type(self).__name__} has no fitted result; fitted values unavailable"
+            )
+        fc = self._result.forecast(self._train_y.to_numpy(dtype=float), 1, fitted=True)
+        return pd.Series(np.asarray(fc["fitted"], dtype=float), name="fitted").reset_index(drop=True)
 
     def predict(self, horizon, X_future=None):
         validate_horizon(horizon)
@@ -451,3 +482,33 @@ class StatsForecastAutoARIMAModel(ExogenousMixin, BaseStatModel):
         predict = cast(_StatsForecastPredict, self._result.predict)
         pred = predict(horizon, X=self._predict_exog(horizon, X_future), level=[level])
         return pd.DataFrame({"yhat": pred["mean"], "yhat_lower": pred[f"lo-{level}"], "yhat_upper": pred[f"hi-{level}"]})
+
+    def predict_with_levels(self, horizon, X_future=None, levels=None, alpha=0.05):
+        """SF 后端原生多水平：一次 predict(level=[...]) 返回全部水平列。"""
+        from forecasting.intervals import resolve_interval_levels
+
+        validate_horizon(horizon)
+        if self._result is None:
+            raise RuntimeError("Model is not fitted")
+        resolved = resolve_interval_levels(levels, alpha)
+        predict = cast(_StatsForecastPredict, self._result.predict)
+        sf_levels = [round(level * 100, 10) for level in resolved]
+        pred = predict(horizon, X=self._predict_exog(horizon, X_future), level=sf_levels)
+        return statsforecast_levels_frame(pred, resolved, len(resolved) > 1)
+
+
+def statsforecast_levels_frame(pred: dict, levels: list[float], multi: bool) -> pd.DataFrame:
+    """StatsForecast 后端 predict(level=[...]) 结果 → 统一多水平列名 DataFrame。
+
+    SF 列键为 lo-{level}/hi-{level}（level 为百分数 float，如 lo-80.0）；
+    本项目统一为 yhat_lower[_{label}]/yhat_upper[_{label}]。
+    """
+    from forecasting.intervals import interval_bound_columns
+
+    data: dict[str, np.ndarray] = {"yhat": pred["mean"]}
+    for level in levels:
+        sf_level = round(level * 100, 10)
+        lower_col, upper_col = interval_bound_columns(level, multi=multi)
+        data[lower_col] = pred[f"lo-{sf_level}"]
+        data[upper_col] = pred[f"hi-{sf_level}"]
+    return pd.DataFrame(data)

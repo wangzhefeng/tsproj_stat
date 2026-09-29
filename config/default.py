@@ -132,9 +132,22 @@ class AppConfig:
     return_intervals: bool = False
     interval_alpha: float = 0.05
     interval_method: str = "native"
+    # 多置信水平（小数，如 [0.8, 0.95]）：空表回退单水平 [1 - interval_alpha]，
+    # 多水平输出列带水平后缀（yhat_lower_80 等）。
+    interval_levels: list[float] = field(default_factory=list)
     conformal_n_windows: int = 20
     # forecast NaN 容忍开关：默认 False（输出含 NaN 即 RAISE）；显式开启才 ffill/bfill 修补并在 forecast_summary 打标
     forecast_allow_nan_fill: bool = False
+    # train 阶段拟合值诊断（P8）：fitted_values.csv + residual_stats（含 Ljung-Box）。
+    # 默认 False；显式开启后，模型未声明 supports_fitted_values 时 RAISE。
+    train_fitted_values: bool = False
+    # 样本路径模拟（P9）：forecast 阶段附加 simulated_paths.csv / simulated_quantiles.csv。
+    # 误差驱动路径集成（bootstrap/normal），任意模型×策略通用；默认关闭。
+    simulate_enabled: bool = False
+    simulate_n_paths: int = 100
+    simulate_error_distribution: str = "bootstrap"
+    simulate_n_windows: int = 20
+    simulate_quantiles: list[float] = field(default_factory=lambda: [0.1, 0.5, 0.9])
     # forward 快速路径：recursive 策略下首步 fit + 后续步固定参数 update 滤波，
     # 免去逐步全量重拟合；仅对 supports_update 模型开放（ARIMA/SARIMA 家族）。
     forecast_use_update: bool = False
@@ -256,6 +269,18 @@ class AppConfig:
             raise ValueError("interval_method must be native or conformal")
         if not 0 < self.interval_alpha < 1:
             raise ValueError("interval_alpha must be in (0, 1)")
+        for level in self.interval_levels:
+            if not 0 < level < 1:
+                raise ValueError(f"interval_levels must be in (0, 1), got {level}")
+        if self.simulate_error_distribution not in {"bootstrap", "normal"}:
+            raise ValueError("simulate_error_distribution must be bootstrap or normal")
+        if self.simulate_n_paths < 2:
+            raise ValueError("simulate_n_paths must be >= 2")
+        if self.simulate_n_windows < 2:
+            raise ValueError("simulate_n_windows must be >= 2")
+        for q in self.simulate_quantiles:
+            if not 0 < q < 1:
+                raise ValueError(f"simulate_quantiles must be in (0, 1), got {q}")
         if self.conformal_n_windows < 2:
             raise ValueError("conformal_n_windows must be >= 2")
         if self.return_intervals and (self.scale or self.feature_mode == "model_input"):

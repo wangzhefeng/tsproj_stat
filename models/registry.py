@@ -41,6 +41,7 @@ class ModelSpec:
     supports_prediction_intervals: bool = False
     supports_native_multistep: bool = True
     supports_update: bool = False
+    supports_fitted_values: bool = False
 
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
@@ -85,6 +86,15 @@ for _name in ("ar", "ma", "arma", "arima", "sarima", "auto_arima"):
 
 for _name in ("ar", "ma", "arma", "arima", "sarima"):
     MODEL_REGISTRY[_name].supports_update = True
+
+# P8：后端提供拟合值且语义明确的模型开放 fitted values 诊断；
+# naive 类基线的一步拟合值是 t-1 平移，语义争议大，不纳入。
+# 注：theta（statsmodels 后端）不在此列——ThetaModelResults 不提供 fittedvalues；
+# SF 后端的 auto_theta/dynamic_theta 有 forecast(fitted=True)，保留。
+for _name in ("ar", "ma", "arma", "arima", "sarima", "auto_arima",
+              "sf_auto_arima", "ets", "auto_ets", "auto_theta",
+              "dynamic_theta", "auto_ces", "random_walk_drift", "seasonal_window_average"):
+    MODEL_REGISTRY[_name].supports_fitted_values = True
 
 
 def create_stat_model(name: str, params: dict | None = None) -> BaseStatModel:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -243,10 +243,12 @@ def run_interval_inference(
     X_hist: pd.DataFrame | None = None,
     X_future: pd.DataFrame | None = None,
     alpha: float = 0.05,
+    levels: Sequence[float] | None = None,
 ) -> pd.DataFrame:
     """执行区间预测编排。
 
     native/single_step/direct 从同一拟合模型同时取点预测与原生区间；
+    多水平经 predict_with_levels 一次预测返回全部水平列（拟合次数不随水平数增加）；
     recursive/dirrec 下原生区间不可用（逐步重拟合破坏解析连续性），
     在此显式失败并指向 conformal，不再产出 NaN 区间列（P6 行为变更）。
     """
@@ -255,6 +257,11 @@ def run_interval_inference(
     validate_single_step_horizon(strategy, horizon)
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
+    # 延迟导入避免 intervals ↔ strategies 循环依赖（IntervalSpec 协议归 intervals）。
+    from forecasting.intervals import resolve_interval_levels
+
+    resolved_levels = resolve_interval_levels(levels, alpha)
+    multi = len(resolved_levels) > 1
     if strategy in {"recursive", "dirrec"}:
         raise ValueError(
             f"native intervals are unavailable under strategy={strategy!r}; "
@@ -270,13 +277,17 @@ def run_interval_inference(
         model = model_builder()
         first_future = future_frame if strategy == "native" else _future_row(future_frame, 0)
         model.fit(history_series, X_hist=history_frame, X_future=first_future)
-        result = model.predict_with_intervals(horizon, X_future=first_future, alpha=alpha)
+        result = model.predict_with_levels(horizon, X_future=first_future, levels=resolved_levels)
         if len(result) != horizon:
             raise ValueError(f"interval prediction length {len(result)} != horizon {horizon}")
         if strategy == "native":
-            values = result[["yhat", "yhat_lower", "yhat_upper"]].to_numpy(dtype=float)
-            if not np.isfinite(values).all() or (values[:, 1] > values[:, 2]).any():
+            bound_cols = [c for c in result.columns if c.startswith(("yhat_lower", "yhat_upper"))]
+            values = result[["yhat", *bound_cols]].to_numpy(dtype=float)
+            if not np.isfinite(values).all():
                 raise ValueError("invalid native intervals; use conformal or inspect backend failure")
+            for lower_col, upper_col in _iter_bound_pairs(result):
+                if (result[lower_col] > result[upper_col]).any():
+                    raise ValueError("invalid native intervals; use conformal or inspect backend failure")
         return result.reset_index(drop=True)
 
     rows: list[dict[str, float]] = []
@@ -284,15 +295,23 @@ def run_interval_inference(
         model = model_builder()
         prefix = _future_prefix(future_frame, step_idx + 1)
         model.fit(history_series, X_hist=history_frame, X_future=prefix)
-        result = model.predict_with_intervals(step_idx + 1, X_future=prefix, alpha=alpha).reset_index(drop=True)
+        result = model.predict_with_levels(step_idx + 1, X_future=prefix, levels=resolved_levels).reset_index(drop=True)
         if len(result) != step_idx + 1:
             raise ValueError("interval prediction length mismatch")
-        row = result.iloc[-1]
-        rows.append(
-            {
-                "yhat": float(row["yhat"]),
-                "yhat_lower": float(row["yhat_lower"]) if pd.notna(row["yhat_lower"]) else np.nan,
-                "yhat_upper": float(row["yhat_upper"]) if pd.notna(row["yhat_upper"]) else np.nan,
-            }
-        )
+        row: dict[str, float] = {"yhat": float(result["yhat"].iloc[-1])}
+        last = result.iloc[-1]
+        for lower_col, upper_col in _iter_bound_pairs(result):
+            row[lower_col] = float(last[lower_col]) if pd.notna(last[lower_col]) else np.nan
+            row[upper_col] = float(last[upper_col]) if pd.notna(last[upper_col]) else np.nan
+        rows.append(row)
     return pd.DataFrame(rows)
+
+
+def _iter_bound_pairs(frame: pd.DataFrame):
+    """按水平配对迭代区间列：yhat_lower[_suffix] ↔ yhat_upper[_suffix]。"""
+    for col in frame.columns:
+        if col.startswith("yhat_lower"):
+            suffix = col[len("yhat_lower"):]
+            upper = f"yhat_upper{suffix}"
+            if upper in frame.columns:
+                yield col, upper

@@ -67,6 +67,14 @@ class ETSModel(FallbackMixin, BaseStatModel):
             return self._fallback_predict(horizon)
         return pd.Series(self._result.forecast(horizon), name="yhat").reset_index(drop=True)
 
+    def fitted_values(self) -> pd.Series:
+        # statsmodels ExponentialSmoothingResults.fittedvalues（探针已验证）。
+        if self._result is None:
+            raise ValueError(
+                f"{type(self).__name__} has no fitted result; fitted values unavailable"
+            )
+        return pd.Series(self._result.fittedvalues, name="fitted").reset_index(drop=True)
+
     def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
         import pandas as pd, numpy as np
         if self._result is None:

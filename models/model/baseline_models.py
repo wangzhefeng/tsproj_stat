@@ -142,6 +142,7 @@ class _StatsForecastModelBase(BaseStatModel, ABC):
         self.season_length = season_length
         self.freq = freq
         self._sf = None
+        self._train_y: pd.Series | None = None
         self._column_name: str | None = None
 
     @staticmethod
@@ -158,8 +159,18 @@ class _StatsForecastModelBase(BaseStatModel, ABC):
         series = _preserve_univariate_series(y)
         # 单序列使用数组接口；freq 保留兼容，不再制造虚拟时间轴。
         # pandas 3 CoW 暴露只读视图，CES 内核会原地工作，必须交付自有可写数组。
+        self._train_y = series.astype(float).reset_index(drop=True)
         self._sf = self._build_model().fit(series.to_numpy(dtype=float, copy=True))
         return self
+
+    def fitted_values(self) -> pd.Series:
+        # SF 2.0.1 forecast(fitted=True) 需重传训练序列。
+        if self._sf is None or self._train_y is None:
+            raise ValueError(
+                f"{type(self).__name__} has no fitted result; fitted values unavailable"
+            )
+        fc = self._sf.forecast(self._train_y.to_numpy(dtype=float), 1, fitted=True)
+        return pd.Series(np.asarray(fc["fitted"], dtype=float), name="fitted").reset_index(drop=True)
 
     def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
@@ -181,6 +192,19 @@ class _StatsForecastModelBase(BaseStatModel, ABC):
             "yhat_lower": pred[f"lo-{level}"],
             "yhat_upper": pred[f"hi-{level}"],
         })
+
+    def predict_with_levels(self, horizon: int, X_future=None, levels=None, alpha: float = 0.05):
+        """SF 后端原生多水平：一次 predict(level=[...]) 返回全部水平列。"""
+        from models.model.arima_family import statsforecast_levels_frame
+        from forecasting.intervals import resolve_interval_levels
+
+        validate_horizon(horizon)
+        if self._sf is None:
+            raise RuntimeError("Model is not fitted")
+        resolved = resolve_interval_levels(levels, alpha)
+        sf_levels = [round(level * 100, 10) for level in resolved]
+        pred = self._sf.predict(horizon, level=sf_levels)
+        return statsforecast_levels_frame(pred, resolved, len(resolved) > 1)
 
 
 class AutoETSModel(_StatsForecastModelBase):

@@ -32,6 +32,16 @@ class BacktestResult:
     failed_windows: list[dict]
 
 
+def _iter_interval_pairs(frame: pd.DataFrame):
+    """按水平配对迭代区间列：yhat_lower[_suffix] ↔ yhat_upper[_suffix]。"""
+    for col in frame.columns:
+        if col.startswith("yhat_lower"):
+            suffix = col[len("yhat_lower"):]
+            upper = f"yhat_upper{suffix}"
+            if upper in frame.columns:
+                yield col, upper
+
+
 def rolling_backtest(
     df: pd.DataFrame,
     model_builder: Callable[[], BaseStatModel],
@@ -53,11 +63,13 @@ def rolling_backtest(
     interval_method: str = "none",
     interval_alpha: float = 0.05,
     conformal_n_windows: int = 20,
+    levels: list[float] | None = None,
     refit_every: int = 1,
 ) -> BacktestResult:
     """执行滚动回测。
 
     expanding 窗口从序列开头逐步扩张；sliding 窗口保持固定 train_size。
+    levels 支持多置信水平区间指标（列名带水平后缀，如 interval_coverage_80）。
     默认 RAISE：任一窗口失败即中止（避免汇总指标带存活偏差）；
     显式 allow_failed_windows=True 时才跳过失败窗口，且 summary 打标 survivor_bias。
     """
@@ -136,6 +148,7 @@ def rolling_backtest(
         use_proc = proc is not None and getattr(proc, "enabled", False)
         did_refit = True
         interval_df = None
+        bound_pairs: list[tuple[str, str]] = []
         try:
             if proc is not None and use_proc and interval_method == "none":
                 train_y_model = proc.fit_transform(train_y)
@@ -159,7 +172,8 @@ def rolling_backtest(
             elif interval_method != "none":
                 interval_df = predict_frame(model_builder, train_y, horizon, strategy,
                                             train_x_hist, test_x_future, processor_builder,
-                                            interval_method, interval_alpha, conformal_n_windows)
+                                            interval_method, interval_alpha, conformal_n_windows,
+                                            levels=levels)
                 pred = interval_df["yhat"]
             else:
                 pred = run_point_inference(
@@ -206,10 +220,20 @@ def rolling_backtest(
         }
         pred_rows = []
         if interval_df is not None:
-            lower, upper = interval_df["yhat_lower"], interval_df["yhat_upper"]
-            metric_row.update(interval_coverage=coverage(test_y, lower, upper),
-                              interval_width=interval_width(lower, upper),
-                              winkler_score=winkler_score(test_y, lower, upper, interval_alpha))
+            bound_pairs = [(c, u) for c, u in _iter_interval_pairs(interval_df)]
+            for lower_col, upper_col in bound_pairs:
+                suffix = lower_col[len("yhat_lower"):]
+                level_tag = suffix.strip("_") if suffix else None
+                coverage_key = f"interval_coverage_{level_tag}" if level_tag else "interval_coverage"
+                width_key = f"interval_width_{level_tag}" if level_tag else "interval_width"
+                winkler_key = f"winkler_score_{level_tag}" if level_tag else "winkler_score"
+                lower, upper = interval_df[lower_col], interval_df[upper_col]
+                level_alpha = 1.0 - (float(level_tag) / 100.0) if level_tag else interval_alpha
+                metric_row.update(
+                    {coverage_key: coverage(test_y, lower, upper),
+                     width_key: interval_width(lower, upper),
+                     winkler_key: winkler_score(test_y, lower, upper, level_alpha)},
+                )
         for idx in range(horizon):
             row: dict[str, object] = {
                 "window_id": int(window_id),
@@ -223,8 +247,9 @@ def rolling_backtest(
             if test_time is not None:
                 row["timestamp"] = test_time.iloc[idx]
             if interval_df is not None:
-                row["yhat_lower"] = float(interval_df["yhat_lower"].iloc[idx])
-                row["yhat_upper"] = float(interval_df["yhat_upper"].iloc[idx])
+                for lower_col, upper_col in bound_pairs:
+                    row[lower_col] = float(interval_df[lower_col].iloc[idx])
+                    row[upper_col] = float(interval_df[upper_col].iloc[idx])
             pred_rows.append(row)
         return {"failed": False, "metric_row": metric_row, "prediction_rows": pred_rows}
 
@@ -295,7 +320,9 @@ def rolling_backtest(
     summary_values["refit_every"] = refit_every
     summary_values["refit_count"] = int(metrics_df["refitted"].to_numpy(dtype=bool).sum())
     if interval_method != "none":
-        for key in ("interval_coverage", "interval_width", "winkler_score"):
+        interval_keys = [k for k in metrics_df.columns
+                         if k.startswith(("interval_coverage", "interval_width", "winkler_score"))]
+        for key in interval_keys:
             values = metrics_df[key].to_numpy(dtype=float)
             available = values[~np.isnan(values)]
             summary_values[key] = float(available.mean()) if available.size else float("nan")

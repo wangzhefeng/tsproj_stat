@@ -727,6 +727,13 @@ class ModelApp:
         # model training（计算在 stages，落盘收口在本方法）
         stage = run_train_stage(self.cfg, prepared)
         model = stage.model
+        # P8：拟合值诊断产物（原始尺度 y/fitted/residual + 残差摘要）
+        fitted_values_path = None
+        if stage.fitted_df is not None:
+            fitted_values_path = dataframe_to_csv(
+                self.artifacts.train_results_dir / "fitted_values.csv",
+                stage.fitted_df,
+            )
         # model saving with metadata
         model_path = self.artifacts.checkpoints_dir / "model.pkl"
         save_model(model, str(model_path), meta={
@@ -782,6 +789,7 @@ class ModelApp:
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "checkpoint_path": str(model_path),
             "model_info_path": model_info_path,
+            "residual_stats": stage.residual_stats,
         }
         spec = MODEL_REGISTRY.get(self.cfg.model_name)
         if spec is not None:
@@ -791,12 +799,15 @@ class ModelApp:
             train_summary
         )
         
-        return {
+        result = {
             "model_path": str(model_path),
             "train_series_path": train_series_path,
             "model_info_path": model_info_path,
             "train_summary_path": train_summary_path,
         }
+        if fitted_values_path is not None:
+            result["fitted_values_path"] = fitted_values_path
+        return result
 
     def test(self, df: pd.DataFrame, processor_builder=None) -> dict[str, str]:
         """执行 rolling backtest，并保存窗口级预测、指标汇总和诊断图。"""
@@ -878,21 +889,35 @@ class ModelApp:
         )
         last_nan_filled = stage.last_nan_filled
         interval_metadata = stage.interval_metadata
+        forecast_base = {
+            "step": range(1, self.cfg.predict_horizon + 1),
+            "timestamp": forecast_timestamps(prepared.history_time, self.cfg.predict_horizon, self.cfg.freq),
+            "yhat": stage.forecast_df["yhat"].values,
+        }
         if self.cfg.return_intervals:
+            # 区间列动态展开：单水平 legacy 列名，多水平带水平后缀（P7）。
+            bound_cols = [c for c in stage.forecast_df.columns
+                          if c.startswith(("yhat_lower", "yhat_upper"))]
             forecast_df = pd.DataFrame({
-                "step": range(1, self.cfg.predict_horizon + 1),
-                "timestamp": forecast_timestamps(prepared.history_time, self.cfg.predict_horizon, self.cfg.freq),
-                "yhat": stage.forecast_df["yhat"].values,
-                "yhat_lower": stage.forecast_df["yhat_lower"].values,
-                "yhat_upper": stage.forecast_df["yhat_upper"].values,
+                **forecast_base,
+                **{col: stage.forecast_df[col].values for col in bound_cols},
             })
         else:
-            forecast_df = pd.DataFrame({
-                "step": range(1, self.cfg.predict_horizon + 1),
-                "timestamp": forecast_timestamps(prepared.history_time, self.cfg.predict_horizon, self.cfg.freq),
-                "yhat": stage.forecast_df["yhat"].values,
-            })
+            forecast_df = pd.DataFrame(forecast_base)
         forecast_path = dataframe_to_csv(self.artifacts.forecast_results_dir / "forecast.csv", forecast_df)
+        simulate_outputs: dict[str, str] = {}
+        if getattr(self.cfg, "simulate_enabled", False):
+            # P9：路径模拟独立产物（长表 + 分位带），不与 forecast.csv 列混排。
+            if stage.simulate_paths_df is not None:
+                simulate_outputs["simulated_paths_path"] = dataframe_to_csv(
+                    self.artifacts.forecast_results_dir / "simulated_paths.csv",
+                    stage.simulate_paths_df,
+                )
+            if stage.simulate_quantile_df is not None:
+                simulate_outputs["simulated_quantiles_path"] = dataframe_to_csv(
+                    self.artifacts.forecast_results_dir / "simulated_quantiles.csv",
+                    stage.simulate_quantile_df,
+                )
         forecast_plot_path = plot_forecast(
             history_df=prepared.history_df.tail(self.cfg.history_size).copy(),
             forecast_df=forecast_df,
@@ -929,12 +954,14 @@ class ModelApp:
                 "forecast_nan_filled": int(last_nan_filled),
                 "interval_method": self.cfg.interval_method if self.cfg.return_intervals else "none",
                 "interval_metadata": interval_metadata,
+                "simulate": stage.simulate_metadata if getattr(self.cfg, "simulate_enabled", False) else None,
             },
         )
         result = {
             "prediction_path": forecast_path,
             "forecast_summary_path": forecast_summary_path,
             "forecast_plot_path": forecast_plot_path,
+            **simulate_outputs,
         }
         if self.cfg.monitor_enabled:
             monitor = ModelMonitor(
@@ -942,12 +969,23 @@ class ModelApp:
                 setting=None,
                 window=self.cfg.monitor_window,
             )
-            monitor.log_forecast(
-                run_id=self.run_id,
-                yhat=pd.Series(forecast_df["yhat"].values, name="yhat"),
-                yhat_lower=pd.Series(forecast_df["yhat_lower"].values) if "yhat_lower" in forecast_df.columns else None,
-                yhat_upper=pd.Series(forecast_df["yhat_upper"].values) if "yhat_upper" in forecast_df.columns else None,
-            )
+            bound_cols = [c for c in forecast_df.columns
+                          if c.startswith(("yhat_lower", "yhat_upper"))]
+            if len(bound_cols) > 2:
+                # 多水平：逐水平列写入，滚动覆盖率按水平跟踪（P7）。
+                monitor.log_forecast_levels(
+                    run_id=self.run_id,
+                    yhat=pd.Series(forecast_df["yhat"].values, name="yhat"),
+                    levels=self.cfg.interval_levels,
+                    bounds={col: pd.Series(forecast_df[col].values) for col in bound_cols},
+                )
+            else:
+                monitor.log_forecast(
+                    run_id=self.run_id,
+                    yhat=pd.Series(forecast_df["yhat"].values, name="yhat"),
+                    yhat_lower=pd.Series(forecast_df["yhat_lower"].values) if "yhat_lower" in forecast_df.columns else None,
+                    yhat_upper=pd.Series(forecast_df["yhat_upper"].values) if "yhat_upper" in forecast_df.columns else None,
+                )
             result["monitor_predictions_path"] = str(monitor._pred_path)
             result["monitor_actuals_path"] = str(monitor._act_path)
             result["monitor_metrics_path"] = str(monitor._metrics_path)

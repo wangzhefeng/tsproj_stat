@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
     from models.registry import ModelSpec
@@ -70,6 +70,50 @@ class BaseStatModel(ABC):
                 "yhat_lower": np.full(len(yhat), np.nan),
                 "yhat_upper": np.full(len(yhat), np.nan),
             }
+        )
+
+    def predict_with_levels(
+        self,
+        horizon: int,
+        X_future: pd.DataFrame | None = None,
+        levels: Sequence[float] | None = None,
+        alpha: float = 0.05,
+    ) -> pd.DataFrame:
+        """多置信水平区间预测。
+
+        levels 为小数置信水平（如 [0.8, 0.95]）；单水平输出 legacy 列名
+        yhat_lower/yhat_upper，多水平输出 yhat_lower_80/yhat_upper_95 式带后缀列。
+        默认实现逐水平委托 predict_with_intervals——模型只需实现单水平契约
+        即可获得多水平能力（一次 fit 后多次预测，不重复拟合）。
+        后端原生支持多水平的模型应重写本方法（如 StatsForecast 后端一次
+        predict(level=[...]) 返回全部水平）。
+        """
+        from forecasting.intervals import interval_bound_columns, resolve_interval_levels
+
+        resolved = resolve_interval_levels(levels, alpha)
+        multi = len(resolved) > 1
+        frames: dict[str, np.ndarray] = {}
+        for level in resolved:
+            result = self.predict_with_intervals(horizon, X_future, alpha=1.0 - level)
+            lower_col, upper_col = interval_bound_columns(level, multi=multi)
+            frames[lower_col] = result["yhat_lower"].to_numpy(dtype=float)
+            frames[upper_col] = result["yhat_upper"].to_numpy(dtype=float)
+            if "yhat" not in frames:
+                frames["yhat"] = result["yhat"].to_numpy(dtype=float)
+        ordered = {"yhat": frames.pop("yhat")}
+        ordered.update(frames)
+        return pd.DataFrame(ordered)
+
+    def fitted_values(self) -> pd.Series:
+        """返回训练期一步-ahead 拟合值（in-sample fitted values）。
+
+        默认 RAISE：只有后端提供拟合值且 registry 声明 supports_fitted_values
+        的模型才提供本能力；不伪造、不降级（naive 类基线的一步拟合值
+        是 t-1 平移，语义争议大，不纳入主线）。
+        """
+        raise ValueError(
+            f"{type(self).__name__} does not provide fitted values "
+            "(backend support required; see registry supports_fitted_values)"
         )
 
     def forecast(self, horizon: int) -> pd.Series:

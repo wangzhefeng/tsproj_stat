@@ -17,14 +17,14 @@ class ModelMonitor:
     记录线上/离线预测质量，用于发现模型退化。
 
     monitor_dir/setting/ 下的文件约定：
-        predictions_log.csv   — 每个预测步一行
+        predictions_log.csv   — 每个预测步一行；多水平列 yhat_lower_80 等
         actuals_log.csv       — 后续回填的真实值
         metrics_history.csv   — 滚动指标快照
     """
 
     _PRED_COLS = ["run_id", "forecast_ts", "horizon_step", "yhat", "yhat_lower", "yhat_upper"]
     _ACT_COLS = ["forecast_ts", "horizon_step", "y_true"]
-    _METRICS_COLS = ["snapshot_ts", "run_id", "window", "mae", "rmse", "mape"]
+    _METRICS_COLS = ["snapshot_ts", "run_id", "window", "mae", "rmse", "mape", "interval_coverage"]
 
     def __init__(self, monitor_dir: str | Path, setting: str | Path | None, window: int = 30):
         """
@@ -69,6 +69,46 @@ class ModelMonitor:
             })
         self._append_rows(self._pred_path, self._PRED_COLS, rows)
         logger.info(f"[Monitor] logged {len(rows)} forecast steps for run_id={run_id!r}")
+
+    def log_forecast_levels(
+        self,
+        run_id: str,
+        yhat: pd.Series,
+        levels: list[float],
+        bounds: dict[str, pd.Series],
+        forecast_ts: str | None = None,
+    ) -> None:
+        """多水平预测写入：bounds 键为 yhat_lower_80/yhat_upper_95 式带后缀列。
+
+        列名由 forecasting.intervals.interval_bound_columns 协议产生；
+        旧表头自动迁移补列，单水平旧列保留空值。
+        """
+        from forecasting.intervals import interval_bound_columns
+
+        multi = len(levels) > 1
+        expected: list[str] = []
+        for level in levels:
+            lower_col, upper_col = interval_bound_columns(level, multi=multi)
+            expected.extend([lower_col, upper_col])
+        for col in expected:
+            if col not in bounds:
+                raise ValueError(f"bounds missing required column {col!r}")
+        self._migrate_pred_header(expected)
+        ts = forecast_ts or datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        cols = self._PRED_COLS + [c for c in expected if c not in self._PRED_COLS]
+        rows = []
+        for step, val in enumerate(yhat, start=1):
+            row: dict[str, object] = {
+                "run_id": run_id,
+                "forecast_ts": ts,
+                "horizon_step": step,
+                "yhat": float(val),
+            }
+            for col in expected:
+                row[col] = float(bounds[col].iloc[step - 1])
+            rows.append(row)
+        self._append_rows(self._pred_path, cols, rows)
+        logger.info(f"[Monitor] logged {len(rows)} multi-level forecast steps for run_id={run_id!r}")
 
     def fill_actuals(self, actuals: pd.Series, forecast_ts: str, horizon_step_offset: int = 1) -> None:
         """按 forecast_ts 回填真实值。
@@ -126,7 +166,11 @@ class ModelMonitor:
     # ------------------------------------------------------------------
 
     def compute_rolling_metrics(self) -> dict[str, float]:
-        """合并预测与真实值，并在最近 window 个匹配样本上计算 MAE/RMSE/MAPE。"""
+        """合并预测与真实值，并在最近 window 个匹配样本上计算点误差与逐水平覆盖率。
+
+        覆盖率键：单水平 interval_coverage；多水平 interval_coverage_80 式带后缀。
+        无区间列或区间值缺失时不产出对应键（不伪造覆盖率）。
+        """
         pred_df = self._read_csv(self._pred_path, self._PRED_COLS)
         act_df = self._read_csv(self._act_path, self._ACT_COLS)
 
@@ -147,12 +191,33 @@ class ModelMonitor:
         if tail.empty:
             return {}
 
-        return {
+        out: dict[str, float] = {
             "mae": mae(tail["y_true"].values, tail["yhat"].values),
             "rmse": rmse(tail["y_true"].values, tail["yhat"].values),
             "mape": mape(tail["y_true"].values, tail["yhat"].values),
             "n_samples": len(tail),
         }
+        for lower_col, upper_col, key in self._iter_coverage_columns(merged.columns):
+            lower = pd.to_numeric(tail[lower_col], errors="coerce")
+            upper = pd.to_numeric(tail[upper_col], errors="coerce")
+            valid = lower.notna() & upper.notna()
+            if not valid.any():
+                continue
+            hits = ((tail["y_true"][valid] >= lower[valid]) & (tail["y_true"][valid] <= upper[valid]))
+            out[key] = float(hits.mean())
+        return out
+
+    @staticmethod
+    def _iter_coverage_columns(columns):
+        """区间列 → 覆盖率键：yhat_lower[_suffix] ↔ yhat_upper[_suffix]。"""
+        for col in columns:
+            if col == "yhat_lower" and "yhat_upper" in columns:
+                yield col, "yhat_upper", "interval_coverage"
+            elif col.startswith("yhat_lower_"):
+                suffix = col[len("yhat_lower_"):]
+                upper = f"yhat_upper_{suffix}"
+                if upper in columns:
+                    yield col, upper, f"interval_coverage_{suffix}"
 
     def snapshot_metrics(self, run_id: str) -> dict[str, float]:
         """计算滚动指标，并追加一条快照到 metrics_history.csv。"""
@@ -168,6 +233,10 @@ class ModelMonitor:
             "rmse": metrics.get("rmse", ""),
             "mape": metrics.get("mape", ""),
         }
+        for key in sorted(k for k in metrics if k.startswith("interval_coverage")):
+            row[key] = metrics[key]
+            if key not in self._METRICS_COLS:
+                self._METRICS_COLS.append(key)
         self._append_rows(self._metrics_path, self._METRICS_COLS, [row])
         return metrics
 
@@ -219,6 +288,26 @@ class ModelMonitor:
                 with open(path, "w", newline="", encoding="utf-8") as f:
                     writer = csv.DictWriter(f, fieldnames=cols)
                     writer.writeheader()
+
+    def _migrate_pred_header(self, new_cols: list[str]) -> None:
+        """旧 predictions_log.csv 表头迁移：补齐缺失的水平列（空值填充）。
+
+        仅当文件存在且缺列时重写；DictWriter(extrasaction="ignore") 本可容忍
+        多余列，但缺失列会让旧 reader（按表头定位）读不到新水平数据。
+        """
+        missing = [c for c in new_cols if c not in self._PRED_COLS]
+        if not missing or not self._pred_path.exists():
+            self._PRED_COLS.extend(missing)
+            return
+        existing = pd.read_csv(self._pred_path, dtype=str)
+        to_add = [c for c in missing if c not in existing.columns]
+        self._PRED_COLS.extend(missing)
+        if not to_add:
+            return
+        for col in to_add:
+            existing[col] = ""
+        existing.to_csv(self._pred_path, index=False)
+        logger.info(f"[Monitor] migrated predictions_log header: +{to_add}")
 
     def _append_rows(self, path: Path, cols: list[str], rows: list[dict]) -> None:
         with open(path, "a", newline="", encoding="utf-8") as f:

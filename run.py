@@ -260,8 +260,22 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.interval_alpha = args.interval_alpha
     if getattr(args, "interval_method", None) is not None:
         cfg.interval_method = args.interval_method
+    if getattr(args, "interval_levels", None) is not None:
+        cfg.interval_levels = args.interval_levels
     if getattr(args, "conformal_n_windows", None) is not None:
         cfg.conformal_n_windows = args.conformal_n_windows
+    if getattr(args, "train_fitted_values", None) is not None:
+        cfg.train_fitted_values = _parse_bool(args.train_fitted_values)
+    if getattr(args, "simulate_enabled", None) is not None:
+        cfg.simulate_enabled = _parse_bool(args.simulate_enabled)
+    if getattr(args, "simulate_n_paths", None) is not None:
+        cfg.simulate_n_paths = args.simulate_n_paths
+    if getattr(args, "simulate_error_distribution", None) is not None:
+        cfg.simulate_error_distribution = args.simulate_error_distribution
+    if getattr(args, "simulate_n_windows", None) is not None:
+        cfg.simulate_n_windows = args.simulate_n_windows
+    if getattr(args, "simulate_quantiles", None) is not None:
+        cfg.simulate_quantiles = args.simulate_quantiles
     if getattr(args, "forecast_use_update", None) is not None:
         cfg.forecast_use_update = _parse_bool(args.forecast_use_update)
     if getattr(args, "forecast_allow_nan_fill", None) is not None:
@@ -393,8 +407,16 @@ def parse_args() -> AppConfig:
     # 概率预测
     parser.add_argument("--return_intervals", default=None)
     parser.add_argument("--interval_alpha", type=float, default=None)
+    parser.add_argument("--interval_levels", type=float, nargs="+", default=None,
+                        help="多置信水平（小数），如 --interval_levels 0.8 0.95；缺省回退单水平 1-interval_alpha")
     parser.add_argument("--interval_method", choices=["native", "conformal"], default=None)
     parser.add_argument("--conformal_n_windows", type=int, default=None)
+    parser.add_argument("--train_fitted_values", default=None)
+    parser.add_argument("--simulate_enabled", default=None)
+    parser.add_argument("--simulate_n_paths", type=int, default=None)
+    parser.add_argument("--simulate_error_distribution", choices=["bootstrap", "normal"], default=None)
+    parser.add_argument("--simulate_n_windows", type=int, default=None)
+    parser.add_argument("--simulate_quantiles", type=float, nargs="+", default=None)
     parser.add_argument("--forecast_allow_nan_fill", default=None)
     parser.add_argument("--forecast_use_update", default=None)                # recursive 前向快速路径：首步 fit + 固定参数 update（默认 false）
     # 本地监控
