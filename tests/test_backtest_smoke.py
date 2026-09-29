@@ -154,9 +154,10 @@ def test_backtest_summary_discloses_future_exog_policy():
     )
     result = rolling_backtest(
         df,
-        model_builder=lambda: ModelFactory().create_model("naive"),
+        model_builder=lambda: ModelFactory().create_model("linear_var", {"feature_lags": [0]}),
         target_col="y",
         time_col="ds",
+        exog_cols=["temp"],
         future_exog_cols=["temp"],
         train_size=30,
         horizon=5,

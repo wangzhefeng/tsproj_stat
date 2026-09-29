@@ -6,9 +6,15 @@ from dataclasses import dataclass
 from typing import Callable
 
 import pandas as pd
+import numpy as np
 
 from models.inference import normalize_forecast_strategy, normalize_window_mode, run_point_inference
 from .metrics import bias, mae, mape, max_error, mse, r2, rmse, smape
+from .metrics import coverage, interval_width, winkler_score
+from models.calibration import predict_frame
+from models.inference import checked_model_builder
+from models.base import BaseStatModel
+from data_provider.data_processor import DataProcessor
 from utils.log_util import logger
 
 
@@ -28,7 +34,7 @@ class BacktestResult:
 
 def rolling_backtest(
     df: pd.DataFrame,
-    model_builder: Callable[[], object],
+    model_builder: Callable[[], BaseStatModel],
     target_col: str = "y",
     time_col: str | None = None,
     endog_cols: list[str] | None = None,
@@ -42,8 +48,12 @@ def rolling_backtest(
     verbose: bool = False,
     progress_every: int = 10,
     n_jobs: int = 1,
-    processor_builder: Callable[[], object] | None = None,
+    processor_builder: Callable[[], DataProcessor] | None = None,
     allow_failed_windows: bool = False,
+    interval_method: str = "none",
+    interval_alpha: float = 0.05,
+    conformal_n_windows: int = 20,
+    refit_every: int = 1,
 ) -> BacktestResult:
     """执行滚动回测。
 
@@ -52,6 +62,10 @@ def rolling_backtest(
     显式 allow_failed_windows=True 时才跳过失败窗口，且 summary 打标 survivor_bias。
     """
     n = len(df)
+    if min(train_size, horizon, step) <= 0:
+        raise ValueError("train_size, horizon and step must be positive")
+    if isinstance(refit_every, bool) or not isinstance(refit_every, int) or refit_every < 0:
+        raise ValueError("refit_every must be an integer >= 0")
     if train_size + horizon > n:
         raise ValueError("Not enough data for backtest")
     if progress_every <= 0:
@@ -72,6 +86,16 @@ def rolling_backtest(
     future_cols = [col for col in future_exog_cols if col in df.columns]
     # 回测的未来外生直接取 df 真实值 = perfect foresight；必须在 summary 中披露（T16）。
     future_exog_policy = "perfect_foresight" if future_cols else "none"
+    cached_model = None
+    if refit_every != 1:
+        if strategy != "native" or n_jobs != 1 or interval_method != "none":
+            raise ValueError("fixed-parameter update requires native, n_jobs=1, no intervals")
+        if processor_builder is not None and processor_builder().enabled:
+            raise ValueError("fixed-parameter update cannot change preprocessing scale")
+        candidate = model_builder()
+        spec = getattr(candidate, "_model_spec", None)
+        if not callable(getattr(candidate, "update", None)) or (spec is not None and not spec.supports_update):
+            raise ValueError("model does not support fixed-parameter update")
 
     total_windows = ((n - train_size - horizon) // step) + 1
     started_at = time.perf_counter()
@@ -90,6 +114,7 @@ def rolling_backtest(
         start += step
 
     def evaluate_window(window: tuple[int, int, int]) -> dict:
+        nonlocal cached_model
         window_id, train_start, start = window
         train_slice = df.iloc[train_start:start].reset_index(drop=True)
         test_slice = df.iloc[start : start + horizon].reset_index(drop=True)
@@ -109,8 +134,10 @@ def rolling_backtest(
 
         proc = processor_builder() if processor_builder is not None else None
         use_proc = proc is not None and getattr(proc, "enabled", False)
+        did_refit = True
+        interval_df = None
         try:
-            if use_proc:
+            if proc is not None and use_proc and interval_method == "none":
                 train_y_model = proc.fit_transform(train_y)
                 if train_x_hist is not None and target_col in train_x_hist.columns:
                     train_x_hist = train_x_hist.copy()
@@ -118,17 +145,38 @@ def rolling_backtest(
             else:
                 train_y_model = train_y
             # 每个回测窗口都通过统一推理入口运行，保证 test 与 forecast 策略一致。
-            pred = run_point_inference(
-                model_builder=model_builder,
-                history=train_y_model,
-                horizon=horizon,
-                forecast_strategy=strategy,
-                X_hist=train_x_hist,
-                X_future=test_x_future,
-            ).astype(float).reset_index(drop=True)
-            if use_proc:
+            if refit_every != 1:
+                did_refit = cached_model is None or (refit_every > 0 and (window_id - 1) % refit_every == 0)
+                if cached_model is None or (refit_every > 0 and (window_id - 1) % refit_every == 0):
+                    cached_model = checked_model_builder(model_builder, strategy, test_x_future)()
+                    cached_model.fit(train_y, X_hist=train_x_hist, X_future=test_x_future)
+                else:
+                    update = getattr(cached_model, "update", None)
+                    if not callable(update):
+                        raise ValueError("model does not support fixed-parameter update")
+                    update(train_y, X_hist=train_x_hist)
+                pred = cached_model.predict(horizon, X_future=test_x_future).reset_index(drop=True)
+            elif interval_method != "none":
+                interval_df = predict_frame(model_builder, train_y, horizon, strategy,
+                                            train_x_hist, test_x_future, processor_builder,
+                                            interval_method, interval_alpha, conformal_n_windows)
+                pred = interval_df["yhat"]
+            else:
+                pred = run_point_inference(
+                    model_builder=model_builder,
+                    history=train_y_model,
+                    horizon=horizon,
+                    forecast_strategy=strategy,
+                    X_hist=train_x_hist,
+                    X_future=test_x_future,
+                ).astype(float).reset_index(drop=True)
+            pred = pd.Series(pred, dtype=float).reset_index(drop=True)
+            if proc is not None and use_proc and interval_method == "none":
                 pred = proc.inverse_forecast(pred).astype(float).reset_index(drop=True)
+            if len(pred) != horizon or not np.isfinite(pred.to_numpy()).all():
+                raise ValueError("non-finite or incorrect-length backtest forecast")
         except Exception as exc:
+            cached_model = None
             # 部分模型在个别窗口可能拟合失败；记录失败窗口，避免一个窗口拖垮整次评估。
             return {
                 "failed": True,
@@ -154,8 +202,14 @@ def rolling_backtest(
             "r2": r2(test_y.values, pred.values),
             "bias": bias(test_y.values, pred.values),
             "max_error": max_error(test_y.values, pred.values),
+            "refitted": did_refit,
         }
         pred_rows = []
+        if interval_df is not None:
+            lower, upper = interval_df["yhat_lower"], interval_df["yhat_upper"]
+            metric_row.update(interval_coverage=coverage(test_y, lower, upper),
+                              interval_width=interval_width(lower, upper),
+                              winkler_score=winkler_score(test_y, lower, upper, interval_alpha))
         for idx in range(horizon):
             row: dict[str, object] = {
                 "window_id": int(window_id),
@@ -168,6 +222,9 @@ def rolling_backtest(
             }
             if test_time is not None:
                 row["timestamp"] = test_time.iloc[idx]
+            if interval_df is not None:
+                row["yhat_lower"] = float(interval_df["yhat_lower"].iloc[idx])
+                row["yhat_upper"] = float(interval_df["yhat_upper"].iloc[idx])
             pred_rows.append(row)
         return {"failed": False, "metric_row": metric_row, "prediction_rows": pred_rows}
 
@@ -234,6 +291,14 @@ def rolling_backtest(
         "bias": float(metrics_df["bias"].mean()),
         "max_error": float(metrics_df["max_error"].mean()),
     }
+    summary_values["interval_method"] = interval_method
+    summary_values["refit_every"] = refit_every
+    summary_values["refit_count"] = int(metrics_df["refitted"].to_numpy(dtype=bool).sum())
+    if interval_method != "none":
+        for key in ("interval_coverage", "interval_width", "winkler_score"):
+            values = metrics_df[key].to_numpy(dtype=float)
+            available = values[~np.isnan(values)]
+            summary_values[key] = float(available.mean()) if available.size else float("nan")
     summary_df = pd.DataFrame([summary_values])
     total_elapsed = time.perf_counter() - started_at
     logger.info(f"[Backtest] done: {len(metrics_df)} windows in {total_elapsed:.1f}s")

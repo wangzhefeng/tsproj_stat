@@ -131,6 +131,7 @@ def test_pipeline_feature_mode_model_input_records_feature_columns(tmp_path):
     cfg = _cfg(
         tmp_path,
         model_name="naive",
+        ignore_unsupported_inputs=True,
         do_eda=False,
         do_train=True,
         do_test=False,
