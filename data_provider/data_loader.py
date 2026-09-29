@@ -268,6 +268,9 @@ class DataLoader:
                 raise ValueError("Future exogenous data has fewer rows than requested horizon")
             return prepared.iloc[:horizon].reset_index(drop=True)
 
+        if self.future_exog_path is None:
+            # future_exog_frame 分支已在上方返回；此处二者均缺属配置错误。
+            raise ValueError("future exog inputs require future_exog_path or future_exog_frame")
         path = Path(self.future_exog_path)
         if not path.exists():
             raise FileNotFoundError(f"Future exog file not found: {self.future_exog_path}")

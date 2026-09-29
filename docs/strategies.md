@@ -16,11 +16,24 @@ env -u PYTHONPATH .venv/bin/python run.py --model_name naive --forecast_strategy
 env -u PYTHONPATH .venv/bin/python run.py --model_name historic_average --forecast_strategy native --decomposition_method mstl --seasonal_periods 7,24 --history_size 180 --backtest_train_size 180 --predict_horizon 5
 ```
 
-- `interval_method=native`：调用模型区间；要求模型明确支持且边界有限、有序；`recursive / dirrec` 下仍是 NaN（需区间时用 conformal）
+- `interval_method=native`：调用模型区间；要求模型明确支持且边界有限、有序；`recursive / dirrec` 下显式 RAISE 并提示改用 conformal（P6，不再产出 NaN 区间列）
 - `interval_method=conformal`：按实际策略逐步长绝对误差校准；每个校准窗口重新拟合 DataProcessor，误差与区间都在原始尺度。校准段互不重叠、训练前缀扩展；需 `history_size >= conformal_n_windows * predict_horizon + 3`；有限样本顺序统计量不可达时显式失败，不静默夹紧置信水平。默认 20 窗；95% 水平至少 19 窗
-- 启用区间后回测输出 `interval_coverage / interval_width / winkler_score` 及逐点上下界；覆盖率是经验评估，不保证非平稳序列的名义覆盖
+- 多置信水平（P7）：`--interval_levels 0.8 0.95`（小数列表）一次产出多水平区间；缺省回退单水平 `[1-interval_alpha]`，行为与旧版完全一致。单水平列名保持 `yhat_lower/yhat_upper`；多水平列为 `yhat_lower_80 / yhat_upper_95` 式带后缀。conformal 多水平共享同一次校准循环（拟合成本不随水平数增加）；StatsForecast 后端一次 `predict(level=[...])` 返回全部水平。任一水平有限样本不可达即整体失败，不静默丢弃该水平
+- 启用区间后回测输出 `interval_coverage / interval_width / winkler_score` 及逐点上下界；多水平时按水平展开为 `interval_coverage_80` 式带后缀列。覆盖率是经验评估，不保证非平稳序列的名义覆盖
 - MSTL 最大周期必须严格小于各训练/校准窗口长度一半，短序列显式失败
 - 当前区间路径要求 `scale=false`、`feature_mode=analysis_snapshot`（见 [limitations.md](limitations.md)）
+
+## 样本路径模拟（P9）
+
+```bash
+env -u PYTHONPATH .venv/bin/python run.py --model_name naive --forecast_strategy recursive \
+  --simulate_enabled true --simulate_n_paths 100 --simulate_error_distribution bootstrap \
+  --simulate_n_windows 8 --history_size 40 --predict_horizon 4 --do_forecast true --do_train false --do_test false
+```
+
+- 误差驱动路径集成：滚动起点带符号误差池（与 conformal 同源、原始尺度）驱动 bootstrap（整窗行向量抽样，保留步长间相关）或 normal（逐步高斯）路径；任意模型 × 策略通用
+- 产物独立：`simulated_paths.csv`（path_id/step/value 长表）与 `simulated_quantiles.csv`（q10 式分位列），不与 forecast.csv 区间列混排
+- seed 沿用 `--seed`；时间相关与分布漂移下不承诺无条件路径分布保证，校准样本不足显式失败
 
 ## 重拟合与状态更新
 

@@ -9,7 +9,7 @@
 - `backtest_n_jobs > 1` 按窗口并行，CSV 输出仍按 `window_id` 稳定排序
 - 失败策略：回测窗口失败默认 RAISE；容忍须显式 `--backtest_allow_failed_windows true` 且产物打标 `survivor_bias`
 - forecast 输出 NaN 默认 RAISE；`--forecast_allow_nan_fill true` 容忍并打标 `forecast_nan_filled`
-- 输出：窗口级明细、汇总指标、三类图（预测对比、残差、误差分布）
+- 输出：窗口级明细、汇总指标、三类图（预测对比、残差、误差分布）；区间指标多水平时按水平展开为 `interval_coverage_80` 式带后缀列（见 [strategies.md](strategies.md#策略与区间)）
 - 重拟合调度 `backtest_refit_every` 见 [strategies.md](strategies.md#重拟合与状态更新)
 
 ## 验证命令基线

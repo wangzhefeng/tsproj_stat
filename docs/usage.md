@@ -24,6 +24,12 @@
 .venv/bin/python run.py --do_eda true --do_train false --do_test false --do_forecast false
 ```
 
+train 阶段拟合值诊断（P8，模型须声明 `supports_fitted_values`，如 arima/ets/auto_ets/sf_auto_arima）：
+
+```bash
+.venv/bin/python run.py --model_name arima --train_fitted_values true --do_train true
+```
+
 已接入数据项目优先用独立 EDA 脚本（见 [data.md](data.md#数据项目脚本)）。
 
 预处理示例（去噪 + 去趋势）、ETS 调参、分解预处理组合等场景命令见 [preprocessing.md](preprocessing.md)；策略与区间命令见 [strategies.md](strategies.md)；多源输入命令见 [exogenous.md](exogenous.md)；监控回填命令见 [monitoring.md](monitoring.md)。

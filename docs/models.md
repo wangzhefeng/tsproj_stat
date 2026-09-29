@@ -23,6 +23,8 @@
 
 ## 稳定性分层
 
+registry 能力位除稳定性外还包括：`supports_future_exog`（未来外生）、`supports_prediction_intervals`（原生区间）、`supports_native_multistep`、`supports_update`（固定参数滤波）、`supports_fitted_values`（P8 拟合值诊断，statsmodels 后端用 `fittedvalues`、SF 后端用 `forecast(fitted=True)`；theta 的 statsmodels 后端不提供该值故不声明）。能力用于运行门禁：如 `--train_fitted_values true` 遇未声明模型直接 RAISE。
+
 | 分层 | 数量 | 说明 |
 | --- | --- | --- |
 | `stable` | 12 | 默认主线与常规 baseline，`auto_select` 默认候选 |

@@ -18,6 +18,23 @@ results/{data_name}/monitor/{experiment_path}/predictions_log.csv
   --backtest_n_jobs 2 --monitor_enabled true
 ```
 
+## 区间覆盖率跟踪（P7）
+
+预测含区间列时（单水平或 `--interval_levels` 多水平），predictions_log.csv 同步记录区间上下界列；实际值回填后，滚动指标除 MAE/RMSE/MAPE 外还输出区间覆盖率：
+
+- 单水平：`interval_coverage`
+- 多水平：逐水平 `interval_coverage_80 / interval_coverage_95` 式带后缀（与区间列名同后缀）
+- 无区间列或区间值缺失时不产出覆盖率键，不伪造数值；旧 CSV 表头缺失的水平列在写入时自动迁移补列
+
+```bash
+.venv/bin/python run.py --model_name sf_auto_arima --forecast_strategy native \
+  --return_intervals true --interval_levels 0.8 0.95 \
+  --do_train true --do_test true --do_forecast true \
+  --monitor_enabled true
+```
+
+覆盖率随实际值逐批回填滚动更新，用于发现区间校准漂移（名义 80% 经验覆盖持续偏低即区间过窄）。
+
 ## 实际值回填
 
 `monitoring.monitor.ModelMonitor` 或 `run.py --monitor_actuals_path ...` 支持后续回填真实值到 `actuals_log.csv`，并基于最近 `monitor_window` 个匹配样本生成 `metrics_history.csv`：

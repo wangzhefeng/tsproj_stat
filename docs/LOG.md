@@ -598,3 +598,45 @@
 - 删除旧 NaN 行为条目（已被取代）
 - 修复（route_A 实跑暴露）：P3 的 comparison 事后按 experiment_path 重建读 summary，但循环内 params 已随模型变化导致路径失配（只有最后 1 个模型进表）——改为 test 成功后当场读入内存字典，comparison/选优从内存取；重跑 route_A 验证 21 模型全进表且按 mae 排序（rar 298 最优 / garch 1873 垫底，量级与模型特性吻合）
 - 最终基线：全量 pytest 208 passed exit=0；route_A 合并脚本 21 模型 exit=0 产完整 comparison
+
+## 2026-09-30 P7 多置信水平区间 + 监控覆盖率跟踪
+
+- 动因：对照 statsforecast v2.1.1 功能分析（level 列表多水平区间、监控闭环区间校准验证），当前全链路单 alpha 区间信息量不足，且监控回填后无覆盖率跟踪——区间产出后无人验证覆盖率是否兑现
+- 变更：
+  - 协议层：`IntervalSpec.levels`（空/None 回退 `[1-alpha]`）、`resolve_interval_levels()`、`interval_bound_columns()` 列名协议（单水平 legacy 列名，多水平 `_80` 式后缀）
+  - conformal 多水平：单次校准循环 + 按水平取 rank，拟合成本不随水平数增加；任一水平不可达整体 RAISE
+  - 模型层：`BaseStatModel.predict_with_levels()` 默认实现（逐水平委托，不重复拟合）；SF 两处适配（`sf_auto_arima`、`_StatsForecastModelBase`）单次 `predict(level=[...])`（探针验证 SF 2.0.1 支持 float level）
+  - 推理/管线：`run_interval_inference(levels=...)`；stages/tester 透传；runner forecast.csv 区间列动态展开；monitor 多水平走 `log_forecast_levels`
+  - 回测：窗口指标/summary 按 `interval_coverage_80` 式展开，单水平保持旧列名
+  - 监控：`log_forecast_levels()` + 逐水平滚动 coverage + 旧 CSV 表头自动迁移补列；runner 按 bound_cols>2 分流
+  - CLI：`--interval_levels 0.8 0.95`（nargs float）
+  - 顺手修既有类型债：stages.py `prepared: "object"` → `PrepareResult`（12 错误）、data_loader.py:271 `Path(str|None)` 收窄（1 错误）——均非本批引入但清零验收范围
+- 验证：全量 pytest 229 passed / 40 warnings（基线 208 + 新增 21，零回归）；CLI 端到端 native 多水平（sf_auto_arima，forecast.csv 出 4 水平列，coverage_80=0.6087 < coverage_95=0.9203）与 conformal 多水平（coverage_60=0.5643 < coverage_80=0.7214）均实跑通过；CLI 烟雾（naive 全流程、n_jobs=2+monitor）无 Traceback；compileall 通过；Pyright（AGENTS §3 范围）0 errors 0 warnings
+- 文档同步：strategies.md（P7 条目 + 修复 P6 漂移：native×recursive 已是 RAISE 非 NaN）、monitoring.md（覆盖率跟踪节）、testing.md（多水平指标链接）、AGENTS.md（§2 P7 约定条目）
+- 剩余风险：多水平产物 schema 新列名仅显式传 interval_levels 时出现，旧下游按固定列名读取不受影响；监控覆盖率键在无区间列时缺失（不伪造），下游按可选键处理
+- 未做（后续批次）：fitted values 一等产物、native 默认化（审批级）、simulate 样本路径（依赖本批列名基建）
+
+
+## 2026-09-30 P8 拟合值诊断（fitted values 一等产物）
+
+- 动因：统计建模闭环缺「拟合→残差白噪声检验→模型充分性」一环；EDA 残差只在数据层，模型 in-sample 拟合值无提取通道（对照 statsforecast forecast_fitted_values）
+- 变更：
+  - 契约：`BaseStatModel.fitted_values()` 默认 RAISE；registry 新增 `supports_fitted_values` 能力位
+  - 实现：statsmodels 系（ar/ma/arma/arima/sarima/auto_arima/ets）用 `fittedvalues`，SF 系（sf_auto_arima/auto_ets/auto_theta/dynamic_theta/auto_ces/random_walk_drift/seasonal_window_average）用 `forecast(y, h, fitted=True)`（fit 保存 `_train_y` 重传）；**theta 的 statsmodels 后端 ThetaModelResults 不提供 fittedvalues，Pyright 抓出后从能力清单移除**
+  - stages：`TrainStageResult.fitted_df/residual_stats`；`--train_fitted_values` 显式开关（默认 false 零行为变化；开启后未声明模型 RAISE）；预处理启用时用 `inverse_transform`（训练索引还原，非 `inverse_forecast` 未来语义）；raw 历史与建模序列错位（model_input warmup）RAISE
+  - runner：`fitted_values.csv` 落盘 + `residual_stats` 入 train_summary
+- 验证：pytest 238 passed / 42 warnings（新增 test_fitted_values.py 9 例：契约默认 RAISE/ARIMA+SF 长度与有限性/registry 双向断言/开关三态/逆变换尺度/Ljung-Box 产出/ets+auto_ets 实跑）；CLI：naive 默认 0 Traceback 0 产物（零行为变化证明）、arima+开关 fitted_values.csv+residual_stats{mean,std,ljung_box_p} 落盘；全量烟雾（naive+n_jobs2+monitor）0 Traceback；Pyright 0 errors；compileall/git diff --check 通过
+- 教训：初版让 train 对不支持模型一律 RAISE，破坏 naive 烟雾基线——改为显式开关后兼容；`inverse_forecast` 与 `inverse_transform` 语义边界（未来外推 vs 训练索引还原）在拟合值场景必须区分
+- 剩余风险：fallback 路径（拟合失败退化 Naive）下 fitted 语义未定义，当前 Trainer fallback 后 fitted_values 会因 Naive 未声明而 RAISE——属可接受失败（诊断要求真实拟合）
+
+
+## 2026-09-30 P9 样本路径模拟 + native 场景脚本落地
+
+- P9 动因：概率信息只有区间一种表达；下游（储能调度优化、风险价值）需要路径 ensemble 而非上下界（对照 statsforecast simulate）
+- 设计决策：不走后端原生 simulate（statsmodels/SF 各模型 API 不齐），走与 conformal 同源的误差驱动路径集成——任意模型×策略通用、误差已在原始尺度校准、与「策略一致校准」哲学一致；bootstrap 抽整窗误差行向量以保留步长间同窗相关结构
+- 变更：`forecasting/intervals.py` 新增 `simulate_frame` + `SimulateResult`（point/paths_df/quantile_df/metadata）；config 五参数 + validate；stages forecast 分支附加产物；runner 落 `simulated_paths.csv`/`simulated_quantiles.csv` + summary.simulate 元信息；CLI 五参数
+- 实现坑：`errors[(n_paths, horizon) 花式索引]` 会广播成 3D——改为逐路径一维窗口索引 `errors[window_idx]`
+- 测试断言修正：naive 递归在线性序列上的误差是确定性 [1,2,3]（全正非对称），分位带应精确等于 point+[1,2,3]（比「≈point」更强的精确断言）
+- native 场景脚本（第 3 点的可落地部分）：3 个 run_models_all.sh 显式 `--forecast_strategy native`，全局默认不动；route_A 实跑 21 模型 exit=0 全落 native experiment_path，comparison 表产出
+- 验证：pytest 244 passed / 42 warnings（新增 test_simulate.py 6 例：形状/锚定/精确分位/种子确定性/参数拒绝/历史不足）；CLI simulate 端到端（simulated_paths+quantiles 落盘、嵌套单调）；Pyright 0 errors；compileall/git diff --check 通过
+- 未做（待审批）：forecast_strategy 全局默认 direct→native 是语义变更，需用户单独批准
