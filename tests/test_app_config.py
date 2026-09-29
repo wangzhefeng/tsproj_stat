@@ -1,5 +1,7 @@
 from config import AppConfig
 
+import pytest
+
 
 def test_app_config_validate_accepts_default_config():
     cfg = AppConfig()
@@ -69,3 +71,25 @@ def test_backtest_train_size_explicit_overrides_default():
         AppConfig(history_size=90, backtest_train_size=48, backtest_initial_train_size=36).resolved_backtest_train_size()
         == 48
     )
+
+
+def test_results_data_name_overrides_data_name_resolution(tmp_path):
+    # 显式 results_data_name 优先于 data_path stem；未设置时回落 stem；非法路径拒绝。
+    # 注意：合法名分支会真实 mkdir，results_dir 必须指向 tmp_path，避免污染仓库 results/。
+    from app.results import _resolve_data_name, prepare_run_artifacts
+
+    cfg = AppConfig(data_path="dataset/aidc_power_month/derived/A_Loads_1day_mean_20251001_20260728.csv")
+    assert _resolve_data_name(cfg) == "A_Loads_1day_mean_20251001_20260728"
+    cfg = AppConfig(data_path="dataset/x/y.csv", results_data_name="aidc_power_month/route_A")
+    assert _resolve_data_name(cfg) == "aidc_power_month/route_A"
+    assert _resolve_data_name(AppConfig()) == "demo_series"
+    with pytest.raises(ValueError):
+        prepare_run_artifacts(AppConfig(data_path="dataset/x/y.csv", results_data_name="../escape"))
+    with pytest.raises(ValueError):
+        prepare_run_artifacts(AppConfig(data_path="dataset/x/y.csv", results_data_name="/abs"))
+    # 合法层级名在 tmp_path 下真实建目录，验证层级展开行为
+    ok = prepare_run_artifacts(
+        AppConfig(data_path="dataset/x/y.csv", results_data_name="aidc_power_month/route_A", results_dir=str(tmp_path))
+    )
+    assert ok.train_results_dir == tmp_path / "aidc_power_month" / "route_A" / "results_train" / ok.experiment_path
+    assert ok.train_results_dir.is_dir()

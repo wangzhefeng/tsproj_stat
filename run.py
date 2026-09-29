@@ -278,6 +278,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.monitor_actuals_run_id = args.monitor_actuals_run_id
     if getattr(args, "results_dir", None) is not None:
         cfg.results_dir = args.results_dir
+    if getattr(args, "results_data_name", None) is not None:
+        cfg.results_data_name = args.results_data_name
     
     return cfg
 
@@ -399,6 +401,7 @@ def parse_args() -> AppConfig:
     parser.add_argument("--log_format", type=str, default=None)
     # 统一结果根目录
     parser.add_argument("--results_dir", type=str, default=None)
+    parser.add_argument("--results_data_name", type=str, default=None)     # 结果数据名显式覆盖（支持层级路径），默认取 data_path stem
     args = parser.parse_args()
 
     if getattr(args, "config", None) is not None:

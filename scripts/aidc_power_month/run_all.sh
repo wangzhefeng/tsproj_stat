@@ -10,7 +10,7 @@
 #   bash scripts/aidc_power_month/run_all.sh
 #   ./scripts/aidc_power_month/run_all.sh        # 已 chmod +x
 #
-# 日志：scripts/aidc_power_month/logs/run_all_<时间戳>/<路线>_<脚本>.log
+# 日志：logs/aidc_power_month/run_all_<时间戳>/<路线>_<脚本>.log（项目根 logs/，已 gitignore）
 # 汇总：<同目录>/summary.csv  +  屏幕末尾打印
 
 set -uo pipefail
@@ -24,7 +24,7 @@ if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
 fi
 
 TS="$(date +%Y%m%d_%H%M%S)"
-LOGDIR="$DIR/logs/run_all_$TS"
+LOGDIR="$ROOT/logs/aidc_power_month/run_all_$TS"
 mkdir -p "$LOGDIR"
 SUMMARY="$LOGDIR/summary.csv"
 echo "route,script,status,elapsed_s,log" > "$SUMMARY"

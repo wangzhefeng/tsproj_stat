@@ -247,7 +247,12 @@ def run_monitor_actuals_backfill(cfg: AppConfig) -> dict[str, Any] | None:
     # 监控数据保存路径
     from app.results import build_experiment_path
 
-    data_name = "demo_series" if cfg.data_path is None else Path(cfg.data_path).stem
+    explicit_name = getattr(cfg, "results_data_name", None)
+    data_name = (
+        explicit_name.strip().strip("/")
+        if explicit_name
+        else ("demo_series" if cfg.data_path is None else Path(cfg.data_path).stem)
+    )
     experiment_path = Path(cfg.monitor_actuals_experiment_path) if cfg.monitor_actuals_experiment_path else build_experiment_path(cfg)
     if experiment_path.is_absolute() or ".." in experiment_path.parts:
         raise ValueError("monitor_actuals_experiment_path must be a relative path under the data monitor directory")

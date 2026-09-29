@@ -31,11 +31,18 @@ class RunArtifacts:
     custom_monitor_dir: Path
 
 
-def _resolve_data_name(data_path: str | None) -> str:
-    """从数据路径提取数据名；demo 数据使用固定名称便于结果归类。"""
-    if data_path is None:
+def _resolve_data_name(cfg) -> str:
+    """从数据路径提取数据名；显式 results_data_name 优先（支持层级路径）；demo 数据使用固定名称便于结果归类。"""
+    explicit = getattr(cfg, "results_data_name", None)
+    if explicit:
+        raw = explicit.strip()
+        # 显式名只允许相对层级路径：绝对路径与上跳段直接拒绝，不做静默清洗
+        if raw.startswith(("/", "~")) or ".." in Path(raw).parts:
+            raise ValueError(f"invalid results_data_name: {explicit!r}")
+        return raw.strip("/")
+    if cfg.data_path is None:
         return "demo_series"
-    return Path(data_path).stem
+    return Path(cfg.data_path).stem
 
 
 def _mapping_tokens(mapping: dict, prefix: str = "") -> list[str]:
