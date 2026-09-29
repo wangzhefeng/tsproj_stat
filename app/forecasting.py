@@ -57,11 +57,13 @@ class Forecaster:
         model_params: dict | None = None,
         forecast_strategy: str | None = None,
         allow_nan_fill: bool = False,
+        ignore_unsupported_inputs: bool = False,
     ):
         self.model_name = model_name
         self.model_params = model_params or {}
         self.forecast_strategy = normalize_forecast_strategy(forecast_strategy)
         self.allow_nan_fill = allow_nan_fill
+        self.ignore_unsupported_inputs = ignore_unsupported_inputs
         # 最近一次预测中被填充的 NaN 数量（未填充为 0），供 forecast_summary 打标。
         self.last_nan_filled = 0
         self.factory = ModelFactory()
@@ -75,7 +77,7 @@ class Forecaster:
     ) -> pd.Series:
         """执行点预测并返回长度等于 horizon 的 yhat 序列。"""
         yhat = run_point_inference(
-            model_builder=lambda: self.factory.create_model(self.model_name, self.model_params),
+            model_builder=lambda: self.factory.create_model(self.model_name, self.model_params, self.ignore_unsupported_inputs),
             history=history,
             horizon=horizon,
             forecast_strategy=self.forecast_strategy,
@@ -95,7 +97,7 @@ class Forecaster:
     ) -> pd.DataFrame:
         """执行区间预测，返回 yhat/yhat_lower/yhat_upper 三列。"""
         result = run_interval_inference(
-            model_builder=lambda: self.factory.create_model(self.model_name, self.model_params),
+            model_builder=lambda: self.factory.create_model(self.model_name, self.model_params, self.ignore_unsupported_inputs),
             history=history,
             horizon=horizon,
             forecast_strategy=self.forecast_strategy,
@@ -105,7 +107,7 @@ class Forecaster:
         )
         yhat = _validate_forecast(
             pd.Series(result["yhat"].values, name="yhat"),
-            len(result),
+            horizon,
             self.model_name,
             allow_nan_fill=self.allow_nan_fill,
         )

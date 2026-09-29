@@ -13,9 +13,11 @@ class ModelFactory:
     应用层只依赖工厂，不直接 import 具体模型类；新增模型必须先注册到 registry。
     """
     
-    def create_model(self, model_name: str, model_params: dict | None = None) -> BaseStatModel:
+    def create_model(self, model_name: str, model_params: dict | None = None, ignore_unsupported_inputs: bool = False) -> BaseStatModel:
         """按名称创建模型，并交给 registry 合并默认参数与校验参数名。"""
-        return create_stat_model(model_name, model_params)
+        model = create_stat_model(model_name, model_params)
+        model._ignore_unsupported_inputs = ignore_unsupported_inputs
+        return model
 
     @staticmethod
     def list_models() -> list[str]:

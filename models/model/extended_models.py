@@ -8,6 +8,18 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from typing import Literal, Protocol, TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from prophet import Prophet
+
+
+class _ProphetConstructor(Protocol):
+    # Prophet 的动态构造函数默认值推断仅为 str，实际也接受 bool/int。
+    def __call__(self, *, growth: str, seasonality_mode: str,
+                 yearly_seasonality: str | bool | int,
+                 weekly_seasonality: str | bool | int,
+                 daily_seasonality: str | bool | int) -> Prophet: ...
 
 from models.base import BaseStatModel
 from .exponential_family import ETSModel
@@ -190,7 +202,7 @@ class ProphetModel(FallbackMixin, BaseStatModel):
     def _import_prophet():
         from prophet import Prophet
 
-        return Prophet
+        return cast(_ProphetConstructor, Prophet)
 
     def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "ProphetModel":
         series = _preserve_univariate_series(y)
@@ -262,15 +274,15 @@ class NeuralProphetModel(FallbackMixin, BaseStatModel):
     def __init__(
         self,
         freq: str | None = None,
-        yearly_seasonality: str | bool = "auto",
-        weekly_seasonality: str | bool = "auto",
-        daily_seasonality: str | bool = "auto",
+        yearly_seasonality: Literal["auto"] | bool | int = "auto",
+        weekly_seasonality: Literal["auto"] | bool | int = "auto",
+        daily_seasonality: Literal["auto"] | bool | int = "auto",
         regressors: list[str] | None = None,
     ):
         self.freq = freq
-        self.yearly_seasonality = yearly_seasonality
-        self.weekly_seasonality = weekly_seasonality
-        self.daily_seasonality = daily_seasonality
+        self.yearly_seasonality: Literal["auto"] | bool | int = yearly_seasonality
+        self.weekly_seasonality: Literal["auto"] | bool | int = weekly_seasonality
+        self.daily_seasonality: Literal["auto"] | bool | int = daily_seasonality
         self.regressors = list(regressors) if regressors is not None else None
         self._model = None
         self._freq = freq or "D"
@@ -424,7 +436,7 @@ class RARModel(TrendFallbackModel):
 
         x = np.arange(len(series), dtype=float)
         baseline = self._coef * x + self._intercept
-        resid = series.values - baseline
+        resid = series.to_numpy(dtype=float) - baseline
 
         lag = max(1, int(round(self.alpha * 10)))
         if len(resid) <= lag + 2:

@@ -40,12 +40,15 @@ def _seasonal_slot_fill(series: pd.Series, weeks: int) -> pd.Series:
         return series
 
     index = series.index
+    if not isinstance(index, pd.DatetimeIndex):
+        raise TypeError("seasonal_slot requires a DatetimeIndex")
     day_of_week = index.dayofweek.to_numpy()
     minute_of_day = (index.hour * 60 + index.minute).to_numpy()
     values = series.to_numpy(dtype=float)
     filled = series.copy()
 
-    for position in np.flatnonzero(missing):
+    for raw_position in np.flatnonzero(missing):
+        position = int(raw_position)
         timestamp = index[position]
         start = index.searchsorted(timestamp - pd.Timedelta(weeks=weeks), side="left")
         end = index.searchsorted(timestamp + pd.Timedelta(weeks=weeks), side="right")
@@ -155,13 +158,13 @@ def aggregate_csv(
     if missing_columns:
         raise ValueError(f"Aggregation columns not found: {missing_columns}")
     source_rows = len(frame)
-    frame = frame[[time_col, target_col]].copy()
+    frame = frame.loc[:, [time_col, target_col]].copy()
     frame[time_col] = pd.to_datetime(frame[time_col], errors="raise")
     frame[target_col] = pd.to_numeric(frame[target_col], errors="coerce")
     if frame[target_col].isna().any():
         raise ValueError(f"Aggregation target '{target_col}' contains non-numeric or missing values")
 
-    series = frame.sort_values(time_col).set_index(time_col)[target_col].resample(source_freq).mean()
+    series = frame.sort_values(time_col).set_index(time_col).loc[:, target_col].resample(source_freq).mean()
     inserted_count = int(series.isna().sum())
     before_fill = inserted_count
     if fill_method == "linear":

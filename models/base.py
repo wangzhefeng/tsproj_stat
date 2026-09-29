@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from models.registry import ModelSpec
 
 import numpy as np
 import pandas as pd
@@ -10,8 +14,14 @@ class BaseStatModel(ABC):
     """统计模型统一抽象。
 
     所有主线模型都通过 fit(y, X_hist=None, X_future=None) 接入训练，
-    多步推理由 models.inference 统一编排，模型自身只需保证 predict/predict_one 契约。
+    原生多步 predict(horizon) 是正式接口，predict_one 桥接单步；
+    models.inference 区分 native 执行和旧逐步重拟合策略。
     """
+
+    _model_spec: ModelSpec | None = None
+    _ignore_unsupported_inputs = False
+    _is_fallback: bool = False
+    _fallback_reason: str | None = None
 
     @abstractmethod
     def fit(
@@ -29,7 +39,7 @@ class BaseStatModel(ABC):
     def predict_one(self, X_future_one: pd.DataFrame | None = None) -> float | pd.Series:
         """单步预测桥接方法。
 
-        迁移期仍允许模型只实现 predict(1)，这里统一抽取第一步结果，
+        模型只需实现 predict(horizon)，这里统一抽取 predict(1) 的结果，
         让 recursive/dirrec 策略可以依赖 predict_one 契约。
         """
         pred = self.predict(1, X_future=X_future_one)

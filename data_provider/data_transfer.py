@@ -35,7 +35,8 @@ def combine_history_frame(
 
     frame = X_hist.reset_index(drop=True).copy()
     target = to_univariate_series(y).astype(float).reset_index(drop=True)
-    target_name = target.name or (frame.columns[0] if len(frame.columns) else "y")
+    # 未命名 Series 使用统一默认目标名，不能将第一列协变量覆盖成目标。
+    target_name = target.name if target.name is not None else "y"
 
     if len(frame) != len(target):
         raise ValueError("X_hist must have the same number of rows as y")
@@ -43,7 +44,7 @@ def combine_history_frame(
     if target_name in frame.columns:
         frame[target_name] = target.values
     else:
-        frame.insert(0, target_name, target.values)
+        frame.insert(0, target_name, target.to_numpy(dtype=float))
 
     ordered = [target_name, *[col for col in frame.columns if col != target_name]]
-    return frame[ordered].astype(float)
+    return frame.loc[:, ordered].astype(float)

@@ -6,8 +6,12 @@ from difflib import get_close_matches
 
 from models.base import BaseStatModel
 from models.model.arima_family import ARMAModel, ARIMAModel, ARModel, AutoARIMAModel, MAModel, SARIMAModel
+from models.model.arima_family import StatsForecastAutoARIMAModel
 from models.model.baseline_models import (
     AutoETSModel,
+    AutoCESModel,
+    RandomWalkWithDriftModel,
+    SeasonalWindowAverageModel,
     AutoThetaModel,
     CrostonModel,
     DynamicThetaModel,
@@ -36,18 +40,24 @@ class ModelSpec:
     supports_future_exog: bool = False
     supports_prediction_intervals: bool = False
     supports_native_multistep: bool = True
+    supports_update: bool = False
 
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
     "naive": ModelSpec(NaiveModel, {}, "fallbacks", "stable", False),
     "seasonal_naive": ModelSpec(SeasonalNaiveModel, {"season_length": 7}, "baseline_models", "stable", False),
     "historic_average": ModelSpec(HistoricAverageModel, {}, "baseline_models", "stable", False),
+    "random_walk_drift": ModelSpec(RandomWalkWithDriftModel, {}, "baseline_models", "optional", False, supports_prediction_intervals=True),
+    "seasonal_window_average": ModelSpec(SeasonalWindowAverageModel, {}, "baseline_models", "optional", False),
+    "auto_ces": ModelSpec(AutoCESModel, {}, "baseline_models", "optional", False, supports_prediction_intervals=True),
     "croston": ModelSpec(CrostonModel, {}, "baseline_models", "experimental", False),
     "ar": ModelSpec(ARModel, {"p": 1}, "arima_family", "stable", False),
     "ma": ModelSpec(MAModel, {"q": 1}, "arima_family", "stable", False),
     "arma": ModelSpec(ARMAModel, {"p": 1, "q": 1}, "arima_family", "stable", False),
     "arima": ModelSpec(ARIMAModel, {"order": (1, 1, 1)}, "arima_family", "stable", False),
     "auto_arima": ModelSpec(AutoARIMAModel, {}, "arima_family", "stable", False),
+    "sf_auto_arima": ModelSpec(StatsForecastAutoARIMAModel, {}, "arima_family", "optional", False,
+                              supports_future_exog=True, supports_prediction_intervals=True),
     "sarima": ModelSpec(SARIMAModel, {"order": (1, 1, 1), "seasonal_order": (1, 1, 1, 7)}, "arima_family", "stable", False),
     "ets": ModelSpec(ETSModel, {}, "exponential_family", "stable", False),
     "theta": ModelSpec(ThetaModel, {}, "exponential_family", "stable", False),
@@ -56,15 +66,25 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
     "auto_theta": ModelSpec(AutoThetaModel, {"season_length": 1}, "baseline_models", "optional", False),
     "var": ModelSpec(VARModel, {}, "multivariate", "stable", True),
     "bayesian_var": ModelSpec(BayesianVARModel, {}, "multivariate", "experimental", True),
-    "linear_var": ModelSpec(LinearVARModel, {}, "multivariate", "experimental", True),
+    "linear_var": ModelSpec(LinearVARModel, {}, "multivariate", "experimental", True, supports_future_exog=True),
     "arch": ModelSpec(ARCHModel, {}, "volatility_family", "optional", False),
     "garch": ModelSpec(GARCHModel, {}, "volatility_family", "optional", False),
     "tbats": ModelSpec(TBATSModel, {}, "extended_models", "optional", False),
-    "prophet": ModelSpec(ProphetModel, {}, "extended_models", "optional", False),
-    "neuralprophet": ModelSpec(NeuralProphetModel, {}, "extended_models", "experimental", False),
+    "prophet": ModelSpec(ProphetModel, {}, "extended_models", "optional", False, supports_future_exog=True),
+    "neuralprophet": ModelSpec(NeuralProphetModel, {}, "extended_models", "experimental", False, supports_future_exog=True),
     "bayesian_tmt": ModelSpec(BayesianTMTModel, {}, "extended_models", "experimental", False),
     "rar": ModelSpec(RARModel, {}, "extended_models", "experimental", False),
 }
+
+
+for _name in ("ar", "ma", "arma", "arima", "sarima", "auto_arima", "dynamic_theta", "auto_ets", "auto_theta"):
+    MODEL_REGISTRY[_name].supports_prediction_intervals = True
+
+for _name in ("ar", "ma", "arma", "arima", "sarima", "auto_arima"):
+    MODEL_REGISTRY[_name].supports_future_exog = True
+
+for _name in ("ar", "ma", "arma", "arima", "sarima"):
+    MODEL_REGISTRY[_name].supports_update = True
 
 
 def create_stat_model(name: str, params: dict | None = None) -> BaseStatModel:
@@ -94,4 +114,6 @@ def create_stat_model(name: str, params: dict | None = None) -> BaseStatModel:
             f"Accepted params: {sorted(valid_names)}"
         )
     valid_kwargs = {key: value for key, value in merged.items() if key in valid_names}
-    return spec.cls(**valid_kwargs)
+    model = spec.cls(**valid_kwargs)
+    model._model_spec = spec
+    return model

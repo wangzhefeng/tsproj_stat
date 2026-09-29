@@ -156,11 +156,9 @@ class _StatsForecastModelBase(BaseStatModel, ABC):
 
     def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "_StatsForecastModelBase":
         series = _preserve_univariate_series(y)
-        frame, resolved_freq = _build_single_series_frame(series, self.freq)
-        statsforecast_cls = self._import_statsforecast()
-        model = self._build_model()
-        self._sf = statsforecast_cls(models=[model], freq=resolved_freq, n_jobs=1)
-        self._sf.fit(frame)
+        # 单序列使用数组接口；freq 保留兼容，不再制造虚拟时间轴。
+        # pandas 3 CoW 暴露只读视图，CES 内核会原地工作，必须交付自有可写数组。
+        self._sf = self._build_model().fit(series.to_numpy(dtype=float, copy=True))
         return self
 
     def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
@@ -168,31 +166,21 @@ class _StatsForecastModelBase(BaseStatModel, ABC):
         if self._sf is None:
             raise RuntimeError("Model is not fitted")
         pred = self._sf.predict(horizon)
-        value_cols = [col for col in pred.columns if col not in {"unique_id", "ds"}]
-        if not value_cols:
-            raise RuntimeError("StatsForecast prediction output missing value column")
-        return pd.Series(pred[value_cols[0]].astype(float).to_list(), name="yhat")
+        return pd.Series(pred["mean"], dtype=float, name="yhat")
 
     def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
+        validate_horizon(horizon)
+        if not 0 < alpha < 1:
+            raise ValueError("alpha must be in (0, 1)")
         if self._sf is None:
-            return super().predict_with_intervals(horizon, X_future, alpha)
-        try:
-            level = int(round((1 - alpha) * 100))
-            pred = self._sf.predict(horizon, level=[level])
-            value_cols = [col for col in pred.columns if col not in {"unique_id", "ds"}]
-            if not value_cols:
-                return super().predict_with_intervals(horizon, X_future, alpha)
-            yhat_col = value_cols[0]
-            lo_col = next((c for c in pred.columns if c.endswith(f"-lo-{level}")), None)
-            hi_col = next((c for c in pred.columns if c.endswith(f"-hi-{level}")), None)
-            import numpy as np
-            return pd.DataFrame({
-                "yhat": pred[yhat_col].astype(float).to_list(),
-                "yhat_lower": pred[lo_col].astype(float).to_list() if lo_col else [np.nan] * horizon,
-                "yhat_upper": pred[hi_col].astype(float).to_list() if hi_col else [np.nan] * horizon,
-            })
-        except Exception:
-            return super().predict_with_intervals(horizon, X_future, alpha)
+            raise RuntimeError("Model is not fitted")
+        level = round((1 - alpha) * 100, 10)
+        pred = self._sf.predict(horizon, level=[level])
+        return pd.DataFrame({
+            "yhat": pred["mean"],
+            "yhat_lower": pred[f"lo-{level}"],
+            "yhat_upper": pred[f"hi-{level}"],
+        })
 
 
 class AutoETSModel(_StatsForecastModelBase):
@@ -259,3 +247,34 @@ class DynamicThetaModel(_StatsForecastModelBase):
             season_length=self.season_length,
             decomposition_type=self.decomposition_type,
         )
+
+
+class AutoCESModel(_StatsForecastModelBase):
+    def __init__(self, season_length: int = 1, model: str = "Z"):
+        super().__init__(season_length)
+        self.model = model
+
+    def _build_model(self):
+        from statsforecast.models import AutoCES
+        return AutoCES(season_length=self.season_length, model=self.model)
+
+
+class RandomWalkWithDriftModel(_StatsForecastModelBase):
+    def __init__(self):
+        super().__init__()
+
+    def _build_model(self):
+        from statsforecast.models import RandomWalkWithDrift
+        return RandomWalkWithDrift()
+
+
+class SeasonalWindowAverageModel(_StatsForecastModelBase):
+    def __init__(self, season_length: int = 7, window_size: int = 2):
+        super().__init__(season_length)
+        if window_size < 1:
+            raise ValueError("window_size must be positive")
+        self.window_size = window_size
+
+    def _build_model(self):
+        from statsforecast.models import SeasonalWindowAverage
+        return SeasonalWindowAverage(season_length=self.season_length, window_size=self.window_size)

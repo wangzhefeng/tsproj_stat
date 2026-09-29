@@ -64,7 +64,7 @@ class TrendFallbackModel(BaseStatModel):
             self._coef = 0.0
             self._intercept = float(series.iloc[-1])
         else:
-            self._coef, self._intercept = np.polyfit(x, series.values, deg=1)
+            self._coef, self._intercept = np.polyfit(x, series.to_numpy(dtype=float), deg=1)
         self._last_index = len(series) - 1
         return self
 

@@ -8,6 +8,14 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from typing import Protocol, cast
+
+
+class _VARForecastInterval(Protocol):
+    """statsmodels VARResults 的公开 (point, lower, upper) 返回契约。"""
+
+    def __call__(self, y: np.ndarray, steps: int, alpha: float = 0.05,
+                 exog_future: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]: ...
 
 from models.base import BaseStatModel
 from data_provider.data_transfer import combine_history_frame, to_dataframe
@@ -76,8 +84,9 @@ class VARModel(FallbackMixin, BaseStatModel):
             return super().predict_with_intervals(horizon, X_future, alpha)
         try:
             lag = max(int(self._result.k_ar), 1)
-            input_values = self._frame.values[-lag:]
-            lower, mid, upper = self._result.forecast_interval(input_values, steps=horizon, alpha=alpha)
+            input_values = self._frame.to_numpy(dtype=float)[-lag:]
+            forecast_interval = cast(_VARForecastInterval, self._result.forecast_interval)
+            mid, lower, upper = forecast_interval(input_values, steps=horizon, alpha=alpha)
             target_idx = list(self._frame.columns).index(self._target_col)
             return pd.DataFrame({
                 "yhat": mid[:, target_idx],
@@ -265,6 +274,8 @@ class LinearVARModel(FallbackMixin, BaseStatModel):
         return pd.Series(preds, name="yhat")
 
     def _build_training_row(self, frame: pd.DataFrame, idx: int) -> list[float]:
+        if self._target_col is None:
+            raise RuntimeError("Model target is not initialized")
         row = [float(frame.iloc[idx - lag][self._target_col]) for lag in self.target_lags]
         for col in self._feature_cols:
             row.extend(float(frame.iloc[idx - lag][col]) for lag in self.feature_lags)
@@ -277,6 +288,8 @@ class LinearVARModel(FallbackMixin, BaseStatModel):
         future_exog: pd.DataFrame | None,
     ) -> list[float]:
         current_idx = len(history)
+        if self._target_col is None:
+            raise RuntimeError("Model target is not initialized")
         row = [float(history.iloc[current_idx - lag][self._target_col]) for lag in self.target_lags]
         for col in self._feature_cols:
             for lag in self.feature_lags:
@@ -290,6 +303,8 @@ class LinearVARModel(FallbackMixin, BaseStatModel):
         step_idx: int,
         future_exog: pd.DataFrame | None,
     ) -> dict[str, float]:
+        if self._target_col is None:
+            raise RuntimeError("Model target is not initialized")
         next_row = {self._target_col: next_val}
         next_abs_idx = len(history)
         for col in self._feature_cols:

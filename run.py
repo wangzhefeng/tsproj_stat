@@ -102,6 +102,12 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.seed = args.seed
     if getattr(args, "data_path", None) is not None:
         cfg.data_path = args.data_path
+    if getattr(args, "series_id_col", None) is not None:
+        cfg.series_id_col = args.series_id_col
+    if getattr(args, "batch_models", None) is not None:
+        cfg.batch_models = _parse_model_params(args.batch_models)
+    if getattr(args, "batch_allow_failed", None) is not None:
+        cfg.batch_allow_failed = _parse_bool(args.batch_allow_failed)
     if getattr(args, "time_col", None) is not None:
         cfg.time_col = args.time_col
     if getattr(args, "target_col", None) is not None:
@@ -138,6 +144,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.model_params = _parse_model_params(args.model_params)
     if getattr(args, "forecast_strategy", None) is not None:
         cfg.forecast_strategy = args.forecast_strategy
+    if getattr(args, "ignore_unsupported_inputs", None) is not None:
+        cfg.ignore_unsupported_inputs = _parse_bool(args.ignore_unsupported_inputs)
     if getattr(args, "do_train", None) is not None:
         cfg.do_train = _parse_bool(args.do_train)
     if getattr(args, "do_test", None) is not None:
@@ -182,6 +190,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.backtest_progress_every = args.backtest_progress_every
     if getattr(args, "backtest_n_jobs", None) is not None:
         cfg.backtest_n_jobs = args.backtest_n_jobs
+    if getattr(args, "backtest_refit_every", None) is not None:
+        cfg.backtest_refit_every = args.backtest_refit_every
     if getattr(args, "backtest_allow_failed_windows", None) is not None:
         cfg.backtest_allow_failed_windows = _parse_bool(args.backtest_allow_failed_windows)
     if getattr(args, "feature_mode", None) is not None:
@@ -204,6 +214,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.detrend_method = args.detrend_method
     if getattr(args, "seasonal_period", None) is not None:
         cfg.seasonal_period = args.seasonal_period
+    if getattr(args, "seasonal_periods", None) is not None:
+        cfg.seasonal_periods = [int(v) for v in _parse_csv_list(args.seasonal_periods)]
     if getattr(args, "decomposition_method", None) is not None:
         cfg.decomposition_method = args.decomposition_method
     if getattr(args, "decomposition_target", None) is not None:
@@ -242,6 +254,10 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.return_intervals = _parse_bool(args.return_intervals)
     if getattr(args, "interval_alpha", None) is not None:
         cfg.interval_alpha = args.interval_alpha
+    if getattr(args, "interval_method", None) is not None:
+        cfg.interval_method = args.interval_method
+    if getattr(args, "conformal_n_windows", None) is not None:
+        cfg.conformal_n_windows = args.conformal_n_windows
     if getattr(args, "forecast_allow_nan_fill", None) is not None:
         cfg.forecast_allow_nan_fill = _parse_bool(args.forecast_allow_nan_fill)
     if getattr(args, "monitor_enabled", None) is not None:
@@ -297,8 +313,12 @@ def parse_args() -> AppConfig:
     parser.add_argument("--aggregation_output_path", type=str, default=None)
     # 模型参数：model_params 使用 JSON 对象文本，避免为每类模型扩散专用 CLI 字段。
     parser.add_argument("--model_name", type=str, default=None)
+    parser.add_argument("--series_id_col", type=str, default=None)
+    parser.add_argument("--batch_models", type=str, default=None)
+    parser.add_argument("--batch_allow_failed", default=None)
     parser.add_argument("--model_params", type=str, default=None)
     parser.add_argument("--forecast_strategy", type=str, default=None)
+    parser.add_argument("--ignore_unsupported_inputs", default=None)
     # 任务参数
     parser.add_argument("--do_train", default=None)
     parser.add_argument("--do_test", default=None)
@@ -325,6 +345,7 @@ def parse_args() -> AppConfig:
     parser.add_argument("--backtest_progress_every", type=int, default=None)      # 每多少个窗口打印一次进度
     parser.add_argument("--backtest_n_jobs", type=int, default=None)              # 窗口级回测并行数，1 表示保持串行路径
     parser.add_argument("--backtest_allow_failed_windows", default=None)          # 默认 false：任一窗口失败即中止
+    parser.add_argument("--backtest_refit_every", type=int, default=None)
     # 特征工程
     parser.add_argument("--feature_mode", type=str, default=None)
     parser.add_argument("--enable_datetime_features", default=None)
@@ -339,6 +360,7 @@ def parse_args() -> AppConfig:
     parser.add_argument("--seasonal_period", type=int, default=None)  # 显式季节周期；缺省时部分流程会尝试自动推断
     # 时间序列分解
     parser.add_argument("--decomposition_method", type=str, default=None)
+    parser.add_argument("--seasonal_periods", type=str, default=None)
     parser.add_argument("--decomposition_target", type=str, default=None)
     parser.add_argument("--decomposition_model", type=str, default=None)
     
@@ -361,6 +383,8 @@ def parse_args() -> AppConfig:
     # 概率预测
     parser.add_argument("--return_intervals", default=None)
     parser.add_argument("--interval_alpha", type=float, default=None)
+    parser.add_argument("--interval_method", choices=["native", "conformal"], default=None)
+    parser.add_argument("--conformal_n_windows", type=int, default=None)
     parser.add_argument("--forecast_allow_nan_fill", default=None)                # 默认 false：预测含 NaN 即失败
     # 本地监控
     parser.add_argument("--monitor_enabled", default=None)
@@ -418,6 +442,11 @@ def main() -> None:
     logger.info(f"{'=' * 104}")
     logger.info("Loading config...")
     cfg = parse_args()
+    if cfg.series_id_col:
+        from app.batch import run_batch
+        result = run_batch(cfg)
+        logger.info(f"Batch result: {result}")
+        return
     aggregation_result = resolve_config_aggregation(cfg)
     
     # Set seed
@@ -436,6 +465,9 @@ def main() -> None:
     logger.info(f"{'=' * 104}")
     logger.info("Run model...")
     result = ModelApp(cfg, aggregation_result=aggregation_result).run()
+    stage_errors = {key: value for key, value in result.items() if key.endswith("_error")}
+    if stage_errors:
+        raise RuntimeError(f"Run failed; stage errors: {stage_errors}; summary: {result.get('summary_path')}")
     
     # model result
     logger.info("Run finished...")

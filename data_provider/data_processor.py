@@ -38,10 +38,10 @@ def infer_seasonal_period(
         pass
 
     centered = values - values.mean()
-    if np.allclose(centered.values, 0.0):
+    if np.allclose(centered.to_numpy(dtype=float), 0.0):
         return None
 
-    fft_values = np.fft.rfft(centered.values)
+    fft_values = np.fft.rfft(centered.to_numpy(dtype=float))
     power = np.abs(fft_values) ** 2
     if len(power) <= 1:
         return None
@@ -77,10 +77,11 @@ class DataProcessor:
         decomposition_model: str = "additive",
         acf_max_lag: int = 48,
         seasonality_strength_threshold: float = 0.3,
+        seasonal_periods: list[int] | None = None,
     ):
         valid_detrend_methods = {"none", "linear", "moving_average"}
         valid_denoise_methods = {"none", "moving_average", "moving_median"}
-        valid_decomposition_methods = {"none", "seasonal_decompose", "stl"}
+        valid_decomposition_methods = {"none", "seasonal_decompose", "stl", "mstl"}
         valid_targets = {"trend_resid", "resid_only"}
         valid_models = {"additive", "multiplicative"}
 
@@ -110,6 +111,16 @@ class DataProcessor:
         self.denoise_enabled = denoise_enabled or self.denoise_method != "none"
         self.denoise_window = denoise_window
         self.seasonal_period = seasonal_period
+        self.seasonal_periods = sorted(seasonal_periods or [])
+        if decomposition_method == "mstl":
+            if (not self.seasonal_periods or len(set(self.seasonal_periods)) != len(self.seasonal_periods)
+                    or any(isinstance(p, bool) or not isinstance(p, int) or p <= 1 for p in self.seasonal_periods)):
+                raise ValueError("MSTL requires distinct integer seasonal_periods > 1")
+            if seasonal_period is not None or decomposition_model != "additive":
+                raise ValueError("MSTL requires additive decomposition and seasonal_periods only")
+        elif self.seasonal_periods:
+            raise ValueError("seasonal_periods requires MSTL")
+        self._seasonal_templates: list[np.ndarray] = []
         self.decomposition_method = decomposition_method
         self.decomposition_target = decomposition_target
         self.decomposition_model = decomposition_model
@@ -150,16 +161,20 @@ class DataProcessor:
 
         self._index_offset = len(values)
         self._fitted = True
-        return transformed.rename(series.name)
+        transformed.name = series.name
+        return transformed
 
     def inverse_transform(self, transformed_series: pd.Series) -> pd.Series:
         """将训练期转换序列还原，主要用于验证可逆性。"""
         self._check_fitted()
         values = pd.Series(transformed_series).astype(float).reset_index(drop=True)
         if self._mode == "decomposition":
-            return self._inverse_from_components(values).rename(transformed_series.name)
-        trend = self._trend_for_length(len(values))
-        return (values + trend).rename(transformed_series.name)
+            restored = self._inverse_from_components(values)
+        else:
+            trend = self._trend_for_length(len(values))
+            restored = values + trend
+        restored.name = transformed_series.name
+        return restored
 
     def inverse_forecast(self, forecast_values: pd.Series | np.ndarray | list[float]) -> pd.Series:
         """将未来预测值从建模尺度还原到原始目标尺度。"""
@@ -198,6 +213,8 @@ class DataProcessor:
 
     def _fit_decomposition(self, series: pd.Series) -> pd.Series:
         """拟合季节分解，并按 decomposition_target 决定模型学习目标。"""
+        if self.decomposition_method == "mstl":
+            return self._fit_mstl(series)
         period = self.seasonal_period or infer_seasonal_period(
             series,
             acf_max_lag=self.acf_max_lag,
@@ -225,6 +242,26 @@ class DataProcessor:
         base = (self._seasonal_train * self._trend_train).replace(0.0, 1.0)
         return series.reset_index(drop=True) / base
 
+    def _fit_mstl(self, series: pd.Series) -> pd.Series:
+        from statsmodels.tsa.seasonal import MSTL
+
+        if len(series) <= 2 * max(self.seasonal_periods):
+            raise ValueError("MSTL history must exceed twice the largest seasonal period")
+        result = MSTL(series, periods=self.seasonal_periods, stl_kwargs={"robust": True}).fit()
+        components = np.asarray(result.seasonal)
+        if components.ndim == 1:
+            components = components[:, None]
+        self._seasonal_templates = [components[-period:, i].copy() for i, period in enumerate(self.seasonal_periods)]
+        self._mode = "decomposition"
+        self._resolved_period = max(self.seasonal_periods)
+        self._seasonal_train = pd.Series(components.sum(axis=1))
+        self._trend_train = pd.Series(result.trend).reset_index(drop=True)
+        self._last_trend = float(self._trend_train.iloc[-1])
+        transformed = series.reset_index(drop=True) - self._seasonal_train
+        if self.decomposition_target == "resid_only":
+            transformed = transformed - self._trend_train
+        return transformed
+
     def _decompose(self, series: pd.Series, period: int) -> tuple[pd.Series, pd.Series]:
         values = series.reset_index(drop=True)
         if self.decomposition_method == "stl":
@@ -241,7 +278,7 @@ class DataProcessor:
             values,
             period=period,
             model=self.decomposition_model,
-            extrapolate_trend="freq",
+            extrapolate_trend=period - 1,  # statsmodels 对 "freq" 的等价展开。
         )
         trend = pd.Series(result.trend).interpolate(limit_direction="both")
         seasonal = pd.Series(result.seasonal).interpolate(limit_direction="both")
@@ -257,7 +294,7 @@ class DataProcessor:
                 self._slope = 0.0
                 self._intercept = float(series.iloc[-1]) if len(series) else 0.0
             else:
-                self._slope, self._intercept = np.polyfit(x, series.values, deg=1)
+                self._slope, self._intercept = np.polyfit(x, series.to_numpy(dtype=float), deg=1)
             trend = self._slope * x + self._intercept
             return pd.Series(trend, index=series.index)
 
@@ -291,9 +328,8 @@ class DataProcessor:
             return pd.Series(np.zeros(length))
         if length <= len(self._seasonal_train):
             return self._seasonal_train.iloc[:length].reset_index(drop=True)
-        repeats = int(np.ceil((length - len(self._seasonal_train)) / self._resolved_period))
-        tail = np.tile(self._seasonal_template.values, repeats)[: length - len(self._seasonal_train)]
-        base = self._seasonal_train.reset_index(drop=True).values
+        tail = self._future_seasonal(length - len(self._seasonal_train)).to_numpy(dtype=float)
+        base = self._seasonal_train.to_numpy(dtype=float)
         return pd.Series(np.concatenate([base, tail]))
 
     def _trend_for_length(self, length: int) -> pd.Series:
@@ -305,7 +341,7 @@ class DataProcessor:
             x = np.arange(length, dtype=float)
             return pd.Series(self._slope * x + self._intercept)
         ext = np.full(length - len(self._trend_train), self._last_trend, dtype=float)
-        base = self._trend_train.reset_index(drop=True).values
+        base = self._trend_train.to_numpy(dtype=float)
         return pd.Series(np.concatenate([base, ext]))
 
     def _future_trend(self, horizon: int) -> pd.Series:
@@ -323,10 +359,12 @@ class DataProcessor:
     def _future_seasonal(self, horizon: int) -> pd.Series:
         if horizon <= 0:
             raise ValueError("horizon must be positive")
+        if self._seasonal_templates:
+            return pd.Series(sum(np.resize(template, horizon) for template in self._seasonal_templates))
         if self._seasonal_template is None or self._resolved_period is None:
             return pd.Series(np.zeros(horizon))
         repeats = int(np.ceil(horizon / self._resolved_period))
-        values = np.tile(self._seasonal_template.values, repeats)[:horizon]
+        values = np.tile(self._seasonal_template.to_numpy(dtype=float), repeats)[:horizon]
         return pd.Series(values)
 
     def _check_fitted(self) -> None:

@@ -21,7 +21,7 @@ def _collect_dep_versions(pkgs: list[str]) -> dict[str, str]:
     return versions
 
 
-_KEY_DEPS = ["statsmodels", "numpy", "pandas", "pmdarima", "scikit-learn"]
+_KEY_DEPS = ["statsmodels", "statsforecast", "numpy", "pandas", "pmdarima", "scikit-learn"]
 
 
 def _warn_if_dep_mismatch(saved_deps: dict[str, str]) -> None:
@@ -41,7 +41,7 @@ def save_model(model, path: str, meta: dict | None = None) -> None:
 
     归档语义（T11 起明确）：model.pkl 是 train 阶段的训练快照，用于可追溯性
     （模型类别、参数、依赖版本、训练窗口）。主线 forecast/test 的多步推理由
-    models/inference 按策略在推理时逐 step fit，不消费该 checkpoint；
+    models/inference 按策略在推理时拟合（native 一次，兼容策略逐步），不消费该 checkpoint；
     load_model 仅供离线检查或外部消费者使用。
     """
     p = Path(path)

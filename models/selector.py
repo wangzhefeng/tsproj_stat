@@ -54,6 +54,7 @@ class AutoSelector:
         target_col: str = "y",
         time_col: str = "ds",
         processor_builder=None,
+        future_exog_cols: list[str] | None = None,
     ) -> str:
         """评估全部候选模型，并返回有效得分最优的模型名。
 
@@ -79,8 +80,17 @@ class AutoSelector:
 
         factory = ModelFactory()
         self._scores = {}
+        features = [c for c in df.columns if c not in {target_col, time_col}]
 
         for model_name in self.candidates:
+            spec = MODEL_REGISTRY.get(model_name)
+            if spec is not None and (
+                (future_exog_cols and not spec.supports_future_exog)
+                or (features and not (spec.supports_multivariate or spec.supports_future_exog))
+                or (self.forecast_strategy == "native" and not spec.supports_native_multistep)
+            ):
+                logger.info(f"[AutoSelect] skipping incompatible candidate {model_name}")
+                continue
             params = self.model_params_map.get(model_name, {})
             try:
                 result = rolling_backtest(
@@ -88,6 +98,8 @@ class AutoSelector:
                     model_builder=lambda model_name=model_name, params=params: factory.create_model(model_name, params),
                     target_col=target_col,
                     time_col=time_col if time_col in df.columns else None,
+                    exog_cols=features,
+                    future_exog_cols=future_exog_cols,
                     train_size=self.initial_train_size,
                     horizon=self.horizon,
                     step=step,

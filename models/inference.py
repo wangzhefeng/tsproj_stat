@@ -7,9 +7,10 @@ import numpy as np
 import pandas as pd
 
 from data_provider.data_transfer import combine_history_frame, to_dataframe, to_univariate_series
+from models.base import BaseStatModel
 
 
-FORECAST_STRATEGIES = {"single_step", "direct", "recursive", "dirrec"}
+FORECAST_STRATEGIES = {"native", "single_step", "direct", "recursive", "dirrec"}
 WINDOW_MODES = {"expanding", "sliding"}
 
 
@@ -32,7 +33,7 @@ def normalize_window_mode(window_mode: str | None) -> str:
 
 
 def validate_horizon(horizon: int) -> None:
-    if horizon <= 0:
+    if isinstance(horizon, bool) or not isinstance(horizon, (int, np.integer)) or horizon <= 0:
         raise ValueError("horizon must be positive")
 
 
@@ -84,6 +85,27 @@ def _predict_one(model, X_future_one: pd.DataFrame | None = None) -> float:
     return _coerce_single_value(model.predict_one(X_future_one=X_future_one))
 
 
+def checked_model_builder(model_builder, strategy, X_future, intervals=False, history=None, X_hist=None):
+    """注册模型能力是执行门禁；自定义模型仍遵守公共接口。"""
+    def build():
+        model = model_builder()
+        spec = getattr(model, "_model_spec", None)
+        if spec is not None:
+            ignore = getattr(model, "_ignore_unsupported_inputs", False)
+            if strategy == "native" and not spec.supports_native_multistep:
+                raise ValueError("model does not support native multistep prediction")
+            if X_future is not None and X_future.shape[1] and not spec.supports_future_exog and not ignore:
+                raise ValueError("model does not support future exogenous inputs")
+            if history is not None and not ignore and not (spec.supports_multivariate or spec.supports_future_exog):
+                frame = combine_history_frame(history, X_hist)
+                if frame.shape[1] > 1:
+                    raise ValueError("model does not support historical covariates; set ignore_unsupported_inputs explicitly")
+            if intervals and strategy == "native" and not spec.supports_prediction_intervals:
+                raise ValueError("model does not support native intervals; use conformal intervals")
+        return model
+    return build
+
+
 def _predict_direct_step(model, step: int, X_future_prefix: pd.DataFrame | None = None) -> float:
     pred = model.predict(step, X_future=X_future_prefix)
     series = pred if isinstance(pred, pd.Series) else pd.Series(pred)
@@ -93,7 +115,7 @@ def _predict_direct_step(model, step: int, X_future_prefix: pd.DataFrame | None 
 
 
 def run_point_inference(
-    model_builder: Callable[[], object],
+    model_builder: Callable[[], BaseStatModel],
     history: pd.Series | pd.DataFrame,
     horizon: int,
     forecast_strategy: str,
@@ -102,7 +124,7 @@ def run_point_inference(
 ) -> pd.Series:
     """执行点预测的统一多步推理编排。
 
-    single_step: 只允许 horizon=1；
+    native: 一次拟合预测完整 horizon；single_step: 只允许 horizon=1；
     direct: 每个预测步重新拟合一个模型并取对应步长的最后一个预测值；
     recursive: 每一步把上一轮预测追加回历史，再预测下一步；
     dirrec: 逐步重建模型，同时使用递归扩展后的历史。
@@ -111,9 +133,18 @@ def run_point_inference(
     validate_horizon(horizon)
     validate_single_step_horizon(strategy, horizon)
 
+    model_builder = checked_model_builder(model_builder, strategy, X_future, history=history, X_hist=X_hist)
     history_series = to_univariate_series(history).astype(float).reset_index(drop=True)
     history_frame = combine_history_frame(history, X_hist).astype(float).reset_index(drop=True)
     future_frame = None if X_future is None else to_dataframe(X_future).astype(float).reset_index(drop=True)
+
+    if strategy == "native":
+        model = model_builder()
+        model.fit(history_series, X_hist=history_frame, X_future=future_frame)
+        pred = pd.Series(model.predict(horizon, X_future=future_frame)).reset_index(drop=True)
+        if len(pred) != horizon:
+            raise ValueError(f"predict({horizon}) returned length {len(pred)}")
+        return pred.rename("yhat")
 
     if strategy == "single_step":
         # 单步策略只拟合一次，严格对应 predict_one 契约。
@@ -136,19 +167,20 @@ def run_point_inference(
     hist_frame = history_frame.copy()
     preds = []
     for step_idx in range(horizon):
-        # recursive/dirrec 都会把预测追加回历史；dirrec 每步重建模型，recursive 复用模型副本。
+        # 保留旧语义：两者均每步重建并拟合；recursive 对新实例再复制，并不复用拟合参数。
         model = model_builder() if strategy == "dirrec" else copy.deepcopy(model_builder())
         next_future = _future_row(future_frame, step_idx)
         model.fit(hist, X_hist=hist_frame, X_future=next_future)
         next_val = _predict_one(model, next_future)
         preds.append(next_val)
         hist = pd.concat([hist, pd.Series([next_val])], ignore_index=True)
+        hist.name = history_series.name
         hist_frame = _append_history_frame(hist_frame, next_val, next_future)
     return pd.Series(preds, name="yhat")
 
 
 def run_interval_inference(
-    model_builder: Callable[[], object],
+    model_builder: Callable[[], BaseStatModel],
     history: pd.Series | pd.DataFrame,
     horizon: int,
     forecast_strategy: str,
@@ -158,19 +190,17 @@ def run_interval_inference(
 ) -> pd.DataFrame:
     """执行区间预测编排。
 
-    只有 single_step/direct 可以从每个直接预测模型取原生区间；
+    native/single_step/direct 从同一拟合模型同时取点预测与原生区间；
     recursive/dirrec 暂时返回点预测和 NaN 区间，避免伪造不可靠置信区间。
     """
     strategy = normalize_forecast_strategy(forecast_strategy)
-    point = run_point_inference(
-        model_builder=model_builder,
-        history=history,
-        horizon=horizon,
-        forecast_strategy=strategy,
-        X_hist=X_hist,
-        X_future=X_future,
-    )
+    validate_horizon(horizon)
+    validate_single_step_horizon(strategy, horizon)
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0, 1)")
+    model_builder = checked_model_builder(model_builder, strategy, X_future, intervals=True, history=history, X_hist=X_hist)
     if strategy in {"recursive", "dirrec"}:
+        point = run_point_inference(model_builder, history, horizon, strategy, X_hist, X_future)
         return pd.DataFrame(
             {
                 "yhat": point.values,
@@ -183,11 +213,17 @@ def run_interval_inference(
     history_frame = combine_history_frame(history, X_hist).astype(float).reset_index(drop=True)
     future_frame = None if X_future is None else to_dataframe(X_future).astype(float).reset_index(drop=True)
 
-    if strategy == "single_step":
+    if strategy in {"single_step", "native"}:
         model = model_builder()
-        first_future = _future_row(future_frame, 0)
+        first_future = future_frame if strategy == "native" else _future_row(future_frame, 0)
         model.fit(history_series, X_hist=history_frame, X_future=first_future)
-        result = model.predict_with_intervals(1, X_future=first_future, alpha=alpha)
+        result = model.predict_with_intervals(horizon, X_future=first_future, alpha=alpha)
+        if len(result) != horizon:
+            raise ValueError(f"interval prediction length {len(result)} != horizon {horizon}")
+        if strategy == "native":
+            values = result[["yhat", "yhat_lower", "yhat_upper"]].to_numpy(dtype=float)
+            if not np.isfinite(values).all() or (values[:, 1] > values[:, 2]).any():
+                raise ValueError("invalid native intervals; use conformal or inspect backend failure")
         return result.reset_index(drop=True)
 
     rows: list[dict[str, float]] = []
@@ -196,6 +232,8 @@ def run_interval_inference(
         prefix = _future_prefix(future_frame, step_idx + 1)
         model.fit(history_series, X_hist=history_frame, X_future=prefix)
         result = model.predict_with_intervals(step_idx + 1, X_future=prefix, alpha=alpha).reset_index(drop=True)
+        if len(result) != step_idx + 1:
+            raise ValueError("interval prediction length mismatch")
         row = result.iloc[-1]
         rows.append(
             {

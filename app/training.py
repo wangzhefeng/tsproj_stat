@@ -4,6 +4,7 @@ import pandas as pd
 
 from models.factory import ModelFactory
 from models.model.fallbacks import NaiveModel
+from models.inference import checked_model_builder
 
 import os
 from pathlib import Path
@@ -19,10 +20,11 @@ class Trainer:
     让后续产物仍能明确记录 fallback 原因。
     """
 
-    def __init__(self, model_name: str, model_params: dict | None = None):
+    def __init__(self, model_name: str, model_params: dict | None = None, ignore_unsupported_inputs=False):
         self.model_name = model_name
         self.model_params = model_params or {}
         self.factory = ModelFactory()
+        self.ignore_unsupported_inputs = ignore_unsupported_inputs
 
     def train(
         self,
@@ -31,14 +33,19 @@ class Trainer:
         X_future: pd.DataFrame | None = None,
     ):
         """拟合模型；异常时返回带 fallback 标记的 NaiveModel。"""
-        model = self.factory.create_model(self.model_name, self.model_params)
+        model = checked_model_builder(
+            lambda: self.factory.create_model(self.model_name, self.model_params, self.ignore_unsupported_inputs),
+            "direct", X_future, history=y, X_hist=X_hist)()
         try:
             model.fit(y=y, X_hist=X_hist, X_future=X_future)
             logger.info(f"[Train] {self.model_name} fit success (n={len(y)})")
             return model
+        except ValueError:
+            # 输入/配置契约失败不是优化器失败，不允许通过 fallback 隐藏。
+            raise
         except Exception as exc:
             logger.warning(f"[Train] {self.model_name} fit failed: {exc}. Falling back to NaiveModel.")
-            fallback = NaiveModel({})
+            fallback = NaiveModel()
             fallback.fit(y)
             fallback._is_fallback = True
             fallback._fallback_reason = str(exc)

@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
 import pandas as pd
+from typing import Callable
+from data_provider.data_processor import DataProcessor
 
 from evaluation.backtest import BacktestResult, rolling_backtest
 from models.factory import ModelFactory
@@ -31,8 +33,13 @@ class Tester:
         verbose: bool = False,
         progress_every: int = 10,
         n_jobs: int = 1,
-        processor_builder: object = None,
+        processor_builder: Callable[[], DataProcessor] | None = None,
         allow_failed_windows: bool = False,
+        interval_method: str = "none",
+        interval_alpha: float = 0.05,
+        conformal_n_windows: int = 20,
+        refit_every: int = 1,
+        ignore_unsupported_inputs: bool = False,
     ):
         self.model_name = model_name
         self.model_params = model_params or {}
@@ -51,13 +58,18 @@ class Tester:
         self.n_jobs = n_jobs
         self.processor_builder = processor_builder
         self.allow_failed_windows = allow_failed_windows
+        self.interval_method = interval_method
+        self.interval_alpha = interval_alpha
+        self.conformal_n_windows = conformal_n_windows
+        self.refit_every = refit_every
+        self.ignore_unsupported_inputs = ignore_unsupported_inputs
         self.factory = ModelFactory()
 
     def evaluate(self, df: pd.DataFrame) -> BacktestResult:
         """执行 rolling backtest 并返回结构化结果。"""
         return rolling_backtest(
             df=df,
-            model_builder=lambda: self.factory.create_model(self.model_name, self.model_params),
+            model_builder=lambda: self.factory.create_model(self.model_name, self.model_params, self.ignore_unsupported_inputs),
             target_col=self.target_col,
             time_col=self.time_col,
             endog_cols=self.endog_cols,
@@ -73,4 +85,8 @@ class Tester:
             n_jobs=self.n_jobs,
             processor_builder=self.processor_builder,
             allow_failed_windows=self.allow_failed_windows,
+            interval_method=self.interval_method,
+            interval_alpha=self.interval_alpha,
+            conformal_n_windows=self.conformal_n_windows,
+            refit_every=self.refit_every,
         )

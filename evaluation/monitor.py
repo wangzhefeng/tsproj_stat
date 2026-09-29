@@ -109,7 +109,7 @@ class ModelMonitor:
             raise ValueError("forecast_ts is required when actuals data has no forecast_ts column")
 
         rows = []
-        for idx, row in actuals_df.reset_index(drop=True).iterrows():
+        for idx, (_, row) in enumerate(actuals_df.reset_index(drop=True).iterrows()):
             step = int(row[horizon_step_col]) if horizon_step_col in actuals_df.columns else int(idx + 1)
             rows.append(
                 {

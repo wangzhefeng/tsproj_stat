@@ -92,6 +92,7 @@ def build_experiment_path(cfg: AppConfig) -> Path:
         f"_detrend-{_path_token(cfg.detrend_method)}"
         f"_decomp-{_path_token(cfg.decomposition_method)}"
         f"_period-{_path_token(cfg.seasonal_period)}"
+        f"{('_periods-' + _path_token(cfg.seasonal_periods)) if cfg.seasonal_periods else ''}"
     )
     return Path(
         f"{_path_token(cfg.model_name)}-{_path_token(cfg.setting_strategy_label())}",
@@ -101,13 +102,16 @@ def build_experiment_path(cfg: AppConfig) -> Path:
             f"bt-{_path_token(cfg.resolved_backtest_window_mode())}"
             f"_train-{cfg.resolved_backtest_train_size()}"
             f"_h-{cfg.backtest_horizon}_step-{cfg.backtest_step}"
+            + (f"_refit-{cfg.backtest_refit_every}" if cfg.backtest_refit_every != 1 else "")
         ),
         (
             f"input-feature-{_path_token(cfg.feature_mode)}"
             f"_lags-{_path_token(cfg.lags)}_scale-{_path_token(scale)}"
+            + ("_ignore-unsupported-on" if cfg.ignore_unsupported_inputs else "")
         ),
         process,
-        f"interval-{'on' if cfg.return_intervals else 'off'}_alpha-{_path_token(cfg.interval_alpha)}",
+        f"interval-{'on' if cfg.return_intervals else 'off'}_alpha-{_path_token(cfg.interval_alpha)}"
+        + (f"_conformal-{cfg.conformal_n_windows}" if cfg.return_intervals and cfg.interval_method == "conformal" else ""),
     )
 
 
@@ -128,8 +132,8 @@ def build_eda_path(cfg: AppConfig) -> Path:
 
 def prepare_run_artifacts(cfg: AppConfig) -> RunArtifacts:
     """按 data_name 和完整参数路径创建本次运行的产物目录。"""
-    # 提取数据名称
-    data_name = _resolve_data_name(cfg.data_path)
+    # 提取数据名称；层级 data_name 支持把数据项目组织成子树（非法值在 _resolve_data_name 内拒绝）
+    data_name = _resolve_data_name(cfg)
     setting = f"{cfg.model_name}-{cfg.setting_strategy_label()}"
     experiment_path = build_experiment_path(cfg)
     eda_path = build_eda_path(cfg)

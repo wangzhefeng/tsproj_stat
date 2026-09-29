@@ -216,3 +216,4 @@ logs/
 
 # macOS
 .DS_Store
+.hermes/

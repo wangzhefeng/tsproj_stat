@@ -33,6 +33,9 @@ class AppConfig:
     
     # 数据参数
     data_path: str | None = None
+    series_id_col: str | None = None
+    batch_models: dict = field(default_factory=dict)
+    batch_allow_failed: bool = False
     time_col: str = "ds"
     target_col: str = "y"
     endog_cols: list[str] = field(default_factory=list)
@@ -55,6 +58,7 @@ class AppConfig:
     model_name: str = "arima"
     model_params: dict = field(default_factory=dict)
     forecast_strategy: str = "direct"
+    ignore_unsupported_inputs: bool = False
     
     # 任务参数
     do_train: bool = True
@@ -87,6 +91,7 @@ class AppConfig:
     backtest_verbose: bool = False
     backtest_progress_every: int = 10
     backtest_n_jobs: int = 1
+    backtest_refit_every: int = 1
     # 失败窗口容忍开关：默认 False（任一窗口失败即 RAISE）；显式开启才跳过并打标 survivor_bias
     backtest_allow_failed_windows: bool = False
     
@@ -103,6 +108,7 @@ class AppConfig:
     denoise_window: int = 3
     detrend_method: str = "none"
     seasonal_period: int | None = None
+    seasonal_periods: list[int] = field(default_factory=list)
     decomposition_method: str = "none"
     decomposition_target: str = "trend_resid"
     decomposition_model: str = "additive"
@@ -127,6 +133,8 @@ class AppConfig:
     # 概率预测：仅在模型或推理策略支持时返回区间；否则区间列可为 NaN。
     return_intervals: bool = False
     interval_alpha: float = 0.05
+    interval_method: str = "native"
+    conformal_n_windows: int = 20
     # forecast NaN 容忍开关：默认 False（输出含 NaN 即 RAISE）；显式开启才 ffill/bfill 修补并在 forecast_summary 打标
     forecast_allow_nan_fill: bool = False
 
@@ -145,6 +153,10 @@ class AppConfig:
 
     # 结果目录：生产输出统一归属 results/{data_name}/ 命名空间。
     results_dir: str = "results"
+
+    # 结果数据名显式覆盖：默认取 data_path 文件 stem；设置后按此名（支持层级路径）分组，
+    # 用于把同一数据项目的多窗口/多路线结果组织到统一子树下，如 aidc_power_month/route_A。
+    results_data_name: str | None = None
 
     def resolved_forecast_strategy(self) -> str:
         """统一解析预测策略。"""
@@ -175,6 +187,8 @@ class AppConfig:
         _ensure_positive(self.backtest_step, "backtest_step")
         _ensure_positive(self.backtest_progress_every, "backtest_progress_every")
         _ensure_positive(self.backtest_n_jobs, "backtest_n_jobs")
+        if isinstance(self.backtest_refit_every, bool) or not isinstance(self.backtest_refit_every, int) or self.backtest_refit_every < 0:
+            raise ValueError("backtest_refit_every must be an integer >= 0")
         _ensure_positive(self.eda_period, "eda_period")
         _ensure_positive(self.eda_nlags, "eda_nlags")
         _ensure_positive(self.monitor_window, "monitor_window")
@@ -185,6 +199,15 @@ class AppConfig:
 
         if self.target_col in self.endog_cols:
             raise ValueError("endog_cols must not include target_col")
+        if self.batch_models and not self.series_id_col:
+            raise ValueError("batch_models requires series_id_col")
+        if not isinstance(self.batch_models, dict) or any(not isinstance(v, dict) for v in self.batch_models.values()):
+            raise ValueError("batch_models must map model names to parameter objects")
+        if self.series_id_col:
+            if not self.data_path:
+                raise ValueError("series_id_col requires data_path")
+            if self.aggregation_enabled or self.auto_select or self.monitor_actuals_path:
+                raise ValueError("batch requires preaggregated data, explicit models and no monitor backfill")
 
         if self.scaler_type not in {"standard", "minmax"}:
             raise ValueError("scaler_type must be one of {'standard', 'minmax'}")
@@ -201,8 +224,24 @@ class AppConfig:
         if self.seasonal_period is not None and self.seasonal_period <= 1:
             raise ValueError("seasonal_period must be > 1 when provided")
         
-        if self.decomposition_method not in {"none", "seasonal_decompose", "stl"}:
-            raise ValueError("decomposition_method must be one of {'none', 'seasonal_decompose', 'stl'}")
+        if self.decomposition_method not in {"none", "seasonal_decompose", "stl", "mstl"}:
+            raise ValueError("decomposition_method must be none, seasonal_decompose, stl or mstl")
+        if self.decomposition_method == "mstl":
+            if (not self.seasonal_periods or len(set(self.seasonal_periods)) != len(self.seasonal_periods)
+                    or any(isinstance(p, bool) or not isinstance(p, int) or p <= 1 for p in self.seasonal_periods)):
+                raise ValueError("MSTL requires distinct integer seasonal_periods > 1")
+            if self.seasonal_period is not None or self.decomposition_model != "additive":
+                raise ValueError("MSTL requires additive decomposition and seasonal_periods only")
+        elif self.seasonal_periods:
+            raise ValueError("seasonal_periods requires MSTL")
+        if self.interval_method not in {"native", "conformal"}:
+            raise ValueError("interval_method must be native or conformal")
+        if not 0 < self.interval_alpha < 1:
+            raise ValueError("interval_alpha must be in (0, 1)")
+        if self.conformal_n_windows < 2:
+            raise ValueError("conformal_n_windows must be >= 2")
+        if self.return_intervals and (self.scale or self.feature_mode == "model_input"):
+            raise ValueError("intervals currently require scale=false and feature_mode=analysis_snapshot")
         
         if self.decomposition_target not in {"trend_resid", "resid_only"}:
             raise ValueError("decomposition_target must be one of {'trend_resid', 'resid_only'}")

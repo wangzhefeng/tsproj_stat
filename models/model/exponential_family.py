@@ -236,9 +236,8 @@ class ThetaModel(FallbackMixin, BaseStatModel):
         if self._result is None:
             return super().predict_with_intervals(horizon, X_future, alpha)
         try:
-            fc = self._result.get_forecast(steps=horizon)
-            mean = fc.predicted_mean.values
-            ci = fc.conf_int(alpha=alpha)
+            mean = self._result.forecast(horizon).to_numpy(dtype=float)
+            ci = self._result.prediction_intervals(steps=horizon, alpha=alpha)
             return pd.DataFrame({
                 "yhat": mean,
                 "yhat_lower": ci.iloc[:, 0].values,

@@ -8,12 +8,24 @@ from __future__ import annotations
 
 import warnings
 from itertools import product
-from typing import Iterable
+from typing import Any, Iterable, Protocol, TYPE_CHECKING, cast
+
+import numpy as np
+
+if TYPE_CHECKING:
+    from statsmodels.tsa.statespace.sarimax import SARIMAXResults
+
+
+class _StatsForecastPredict(Protocol):
+    # StatsForecast 2.0.1 文档/实现支持 float level，但签名错误地写为 List[int]。
+    def __call__(self, h: int, X: np.ndarray | None = None,
+                 level: list[float] | None = None) -> dict[str, np.ndarray]: ...
 
 import pandas as pd
 
 from data_provider.data_transfer import to_univariate_series
 from models.base import BaseStatModel
+from models.exogenous import ExogenousMixin
 from .fallbacks import (
     FallbackMixin,
     NaiveModel,
@@ -26,7 +38,7 @@ from .fallbacks import (
 def _normalize_order(order: tuple[int, int, int] | list[int]) -> tuple[int, int, int]:
     if len(order) != 3:
         raise ValueError("order must contain exactly three integers: (p, d, q)")
-    normalized = tuple(int(value) for value in order)
+    normalized = (int(order[0]), int(order[1]), int(order[2]))
     if any(value < 0 for value in normalized):
         raise ValueError("order values must be non-negative")
     return normalized
@@ -35,7 +47,7 @@ def _normalize_order(order: tuple[int, int, int] | list[int]) -> tuple[int, int,
 def _normalize_seasonal_order(order: tuple[int, int, int, int] | list[int]) -> tuple[int, int, int, int]:
     if len(order) != 4:
         raise ValueError("seasonal_order must contain exactly four integers: (P, D, Q, m)")
-    normalized = tuple(int(value) for value in order)
+    normalized = (int(order[0]), int(order[1]), int(order[2]), int(order[3]))
     if any(value < 0 for value in normalized[:3]):
         raise ValueError("seasonal_order values P, D, Q must be non-negative")
     if normalized[3] <= 1:
@@ -51,7 +63,7 @@ def build_order_grid(
     return [(int(p), int(d), int(q)) for p, d, q in product(p_values, d_values, q_values)]
 
 
-def select_arima_order(y: pd.Series, order_grid: Iterable[tuple[int, int, int]], ic: str = "aic"):
+def select_arima_order(y: pd.Series, order_grid: Iterable[tuple[int, int, int]], ic: str = "aic", exog=None):
     if ic not in {"aic", "bic"}:
         raise ValueError("ic must be one of {'aic', 'bic'}")
 
@@ -64,7 +76,7 @@ def select_arima_order(y: pd.Series, order_grid: Iterable[tuple[int, int, int]],
         normalized_order = _normalize_order(order)
         try:
             with _fit_warning_context():
-                result = ARIMA(y.astype(float), order=normalized_order).fit()
+                result = ARIMA(y.astype(float), order=normalized_order, **({"exog": exog} if exog is not None else {})).fit()
             score = float(getattr(result, ic))
             if score < best_score:
                 best_score = score
@@ -98,7 +110,20 @@ class _fit_warning_context:
         return self._ctx.__exit__(exc_type, exc, tb)
 
 
-class ARIMAModel(FallbackMixin, BaseStatModel):
+class FixedParameterUpdateMixin(ExogenousMixin):
+    def update(self, y, X_hist=None):
+        """在当前真实历史窗口重新滤波，不重新估计参数。"""
+        if self._result is None:
+            raise RuntimeError("cannot update an unfitted or fallback model")
+        previous_columns = list(getattr(self, "_exog_columns", []))
+        exog = self._fit_exog(y, X_hist)
+        if previous_columns != self._exog_columns:
+            raise ValueError("exogenous schema changed during fixed-parameter update")
+        self._result = self._result.apply(to_univariate_series(y).astype(float), exog=exog, refit=False)
+        return self
+
+
+class ARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
     def __init__(
         self,
         order: tuple[int, int, int] | list[int] = (1, 1, 1),
@@ -122,13 +147,14 @@ class ARIMAModel(FallbackMixin, BaseStatModel):
         X_future: pd.DataFrame | None = None,
     ) -> "ARIMAModel":
         series = to_univariate_series(y).astype(float)
+        exog = self._fit_exog(y, X_hist, X_future)
         self._fallback.fit(series)
         try:
             from statsmodels.tsa.arima.model import ARIMA
 
             fit_order = self.order
             if self.auto_order:
-                fit_order, best_score = select_arima_order(series, self.order_grid, self.ic)
+                fit_order, best_score = select_arima_order(series, self.order_grid, self.ic, exog=exog)
                 self.selected_order = fit_order
                 self.selected_score = best_score
             else:
@@ -136,7 +162,7 @@ class ARIMAModel(FallbackMixin, BaseStatModel):
                 self.selected_score = None
 
             with _fit_warning_context():
-                self._result = ARIMA(series, order=fit_order).fit()
+                self._result = ARIMA(series, order=fit_order, **({"exog": exog} if exog is not None else {})).fit()
         except Exception as exc:
             self._result = None
             warn_and_use_fallback(
@@ -148,19 +174,21 @@ class ARIMAModel(FallbackMixin, BaseStatModel):
 
     def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
+        exog = self._predict_exog(horizon, X_future)
         if self._result is None:
             return self._fallback_predict(horizon)
-        forecast = self._result.forecast(steps=horizon)
+        forecast = self._result.forecast(steps=horizon, exog=exog)
         if not isinstance(forecast, pd.Series):
             forecast = pd.Series(forecast)
         return forecast.reset_index(drop=True).rename("yhat")
 
     def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
         import pandas as pd, numpy as np
+        self._predict_exog(horizon, X_future)
         if self._result is None:
             return super().predict_with_intervals(horizon, X_future, alpha)
         try:
-            fc = self._result.get_forecast(steps=horizon)
+            fc = self._result.get_forecast(steps=horizon, exog=self._predict_exog(horizon, X_future))
             mean = fc.predicted_mean.values
             ci = fc.conf_int(alpha=alpha)
             return pd.DataFrame({
@@ -197,7 +225,7 @@ class ARMAModel(ARIMAModel):
         self.q = q
 
 
-class SARIMAModel(FallbackMixin, BaseStatModel):
+class SARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
     def __init__(
         self,
         order: tuple[int, int, int] | list[int] = (1, 1, 1),
@@ -214,7 +242,7 @@ class SARIMAModel(FallbackMixin, BaseStatModel):
         self.enforce_stationarity = enforce_stationarity
         self.enforce_invertibility = enforce_invertibility
         self.simple_differencing = simple_differencing
-        self.fit_kwargs = {"disp": False}
+        self.fit_kwargs: dict[str, Any] = {"disp": False}
         if fit_kwargs is not None:
             self.fit_kwargs.update(fit_kwargs)
         self._fallback = TrendFallbackModel()
@@ -227,12 +255,13 @@ class SARIMAModel(FallbackMixin, BaseStatModel):
         X_future: pd.DataFrame | None = None,
     ) -> "SARIMAModel":
         series = to_univariate_series(y).astype(float)
+        exog = self._fit_exog(y, X_hist, X_future)
         self._fallback.fit(series)
         try:
             from statsmodels.tsa.statespace.sarimax import SARIMAX
 
             with _fit_warning_context():
-                self._result = SARIMAX(
+                result = SARIMAX(
                     series,
                     order=self.order,
                     seasonal_order=self.seasonal_order,
@@ -240,7 +269,10 @@ class SARIMAModel(FallbackMixin, BaseStatModel):
                     enforce_stationarity=self.enforce_stationarity,
                     enforce_invertibility=self.enforce_invertibility,
                     simple_differencing=self.simple_differencing,
+                    **({"exog": exog} if exog is not None else {}),
                 ).fit(**self.fit_kwargs)
+                # 默认 fit 返回包装器，公开结果方法由其委托给 SARIMAXResults。
+                self._result = cast("SARIMAXResults", result)
         except Exception as exc:
             self._result = None
             warn_and_use_fallback(
@@ -252,16 +284,18 @@ class SARIMAModel(FallbackMixin, BaseStatModel):
 
     def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
+        exog = self._predict_exog(horizon, X_future)
         if self._result is None:
             return self._fallback_predict(horizon)
-        return pd.Series(self._result.forecast(steps=horizon), name="yhat").reset_index(drop=True)
+        return pd.Series(self._result.forecast(steps=horizon, exog=exog), name="yhat").reset_index(drop=True)
 
     def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
         import pandas as pd, numpy as np
+        self._predict_exog(horizon, X_future)
         if self._result is None:
             return super().predict_with_intervals(horizon, X_future, alpha)
         try:
-            fc = self._result.get_forecast(steps=horizon)
+            fc = self._result.get_forecast(steps=horizon, exog=self._predict_exog(horizon, X_future))
             mean = fc.predicted_mean.values
             ci = fc.conf_int(alpha=alpha)
             return pd.DataFrame({
@@ -273,7 +307,7 @@ class SARIMAModel(FallbackMixin, BaseStatModel):
             return super().predict_with_intervals(horizon, X_future, alpha)
 
 
-class AutoARIMAModel(FallbackMixin, BaseStatModel):
+class AutoARIMAModel(ExogenousMixin, BaseStatModel):
     def __init__(
         self,
         seasonal: bool = False,
@@ -317,12 +351,14 @@ class AutoARIMAModel(FallbackMixin, BaseStatModel):
         X_future: pd.DataFrame | None = None,
     ) -> "AutoARIMAModel":
         series = to_univariate_series(y).astype(float)
+        exog = self._fit_exog(y, X_hist, X_future)
         self._result = None
         try:
             import pmdarima as pm
 
             self._result = pm.auto_arima(
                 series,
+                **({"X": exog} if exog is not None else {}),
                 seasonal=self.seasonal,
                 m=self.m,
                 stepwise=self.stepwise,
@@ -341,7 +377,7 @@ class AutoARIMAModel(FallbackMixin, BaseStatModel):
             )
         except Exception as exc:
             self._result = None
-            self._ensure_fallback_fitted(series)
+            self._ensure_fallback_fitted(series, X_hist=X_hist)
             warn_and_use_fallback(
                 model_name="AutoARIMAModel",
                 fallback_name=type(self._fallback).__name__ if self._fallback is not None else "ARIMAModel",
@@ -351,20 +387,22 @@ class AutoARIMAModel(FallbackMixin, BaseStatModel):
 
     def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
         validate_horizon(horizon)
+        exog = self._predict_exog(horizon, X_future)
         if self._result is None:
             if self._fallback is None:
                 raise RuntimeError("Model is not fitted")
-            return self._fallback_predict(horizon)
-        return pd.Series(self._result.predict(n_periods=horizon), name="yhat")
+            return self._fallback.predict(horizon, X_future=X_future)
+        return pd.Series(self._result.predict(n_periods=horizon, **({"X": exog} if exog is not None else {})), name="yhat")
 
     def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
         import pandas as pd
+        self._predict_exog(horizon, X_future)
         if self._result is None:
             if self._fallback is not None:
                 return self._fallback.predict_with_intervals(horizon, X_future, alpha)
             return super().predict_with_intervals(horizon, X_future, alpha)
         try:
-            preds, conf_int = self._result.predict(n_periods=horizon, return_conf_int=True, alpha=alpha)
+            preds, conf_int = self._result.predict(n_periods=horizon, return_conf_int=True, alpha=alpha, X=self._predict_exog(horizon, X_future))
             return pd.DataFrame({
                 "yhat": preds,
                 "yhat_lower": conf_int[:, 0],
@@ -373,7 +411,43 @@ class AutoARIMAModel(FallbackMixin, BaseStatModel):
         except Exception:
             return super().predict_with_intervals(horizon, X_future, alpha)
 
-    def _ensure_fallback_fitted(self, series: pd.Series) -> None:
+    def _ensure_fallback_fitted(self, series: pd.Series, X_hist=None) -> None:
         if self._fallback is None:
             self._fallback = ARIMAModel(auto_order=True)
-        self._fallback.fit(series)
+        self._fallback.fit(series, X_hist=X_hist)
+
+
+class StatsForecastAutoARIMAModel(ExogenousMixin, BaseStatModel):
+    """显式 StatsForecast 后端，不改变 auto_arima 的 pmdarima 默认语义。"""
+    def __init__(self, season_length=1, seasonal=False, d=None, D=None,
+                 max_p=5, max_q=5, max_P=2, max_Q=2, max_order=5,
+                 stepwise=True, ic="aic", approximation=False):
+        self.params: dict[str, Any] = dict(season_length=season_length, seasonal=seasonal, d=d, D=D,
+                           max_p=max_p, max_q=max_q, max_P=max_P, max_Q=max_Q,
+                           max_order=max_order, stepwise=stepwise, ic=ic,
+                           approximation=approximation, start_p=min(2, max_p), start_q=min(2, max_q))
+        self._result = None
+
+    def fit(self, y, X_hist=None, X_future=None):
+        from statsforecast.models import AutoARIMA
+        exog = self._fit_exog(y, X_hist, X_future)
+        self._result = AutoARIMA(**self.params).fit(to_univariate_series(y).to_numpy(dtype=float), X=exog)
+        return self
+
+    def predict(self, horizon, X_future=None):
+        validate_horizon(horizon)
+        if self._result is None:
+            raise RuntimeError("Model is not fitted")
+        pred = self._result.predict(horizon, X=self._predict_exog(horizon, X_future))
+        return pd.Series(pred["mean"], name="yhat")
+
+    def predict_with_intervals(self, horizon, X_future=None, alpha=0.05):
+        validate_horizon(horizon)
+        if not 0 < alpha < 1:
+            raise ValueError("alpha must be in (0, 1)")
+        if self._result is None:
+            raise RuntimeError("Model is not fitted")
+        level = round(100 * (1 - alpha), 10)
+        predict = cast(_StatsForecastPredict, self._result.predict)
+        pred = predict(horizon, X=self._predict_exog(horizon, X_future), level=[level])
+        return pd.DataFrame({"yhat": pred["mean"], "yhat_lower": pred[f"lo-{level}"], "yhat_upper": pred[f"hi-{level}"]})

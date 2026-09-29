@@ -60,6 +60,7 @@ class PrepareResult:
     future_exog_df: pd.DataFrame | None
     history_time: pd.Series
     processor: DataProcessor
+    raw_history_df: pd.DataFrame
     model_input_feature_columns: list[str] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)
 
@@ -150,7 +151,7 @@ class ModelApp:
         """
         return resolve_model_params(self.cfg)
 
-    def run(self) -> dict[str, str]:
+    def run(self) -> dict[str, str | dict[str, float]]:
         # ------------------------------
         # 设置随机种子
         # ------------------------------
@@ -164,7 +165,7 @@ class ModelApp:
         df = self._load_dataset()
 
         # out
-        out: dict[str, str] = {
+        out: dict[str, str | dict[str, float]] = {
             "setting": self.artifacts.setting,
             "experiment_path": str(self.artifacts.experiment_path),
             "eda_path": str(self.artifacts.eda_path),
@@ -204,6 +205,7 @@ class ModelApp:
         # ------------------------------
         # EDA-only 运行：仅当需要预处理后 EDA 时才执行 prepare，否则跳过整条建模链路。
         eda_only = self.cfg.is_eda_only()
+        prepared: PrepareResult | None = None
         if (not eda_only) or self.cfg.eda_run_preprocessed:
             logger.info(f"{'=' * 100}")
             logger.info(f"Running _prepare_target_series...")
@@ -244,6 +246,8 @@ class ModelApp:
                 out.pop(key, None)
             out["eda_only"] = "true"
             return self._write_run_summary(out, summary_dir=self.artifacts.eda_dir)
+        if prepared is None:
+            raise RuntimeError("Model stages require prepared data")
         # ------------------------------
         # 自动模型选择（可选，失败不阻断后续）
         # ------------------------------
@@ -268,6 +272,7 @@ class ModelApp:
                     target_col=self.cfg.target_col,
                     time_col=self.cfg.time_col,
                     processor_builder=self._new_processor,
+                    future_exog_cols=self.cfg.future_exog_cols,
                 )
                 logger.info(f"[AutoSelect] overriding model_name: {self.cfg.model_name!r} → {best_model!r}")
                 self.cfg.model_name = best_model
@@ -393,6 +398,7 @@ class ModelApp:
             denoise_method=self.cfg.denoise_method,
             denoise_window=self.cfg.denoise_window,
             seasonal_period=self.cfg.seasonal_period,
+            seasonal_periods=self.cfg.seasonal_periods,
             decomposition_method=self.cfg.decomposition_method,
             decomposition_target=self.cfg.decomposition_target,
             decomposition_model=self.cfg.decomposition_model,
@@ -404,6 +410,7 @@ class ModelApp:
         # 必须先切分再预处理：DataProcessor 只在 history 窗口内 fit_transform，
         # 保证分解季节模板、detrend 与去噪不接触任何原点之后的数据（P09）。
         history_df = self.loader.split_history(df=local_df, history_size=self.cfg.history_size)
+        raw_history_df = history_df.copy(deep=True)
         if processor.enabled:
             history_df[self.cfg.target_col] = processor.fit_transform(
                 history_df[self.cfg.target_col]
@@ -466,6 +473,8 @@ class ModelApp:
                 future_exog_cols=self.cfg.future_exog_cols,
                 horizon=self.cfg.predict_horizon,
             )
+            if future_exog_raw is None:
+                raise RuntimeError("Configured future exogenous data was not loaded")
             future_exog_df = future_exog_raw[self.cfg.future_exog_cols].astype(float).reset_index(drop=True)
             metadata["future_exog_rows"] = str(len(future_exog_df))
 
@@ -481,6 +490,7 @@ class ModelApp:
             future_exog_df=future_exog_df,
             history_time=history_time,
             processor=processor,
+            raw_history_df=raw_history_df,
             model_input_feature_columns=model_input_feature_columns,
             metadata=metadata,
         )
@@ -494,6 +504,7 @@ class ModelApp:
             denoise_method=cfg.denoise_method,
             denoise_window=cfg.denoise_window,
             seasonal_period=cfg.seasonal_period,
+            seasonal_periods=cfg.seasonal_periods,
             decomposition_method=cfg.decomposition_method,
             decomposition_target=cfg.decomposition_target,
             decomposition_model=cfg.decomposition_model,
@@ -542,13 +553,13 @@ class ModelApp:
             target_shift_columns=target_shift_cols,
         )
 
-    def _write_run_summary(self, out: dict[str, str], summary_dir: Path | None = None) -> dict[str, str]:
+    def _write_run_summary(self, out: dict[str, str | dict[str, float]], summary_dir: Path | None = None) -> dict[str, str | dict[str, float]]:
         """写出本次运行的总索引，方便从产物目录反查各阶段结果。
 
         summary_dir 默认指向 forecast_results_dir；EDA-only 传入 eda_dir，避免触碰模型实验目录。
         """
         summary_path = (summary_dir or self.artifacts.forecast_results_dir) / "run_summary.json"
-        payload = dict(out)
+        payload: dict[str, object] = dict(out)
         payload["config"] = asdict(self.cfg)
         summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         result = dict(out)
@@ -598,7 +609,7 @@ class ModelApp:
         if not self.cfg.do_train:
             return {}
         # model training
-        trainer = Trainer(self.cfg.model_name, self.resolved_model_params)
+        trainer = Trainer(self.cfg.model_name, self.resolved_model_params, self.cfg.ignore_unsupported_inputs)
         model = trainer.train(
             prepared.history_y,
             X_hist=prepared.history_model_input_df,
@@ -698,6 +709,11 @@ class ModelApp:
             n_jobs=self.cfg.backtest_n_jobs,
             processor_builder=processor_builder,
             allow_failed_windows=self.cfg.backtest_allow_failed_windows,
+            interval_method=self.cfg.interval_method if self.cfg.return_intervals else "none",
+            interval_alpha=self.cfg.interval_alpha,
+            conformal_n_windows=self.cfg.conformal_n_windows,
+            refit_every=self.cfg.backtest_refit_every,
+            ignore_unsupported_inputs=self.cfg.ignore_unsupported_inputs,
         )
         result = tester.evaluate(df[[self.cfg.time_col, *self.model_history_input_cols]].copy())
         # 回测产物分为窗口指标、逐点预测、汇总指标和图形，便于后续误差分析。
@@ -720,7 +736,7 @@ class ModelApp:
                 "window_mode": self.cfg.resolved_backtest_window_mode(),
                 "backtest_n_jobs": int(self.cfg.backtest_n_jobs),
                 "failed_windows": result.failed_windows,
-                "failed_window_ratio": float(result.failed_windows and len(result.failed_windows) / (len(result.metrics_df) + len(result.failed_windows)) or 0.0),
+                "failed_window_ratio": len(result.failed_windows) / (len(result.metrics_df) + len(result.failed_windows)) if result.failed_windows else 0.0,
                 **result.summary,
                 },
             ),
@@ -765,18 +781,25 @@ class ModelApp:
             model_params=self.resolved_model_params,
             forecast_strategy=self.cfg.resolved_forecast_strategy(),
             allow_nan_fill=self.cfg.forecast_allow_nan_fill,
+            ignore_unsupported_inputs=self.cfg.ignore_unsupported_inputs,
         )
+        interval_metadata = {}
         if self.cfg.return_intervals:
-            interval_df = forecaster.forecast_with_intervals(
-                history=prepared.history_y,
+            from models.calibration import predict_frame
+            interval_df = predict_frame(
+                model_builder=lambda: forecaster.factory.create_model(self.cfg.model_name, self.resolved_model_params, self.cfg.ignore_unsupported_inputs),
+                history=prepared.raw_history_df[self.cfg.target_col],
                 horizon=self.cfg.predict_horizon,
-                X_hist=prepared.history_model_input_df,
+                forecast_strategy=self.cfg.resolved_forecast_strategy(),
+                X_hist=prepared.raw_history_df[self.model_history_input_cols],
                 X_future=prepared.future_exog_df,
                 alpha=self.cfg.interval_alpha,
+                interval_method=self.cfg.interval_method,
+                n_windows=self.cfg.conformal_n_windows,
+                processor_builder=self._new_processor,
             )
+            interval_metadata = dict(interval_df.attrs)
             pred = pd.Series(interval_df["yhat"].values, name="yhat")
-            if prepared.processor.enabled:
-                pred = prepared.processor.inverse_forecast(pred)
             forecast_df = pd.DataFrame({
                 "step": range(1, len(pred) + 1),
                 "timestamp": forecast_timestamps(prepared.history_time, len(pred), self.cfg.freq),
@@ -834,6 +857,8 @@ class ModelApp:
                 "feature_mode": self.cfg.feature_mode,
                 # NaN 填充打标：0 表示无填充；>0 仅在 forecast_allow_nan_fill=true 时可能出现。
                 "forecast_nan_filled": int(forecaster.last_nan_filled),
+                "interval_method": self.cfg.interval_method if self.cfg.return_intervals else "none",
+                "interval_metadata": interval_metadata,
             },
         )
         result = {
