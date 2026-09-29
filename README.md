@@ -12,7 +12,7 @@ uv venv .venv --python 3.12 && uv sync --extra dev   # 安装，详见 docs/setu
 ## 项目结构
 
 ```text
-app/  config/  models/  evaluation/  data_provider/  features/  eda/  utils/  tests/
+pipeline/  forecasting/  artifacts/  monitoring/  config/  models/  evaluation/  data_provider/  features/  eda/  utils/  tests/
 run.py（唯一 CLI 入口）  scripts/（数据集专项脚本）  docs/（全部文档）
 ```
 

@@ -38,7 +38,7 @@ def test_arima_future_regression_and_schema(name, params, regression_data):
 
 @pytest.mark.parametrize("target_name", [None, "load"])
 def test_recursive_preserves_custom_target_identity(regression_data, target_name):
-    from app.forecasting import Forecaster
+    from forecasting.forecaster import Forecaster
     y, x = regression_data
     y = y.rename(target_name)
     future = pd.DataFrame({"calendar": [0., 1., 2.], "temp": [2., 4., 6.]})
@@ -55,7 +55,7 @@ def test_order_search_uses_same_exogenous_regression(regression_data):
 
 
 def test_training_does_not_hide_invalid_exogenous_input(regression_data):
-    from app.training import Trainer
+    from pipeline.trainer import Trainer
     y, x = regression_data
     with pytest.raises(ValueError, match="exogenous"):
         Trainer("arima").train(y, X_hist=x, X_future=pd.DataFrame({"wrong": [1.]}))

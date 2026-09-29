@@ -15,7 +15,7 @@ class BaseStatModel(ABC):
 
     所有主线模型都通过 fit(y, X_hist=None, X_future=None) 接入训练，
     原生多步 predict(horizon) 是正式接口，predict_one 桥接单步；
-    models.inference 区分 native 执行和旧逐步重拟合策略。
+    forecasting.strategies 区分 native 执行和旧逐步重拟合策略。
     """
 
     _model_spec: ModelSpec | None = None

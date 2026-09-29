@@ -153,7 +153,13 @@ class DataLoader:
         future_exog_time_col: str | None = None,
         max_missing_ratio: float = 0.3,
         validate_freq: bool = True,
+        data_frame: pd.DataFrame | None = None,
+        future_exog_frame: pd.DataFrame | None = None,
     ):
+        if data_frame is not None and data_path is not None:
+            raise ValueError("data_frame and data_path are mutually exclusive")
+        if future_exog_frame is not None and future_exog_path is not None:
+            raise ValueError("future_exog_frame and future_exog_path are mutually exclusive")
         self.data_path = data_path
         self.time_col = time_col
         self.target_col = target_col
@@ -163,13 +169,17 @@ class DataLoader:
         self.future_exog_time_col = future_exog_time_col
         self.max_missing_ratio = max_missing_ratio
         self.validate_freq = validate_freq
+        # 内存帧直通：面板批量等调用方直接传入已切片的 DataFrame，
+        # 与文件路径共用同一条清洗/质检链，避免「每组写 CSV 再读回」的文件中转。
+        self.data_frame = data_frame
+        self.future_exog_frame = future_exog_frame
         self.quality_report: DataQualityReport | None = None
 
     def load_data(self) -> pd.DataFrame:
         # ------------------------------
         # 使用 demo series dataset
         # ------------------------------
-        if self.data_path is None:
+        if self.data_path is None and self.data_frame is None:
             demo_series = load_demo_series(time_col=self.time_col, target_col=self.target_col, freq=self.freq)
             raw_demo_series = demo_series.copy()
             demo_series = prepare_standard_frame(
@@ -190,8 +200,32 @@ class DataLoader:
             )
             return demo_series
         # ------------------------------
+        # 使用内存帧（面板批量直通）
+        # ------------------------------
+        if self.data_frame is not None:
+            raw_df = self.data_frame
+            logger.info(f"Loaded in-memory frame shape: {raw_df.shape}")
+            df = prepare_standard_frame(
+                raw_df,
+                time_col=self.time_col,
+                target_col=self.target_col,
+                freq=self.freq,
+                value_cols=self.value_cols,
+            )
+            logger.info(f"After prepare_standard_frame, df shape: {df.shape}")
+            self.quality_report = check_data_quality(
+                df, self.target_col, self.time_col,
+                max_missing_ratio=self.max_missing_ratio,
+                validate_freq=self.validate_freq,
+                raw_df=raw_df,
+                freq=self.freq,
+            )
+            return df
+        # ------------------------------
         # 使用本地数据
         # ------------------------------
+        if self.data_path is None:
+            raise ValueError("DataLoader requires either data_path or data_frame")
         path = Path(self.data_path)
         if not path.exists():
             raise FileNotFoundError(f"Data file not found: {self.data_path}")
@@ -218,12 +252,21 @@ class DataLoader:
 
     def load_future_exog(self, future_exog_cols: list[str], horizon: int) -> pd.DataFrame | None:
         """读取预测期外生变量，并截取到预测 horizon 长度。"""
-        if self.future_exog_path is None:
+        if self.future_exog_path is None and self.future_exog_frame is None:
             return None
         if not future_exog_cols:
             raise ValueError("future_exog_cols must be provided when future_exog_path is set")
         if self.future_exog_time_col is None:
-            raise ValueError("future_exog_time_col must be provided when future_exog_path is set")
+            raise ValueError("future_exog_time_col must be provided when future exog inputs are set")
+        if self.future_exog_frame is not None:
+            prepared = prepare_future_exog_frame(
+                self.future_exog_frame.copy(),
+                time_col=self.future_exog_time_col,
+                value_cols=future_exog_cols,
+            )
+            if len(prepared) < horizon:
+                raise ValueError("Future exogenous data has fewer rows than requested horizon")
+            return prepared.iloc[:horizon].reset_index(drop=True)
 
         path = Path(self.future_exog_path)
         if not path.exists():

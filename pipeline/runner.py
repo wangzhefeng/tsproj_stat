@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 import uuid
 from pathlib import Path
@@ -16,9 +17,6 @@ from data_provider.data_aggregate import AggregationResult
 from data_provider.data_processor import DataProcessor
 from features.feature_engineering import FeatureEngineer
 from features.feature_scaling import FeatureScaler
-from app.training import Trainer
-from app.testing import Tester
-from app.forecasting import Forecaster
 from models.persistence import save_model
 from eda import run_eda
 from evaluation.visualization import (
@@ -27,42 +25,16 @@ from evaluation.visualization import (
     plot_error_distribution,
     plot_forecast,
 )
-from evaluation.monitor import ModelMonitor
+from monitoring.monitor import ModelMonitor
 from models.registry import MODEL_REGISTRY
-from app.results import (
-    dataframe_to_csv,
-    forecast_timestamps,
-    model_info_payload,
-    prepare_run_artifacts,
-    resolve_model_params,
-    write_json,
-)
+from artifacts.paths import build_experiment_path, prepare_run_artifacts, resolve_model_params
+from artifacts.writers import dataframe_to_csv, forecast_timestamps, model_info_payload, write_json
+from pipeline.stages import PrepareResult, new_processor_from_config, run_train_stage, run_test_stage, run_forecast_stage
 
 # global variable
 LOGGING_LABEL = Path(__file__).name[:-3]
 os.environ['LOG_NAME'] = LOGGING_LABEL
 from utils.log_util import logger, configure_logging, set_run_id, timed_stage
-
-
-@dataclass
-class PrepareResult:
-    """建模前准备阶段的结构化返回。
-
-    下游训练、回测和预测都从这里读取同一份历史目标序列、多源输入、
-    未来外生变量和可逆预处理器，避免不同阶段重复切分数据。
-    """
-    df: pd.DataFrame
-    history_df: pd.DataFrame
-    history_y: pd.Series
-    history_endog_df: pd.DataFrame
-    history_exog_df: pd.DataFrame | None
-    history_model_input_df: pd.DataFrame
-    future_exog_df: pd.DataFrame | None
-    history_time: pd.Series
-    processor: DataProcessor
-    raw_history_df: pd.DataFrame
-    model_input_feature_columns: list[str] = field(default_factory=list)
-    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -99,11 +71,16 @@ class ModelApp:
     训练、回测、预测和结果汇总顺序执行。
     """
 
-    def __init__(self, cfg: AppConfig, aggregation_result: AggregationResult | None = None):
+    def __init__(self, cfg: AppConfig, aggregation_result: AggregationResult | None = None,
+                 data_frame: pd.DataFrame | None = None, future_exog_frame: pd.DataFrame | None = None):
         self.cfg = cfg
         self.aggregation_result = aggregation_result
         self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
         configure_logging(log_format=cfg.log_format, run_id=self.run_id)
+        # model_names 优先于 model_name：单元素列表也同步覆盖 model_name，
+        # 保证 artifacts/loader 与实际运行模型一致（多模型循环内另行逐模型重建）。
+        if self.cfg.model_names:
+            self.cfg.model_name = self.cfg.resolved_model_names()[0]
         self.artifacts = prepare_run_artifacts(cfg)
         self.loader = DataLoader(
             data_path=self.cfg.data_path,
@@ -115,6 +92,8 @@ class ModelApp:
             future_exog_time_col=self.cfg.future_exog_time_col,
             max_missing_ratio=self.cfg.max_missing_ratio,
             validate_freq=self.cfg.validate_freq,
+            data_frame=data_frame,
+            future_exog_frame=future_exog_frame,
         )
 
     @property
@@ -249,11 +228,16 @@ class ModelApp:
         if prepared is None:
             raise RuntimeError("Model stages require prepared data")
         # ------------------------------
+        # 多模型单 run：数据准备/EDA 已完成，模型阶段逐模型循环
+        # ------------------------------
+        if self.cfg.is_multi_model():
+            return self._run_multi_model(df, prepared, out)
+        # ------------------------------
         # 自动模型选择（可选，失败不阻断后续）
         # ------------------------------
         if self.cfg.auto_select:
             try:
-                from models.selector import AutoSelector
+                from evaluation.selector import AutoSelector
                 logger.info(f"[AutoSelect] running with candidates: {self.cfg.auto_select_candidates}")
                 selector = AutoSelector(
                     candidates=self.cfg.auto_select_candidates,
@@ -356,6 +340,151 @@ class ModelApp:
             logger.error(f"[FeatureSnapshot] failed: {exc}")
 
         return self._write_run_summary(out)
+
+    def _run_multi_model(
+        self,
+        df: pd.DataFrame,
+        prepared: PrepareResult,
+        out: dict[str, str | dict[str, float]],
+    ) -> dict[str, str | dict[str, float]]:
+        """多模型单 run：数据准备一次，模型阶段逐模型循环。
+
+        每个模型独立重建 artifacts（各自 experiment_path）并复用现有
+        train/test/forecast 方法落盘；comparison 表按回测汇总指标横向对比。
+        auto_select 开启时消费同一批回测结果选优（P3：消除 AutoSelector
+        平行扫描——多模型模式下不再单独跑选型回测）。
+        """
+        model_names = self.cfg.resolved_model_names()
+        metric = self.cfg.auto_select_metric
+        # 多模型参数源：batch_models 提供每模型独立 params（如 {"arima": {"order": [1,1,1]}}）；
+        # 未覆盖的模型回退全局 model_params。P3 的 model_names 只共享单一参数，
+        # 场景级合并脚本（每模型不同超参）依赖本映射。
+        per_model_params = dict(self.cfg.batch_models) if self.cfg.batch_models else {}
+        # 每模型回测汇总指标在 test 成功后当场读入（experiment_path 随循环变化，
+        # 事后按路径重建会因 params 段不同而失配——P3 后续修复）。
+        test_summaries: dict[str, dict] = {}
+        final_out: dict[str, str | dict[str, float]] = {
+            "multi_model": "true",
+            "model_names": ",".join(model_names),
+            **{k: v for k, v in out.items() if not k.endswith("_dir")},
+        }
+        for name in model_names:
+            self.cfg.model_name = name
+            if name in per_model_params:
+                self.cfg.model_params = copy.deepcopy(per_model_params[name])
+            else:
+                self.cfg.model_params = {}
+            # 每模型独立 experiment_path：按当前模型名重建全部产物目录。
+            self.artifacts = prepare_run_artifacts(self.cfg)
+            logger.info(f"{'=' * 100}")
+            logger.info(f"[MultiModel] running model: {name}")
+            model_out: dict[str, str | dict[str, float]] = {}
+            stage_errors: list[str] = []
+            # ------------------------------
+            # train
+            # ------------------------------
+            try:
+                with timed_stage("train"):
+                    model_out.update(self.train(prepared))
+            except Exception as exc:
+                logger.error(f"[Train:{name}] failed: {exc}")
+                model_out["train_error"] = str(exc)
+                stage_errors.append("train")
+            # ------------------------------
+            # test（回测 summary 是 comparison 的数据源）
+            # ------------------------------
+            try:
+                with timed_stage("test"):
+                    model_out.update(self.test(df, self._new_processor))
+                summary_file = self.artifacts.test_results_dir / "test_summary.json"
+                if summary_file.exists():
+                    test_summaries[name] = json.loads(summary_file.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.error(f"[Test:{name}] failed: {exc}")
+                model_out["test_error"] = str(exc)
+                stage_errors.append("test")
+            # ------------------------------
+            # forecast
+            # ------------------------------
+            try:
+                with timed_stage("forecast"):
+                    model_out.update(self.forecast(prepared))
+            except Exception as exc:
+                logger.error(f"[Forecast:{name}] failed: {exc}")
+                model_out["forecast_error"] = str(exc)
+                stage_errors.append("forecast")
+            # ------------------------------
+            # 逐模型 run_summary（写在各自 forecast_results_dir）
+            # ------------------------------
+            if not stage_errors:
+                summary_path = self.artifacts.forecast_results_dir / "run_summary.json"
+                payload: dict[str, object] = dict(model_out)
+                payload["config"] = asdict(self.cfg)
+                summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                model_out["summary_path"] = str(summary_path)
+            final_out[f"model::{name}"] = model_out  # type: ignore[assignment]
+            for key in ("train_error", "test_error", "forecast_error"):
+                if key in model_out:
+                    final_out[f"{key}::{name}"] = model_out[key]
+        # ------------------------------
+        # comparison：按模型汇总回测指标
+        # ------------------------------
+        comparison_path = self._write_model_comparison(test_summaries, metric)
+        if comparison_path is not None:
+            final_out["model_comparison_path"] = comparison_path
+        # ------------------------------
+        # auto_select（多模型模式：消费 comparison 选优）
+        # ------------------------------
+        if self.cfg.auto_select and test_summaries:
+            try:
+                best = self._select_best_from_comparison(test_summaries, metric)
+                final_out["auto_selected_model"] = best
+                logger.info(f"[MultiModel:auto_select] selected {best!r} by {metric}")
+            except Exception as exc:
+                logger.error(f"[MultiModel:auto_select] failed: {exc}")
+                final_out["auto_select_error"] = str(exc)
+        return final_out
+
+    def _write_model_comparison(self, test_summaries: dict[str, dict], metric: str) -> str | None:
+        """把各模型回测汇总指标写成 model_comparison.csv，无可用数据时返回 None。"""
+        if not test_summaries:
+            logger.warning("[Comparison] no readable test_summary; skip model_comparison.csv")
+            return None
+        rows: list[dict] = []
+        for name, payload in test_summaries.items():
+            row = {"model_name": name}
+            for key in ("mae", "rmse", "mape", "smape", "mse", "r2", "bias",
+                        "max_error", "window_count", "failed_windows", "survivor_bias"):
+                if key in payload:
+                    row[key] = payload[key]
+            rows.append(row)
+        comparison_dir = (
+            Path(self.cfg.results_dir) / self.artifacts.data_name / "results_test" / "comparison"
+        )
+        comparison_dir.mkdir(parents=True, exist_ok=True)
+        path = comparison_dir / "model_comparison.csv"
+        df_cmp = pd.DataFrame(rows)
+        if metric in df_cmp.columns:
+            df_cmp = df_cmp.sort_values(by=metric, ascending=metric != "r2").reset_index(drop=True)
+        df_cmp.to_csv(path, index=False)
+        logger.info(f"[Comparison] wrote {len(rows)} models to {path}")
+        return str(path)
+
+    def _select_best_from_comparison(self, test_summaries: dict[str, dict], metric: str) -> str:
+        """按指标方向从各模型回测汇总选优（r2 越大越好，其余越小越好）。"""
+        best_name: str | None = None
+        best_value: float | None = None
+        for name, payload in test_summaries.items():
+            if metric not in payload:
+                continue
+            value = float(payload[metric])
+            if value != value:  # NaN guard
+                continue
+            if best_value is None or (value > best_value if metric == "r2" else value < best_value):
+                best_name, best_value = name, value
+        if best_name is None:
+            raise RuntimeError(f"no readable {metric} scores for auto_select")
+        return best_name
 
     def _load_dataset(self) -> pd.DataFrame:
         """加载历史数据，并将清洗后的质量报告写入训练结果目录。"""
@@ -497,20 +626,7 @@ class ModelApp:
 
     def _new_processor(self):
         """返回与 _prepare_target_series 同配但未拟合的 DataProcessor，供回测按窗口重建。"""
-        cfg = self.cfg
-        return DataProcessor(
-            detrend_method=cfg.detrend_method,
-            denoise_enabled=cfg.denoise_enabled,
-            denoise_method=cfg.denoise_method,
-            denoise_window=cfg.denoise_window,
-            seasonal_period=cfg.seasonal_period,
-            seasonal_periods=cfg.seasonal_periods,
-            decomposition_method=cfg.decomposition_method,
-            decomposition_target=cfg.decomposition_target,
-            decomposition_model=cfg.decomposition_model,
-            acf_max_lag=cfg.acf_max_lag,
-            seasonality_strength_threshold=cfg.seasonality_strength_threshold,
-        )
+        return new_processor_from_config(self.cfg)
 
     def _build_model_input_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         feature_df = pd.DataFrame(index=df.index)
@@ -608,13 +724,9 @@ class ModelApp:
         """训练模型并保存 checkpoint、训练序列和模型元信息。"""
         if not self.cfg.do_train:
             return {}
-        # model training
-        trainer = Trainer(self.cfg.model_name, self.resolved_model_params, self.cfg.ignore_unsupported_inputs)
-        model = trainer.train(
-            prepared.history_y,
-            X_hist=prepared.history_model_input_df,
-            X_future=prepared.future_exog_df,
-        )
+        # model training（计算在 stages，落盘收口在本方法）
+        stage = run_train_stage(self.cfg, prepared)
+        model = stage.model
         # model saving with metadata
         model_path = self.artifacts.checkpoints_dir / "model.pkl"
         save_model(model, str(model_path), meta={
@@ -690,32 +802,14 @@ class ModelApp:
         """执行 rolling backtest，并保存窗口级预测、指标汇总和诊断图。"""
         if not self.cfg.do_test:
             return {}
-        # 回测阶段重新按窗口训练模型，用于评估策略在历史滚动窗口上的稳定性。
-        tester = Tester(
-            model_name=self.cfg.model_name,
-            model_params=self.resolved_model_params,
-            target_col=self.cfg.target_col,
-            time_col=self.cfg.time_col,
-            endog_cols=self.effective_endog_cols,
-            exog_cols=self.cfg.exog_cols,
-            future_exog_cols=self.cfg.future_exog_cols,
-            train_size=self.cfg.resolved_backtest_train_size(),
-            horizon=self.cfg.backtest_horizon,
-            step=self.cfg.backtest_step,
-            forecast_strategy=self.cfg.resolved_forecast_strategy(),
-            window_mode=self.cfg.resolved_backtest_window_mode(),
-            verbose=self.cfg.backtest_verbose,
-            progress_every=self.cfg.backtest_progress_every,
-            n_jobs=self.cfg.backtest_n_jobs,
+        # 回测阶段重新按窗口训练模型（计算在 stages，落盘收口在本方法）。
+        result = run_test_stage(
+            cfg=self.cfg,
+            df=df,
+            model_history_input_cols=self.model_history_input_cols,
+            effective_endog_cols=self.effective_endog_cols,
             processor_builder=processor_builder,
-            allow_failed_windows=self.cfg.backtest_allow_failed_windows,
-            interval_method=self.cfg.interval_method if self.cfg.return_intervals else "none",
-            interval_alpha=self.cfg.interval_alpha,
-            conformal_n_windows=self.cfg.conformal_n_windows,
-            refit_every=self.cfg.backtest_refit_every,
-            ignore_unsupported_inputs=self.cfg.ignore_unsupported_inputs,
         )
-        result = tester.evaluate(df[[self.cfg.time_col, *self.model_history_input_cols]].copy())
         # 回测产物分为窗口指标、逐点预测、汇总指标和图形，便于后续误差分析。
         metrics_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics.csv", result.metrics_df)
         predictions_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_predictions.csv", result.predictions_df)
@@ -775,52 +869,28 @@ class ModelApp:
         """基于准备好的历史窗口做未来预测，并写出 forecast.csv 与预测图。"""
         if not self.cfg.do_forecast:
             return {}
-        # 预测阶段复用统一推理编排，模型只需要遵守 fit/predict_one 契约。
-        forecaster = Forecaster(
-            model_name=self.cfg.model_name,
-            model_params=self.resolved_model_params,
-            forecast_strategy=self.cfg.resolved_forecast_strategy(),
-            allow_nan_fill=self.cfg.forecast_allow_nan_fill,
-            ignore_unsupported_inputs=self.cfg.ignore_unsupported_inputs,
+        # 预测阶段复用统一推理编排（计算在 stages，落盘收口在本方法）。
+        stage = run_forecast_stage(
+            cfg=self.cfg,
+            prepared=prepared,
+            model_history_input_cols=self.model_history_input_cols,
+            processor_builder=self._new_processor,
         )
-        interval_metadata = {}
+        last_nan_filled = stage.last_nan_filled
+        interval_metadata = stage.interval_metadata
         if self.cfg.return_intervals:
-            from models.calibration import predict_frame
-            interval_df = predict_frame(
-                model_builder=lambda: forecaster.factory.create_model(self.cfg.model_name, self.resolved_model_params, self.cfg.ignore_unsupported_inputs),
-                history=prepared.raw_history_df[self.cfg.target_col],
-                horizon=self.cfg.predict_horizon,
-                forecast_strategy=self.cfg.resolved_forecast_strategy(),
-                X_hist=prepared.raw_history_df[self.model_history_input_cols],
-                X_future=prepared.future_exog_df,
-                alpha=self.cfg.interval_alpha,
-                interval_method=self.cfg.interval_method,
-                n_windows=self.cfg.conformal_n_windows,
-                processor_builder=self._new_processor,
-            )
-            interval_metadata = dict(interval_df.attrs)
-            pred = pd.Series(interval_df["yhat"].values, name="yhat")
             forecast_df = pd.DataFrame({
-                "step": range(1, len(pred) + 1),
-                "timestamp": forecast_timestamps(prepared.history_time, len(pred), self.cfg.freq),
-                "yhat": pred.values,
-                "yhat_lower": interval_df["yhat_lower"].values,
-                "yhat_upper": interval_df["yhat_upper"].values,
+                "step": range(1, self.cfg.predict_horizon + 1),
+                "timestamp": forecast_timestamps(prepared.history_time, self.cfg.predict_horizon, self.cfg.freq),
+                "yhat": stage.forecast_df["yhat"].values,
+                "yhat_lower": stage.forecast_df["yhat_lower"].values,
+                "yhat_upper": stage.forecast_df["yhat_upper"].values,
             })
         else:
-            pred = forecaster.forecast(
-                history=prepared.history_y,
-                horizon=self.cfg.predict_horizon,
-                X_hist=prepared.history_model_input_df,
-                X_future=prepared.future_exog_df,
-            )
-            # 可逆预处理在模型输出后重组趋势/季节项，保持最终 yhat 回到原始业务尺度。
-            if prepared.processor.enabled:
-                pred = prepared.processor.inverse_forecast(pred)
             forecast_df = pd.DataFrame({
-                "step": range(1, len(pred) + 1),
-                "timestamp": forecast_timestamps(prepared.history_time, len(pred), self.cfg.freq),
-                "yhat": pred.values,
+                "step": range(1, self.cfg.predict_horizon + 1),
+                "timestamp": forecast_timestamps(prepared.history_time, self.cfg.predict_horizon, self.cfg.freq),
+                "yhat": stage.forecast_df["yhat"].values,
             })
         forecast_path = dataframe_to_csv(self.artifacts.forecast_results_dir / "forecast.csv", forecast_df)
         forecast_plot_path = plot_forecast(
@@ -856,7 +926,7 @@ class ModelApp:
                 "history_points_plotted": int(min(len(prepared.history_df), self.cfg.history_size)),
                 "feature_mode": self.cfg.feature_mode,
                 # NaN 填充打标：0 表示无填充；>0 仅在 forecast_allow_nan_fill=true 时可能出现。
-                "forecast_nan_filled": int(forecaster.last_nan_filled),
+                "forecast_nan_filled": int(last_nan_filled),
                 "interval_method": self.cfg.interval_method if self.cfg.return_intervals else "none",
                 "interval_metadata": interval_metadata,
             },

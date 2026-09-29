@@ -1,7 +1,7 @@
 import pandas as pd
 
 from config import AppConfig
-from evaluation.monitor import ModelMonitor, run_monitor_actuals_backfill
+from monitoring.monitor import ModelMonitor, run_monitor_actuals_backfill
 
 
 def test_model_monitor_logs_actuals_and_metrics(tmp_path):

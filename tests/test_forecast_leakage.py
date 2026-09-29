@@ -8,7 +8,7 @@
 import pandas as pd
 import pytest
 
-from app import ModelApp
+from pipeline import ModelApp
 from config import AppConfig
 from data_provider.data_processor import DataProcessor
 

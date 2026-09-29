@@ -6,12 +6,14 @@
 
 - 当前区间路径要求 `scale=false`、`feature_mode=analysis_snapshot`；不把已有缩放或 `feature_mode=model_input` 路径当作已经过概率校准验证
 - 面板入口不与自动选型、聚合前级和监控回填混用
+- `interval_method=native` 在 `recursive / dirrec` 下已改为显式 RAISE（P6，2026-09-29；config.validate 与 predict_frame 双重拦截并提示 conformal 替代）
+- 底层接口 `Forecaster.forecast_with_intervals()` 同样对 recursive/dirrec RAISE——config 层拦截只覆盖 CLI 主链路，直接调用该接口同样会得到显式错误
+- conformal 在 recursive 下的校准半径随步长递增（逐步误差累积的顺序统计量），属预期行为而非缺陷
 
 ## 预处理已知耦合（T18 记录，暂不影响主线正确性）
 
 - 分解模式的未来趋势外推为常数（`_future_trend` 平推 `_last_trend`），长 horizon 下趋势项不再增长；需要趋势外推时用 `detrend_method=linear`
 - `detrend_method=moving_average` 的趋势窗口复用 `denoise_window`（默认 3），跨职责参数耦合；需要独立趋势窗口时当前无单独参数
-- `interval_method=native` 在 `recursive / dirrec` 下仍返回 NaN 区间；需策略一致区间时显式用 `conformal` 并满足校准样本要求
 
 ## 告警治理
 

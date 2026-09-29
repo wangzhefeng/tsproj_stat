@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from app.pipeline import ModelApp
+from pipeline.runner import ModelApp
 from config import AppConfig
 
 

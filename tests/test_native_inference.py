@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from models.inference import run_point_inference, run_interval_inference
+from forecasting.strategies import run_point_inference, run_interval_inference
 from models.model.baseline_models import AutoETSModel
 
 

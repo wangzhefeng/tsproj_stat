@@ -1,9 +1,9 @@
 import pandas as pd
 import pytest
 
-from app.forecasting import Forecaster
+from forecasting.forecaster import Forecaster
 from models.factory import ModelFactory
-from models.inference import run_point_inference
+from forecasting.strategies import run_point_inference
 
 
 def test_unsupported_future_input_is_not_silently_ignored():

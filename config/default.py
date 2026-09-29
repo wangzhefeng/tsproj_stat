@@ -1,13 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from models.inference import (
-    normalize_forecast_strategy,
-    normalize_window_mode,
-    validate_single_step_horizon,
-)
+from forecasting.strategies import normalize_forecast_strategy, normalize_window_mode, validate_single_step_horizon
 
 
 def _ensure_positive(value: int, field_name: str) -> None:
@@ -56,6 +52,7 @@ class AppConfig:
     
     # 模型参数
     model_name: str = "arima"
+    model_names: list[str] = field(default_factory=list)
     model_params: dict = field(default_factory=dict)
     forecast_strategy: str = "direct"
     ignore_unsupported_inputs: bool = False
@@ -91,6 +88,7 @@ class AppConfig:
     backtest_verbose: bool = False
     backtest_progress_every: int = 10
     backtest_n_jobs: int = 1
+    batch_n_jobs: int = 1
     backtest_refit_every: int = 1
     # 失败窗口容忍开关：默认 False（任一窗口失败即 RAISE）；显式开启才跳过并打标 survivor_bias
     backtest_allow_failed_windows: bool = False
@@ -137,6 +135,9 @@ class AppConfig:
     conformal_n_windows: int = 20
     # forecast NaN 容忍开关：默认 False（输出含 NaN 即 RAISE）；显式开启才 ffill/bfill 修补并在 forecast_summary 打标
     forecast_allow_nan_fill: bool = False
+    # forward 快速路径：recursive 策略下首步 fit + 后续步固定参数 update 滤波，
+    # 免去逐步全量重拟合；仅对 supports_update 模型开放（ARIMA/SARIMA 家族）。
+    forecast_use_update: bool = False
 
     # 本地文件监控：默认关闭；开启后 forecast 阶段写入 results/{data_name}/monitor/{experiment_path}。
     monitor_enabled: bool = False
@@ -174,6 +175,22 @@ class AppConfig:
         """构建结果目录 setting 时使用的预测策略标签。"""
         return self.resolved_forecast_strategy()
 
+    def resolved_model_names(self) -> list[str]:
+        """有效模型列表：model_names 去重保序；未设置时回退单模型 [model_name]。
+
+        model_name 保留为单模型兼容糖；两者同时显式设置时 model_names 优先。
+        """
+        names = [n.strip() for n in self.model_names if n and n.strip()]
+        deduped: list[str] = []
+        for name in names:
+            if name not in deduped:
+                deduped.append(name)
+        return deduped or [self.model_name]
+
+    def is_multi_model(self) -> bool:
+        """是否为多模型单 run（数据准备/EDA 只做一次，模型阶段逐个循环）。"""
+        return len(self.resolved_model_names()) > 1
+
     def is_eda_only(self) -> bool:
         """仅执行 EDA：do_eda 开启且模型三阶段（train/test/forecast）全部关闭。"""
         return self.do_eda and not (self.do_train or self.do_test or self.do_forecast)
@@ -187,6 +204,7 @@ class AppConfig:
         _ensure_positive(self.backtest_step, "backtest_step")
         _ensure_positive(self.backtest_progress_every, "backtest_progress_every")
         _ensure_positive(self.backtest_n_jobs, "backtest_n_jobs")
+        _ensure_positive(self.batch_n_jobs, "batch_n_jobs")
         if isinstance(self.backtest_refit_every, bool) or not isinstance(self.backtest_refit_every, int) or self.backtest_refit_every < 0:
             raise ValueError("backtest_refit_every must be an integer >= 0")
         _ensure_positive(self.eda_period, "eda_period")
@@ -199,8 +217,8 @@ class AppConfig:
 
         if self.target_col in self.endog_cols:
             raise ValueError("endog_cols must not include target_col")
-        if self.batch_models and not self.series_id_col:
-            raise ValueError("batch_models requires series_id_col")
+        # batch_models 双语义：series_id_col 非空 = 面板批量；为空 = 单表多模型参数源
+        # （与 model_names 组合，每模型独立超参，供场景级合并脚本使用）。
         if not isinstance(self.batch_models, dict) or any(not isinstance(v, dict) for v in self.batch_models.values()):
             raise ValueError("batch_models must map model names to parameter objects")
         if self.series_id_col:
@@ -242,6 +260,12 @@ class AppConfig:
             raise ValueError("conformal_n_windows must be >= 2")
         if self.return_intervals and (self.scale or self.feature_mode == "model_input"):
             raise ValueError("intervals currently require scale=false and feature_mode=analysis_snapshot")
+        if self.return_intervals and self.interval_method == "native" \
+                and self.resolved_forecast_strategy() in {"recursive", "dirrec"}:
+            raise ValueError(
+                "native intervals are unavailable under recursive/dirrec strategies; "
+                "use interval_method=conformal instead"
+            )
         
         if self.decomposition_target not in {"trend_resid", "resid_only"}:
             raise ValueError("decomposition_target must be one of {'trend_resid', 'resid_only'}")
@@ -295,5 +319,5 @@ DEFAULT_CONFIG = AppConfig()
 
 
 def ensure_output_dirs(cfg: AppConfig) -> None:
-    """创建统一结果根；data_name 与实验子目录由 app.results 负责。"""
+    """创建统一结果根；data_name 与实验子目录由 artifacts.paths 负责。"""
     Path(cfg.results_dir).mkdir(parents=True, exist_ok=True)

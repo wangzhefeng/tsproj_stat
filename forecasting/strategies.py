@@ -85,6 +85,54 @@ def _predict_one(model, X_future_one: pd.DataFrame | None = None) -> float:
     return _coerce_single_value(model.predict_one(X_future_one=X_future_one))
 
 
+def _validate_update_path(strategy: str, model_builder, X_future) -> None:
+    """forward 快速路径前置门禁：策略、模型能力、未来外生三重校验。"""
+    if strategy != "recursive":
+        raise ValueError("use_update requires forecast_strategy=recursive")
+    if X_future is not None and to_dataframe(X_future).shape[1] > 0:
+        raise ValueError("use_update does not support future exogenous inputs")
+    model = model_builder()
+    spec = getattr(model, "_model_spec", None)
+    update = getattr(model, "update", None)
+    if not callable(update) or (spec is not None and not spec.supports_update):
+        raise ValueError("model does not support fixed-parameter update; use refit-per-step recursive instead")
+
+
+def _recursive_with_update(
+    model_builder: Callable[[], BaseStatModel],
+    history_series: pd.Series,
+    history_frame: pd.DataFrame,
+    horizon: int,
+) -> pd.Series:
+    """recursive 的 forward 快速路径：首步 fit，后续步固定参数 update 滤波。
+
+    与旧逐步重拟合语义不同（滤波 vs 重估计）；数值接近但不逐值相等，
+    属预期差异。update 在增长历史上重新滤波，等价于回测 refit_every 的
+    窗口间更新机制。
+    """
+    hist = history_series.copy()
+    hist_frame = history_frame.copy()
+    preds: list[float] = []
+    model = None
+    for step_idx in range(horizon):
+        if step_idx == 0:
+            model = model_builder()
+            model.fit(hist, X_hist=hist_frame if hist_frame.shape[1] > 1 else None)
+        else:
+            assert model is not None
+            update = getattr(model, "update", None)
+            if not callable(update):
+                raise ValueError("model does not support fixed-parameter update")
+            update(hist, X_hist=hist_frame if hist_frame.shape[1] > 1 else None)
+        assert model is not None
+        next_val = _predict_one(model, None)
+        preds.append(next_val)
+        hist = pd.concat([hist, pd.Series([next_val])], ignore_index=True)
+        hist.name = history_series.name
+        hist_frame = _append_history_frame(hist_frame, next_val, None)
+    return pd.Series(preds, name="yhat")
+
+
 def checked_model_builder(model_builder, strategy, X_future, intervals=False, history=None, X_hist=None):
     """注册模型能力是执行门禁；自定义模型仍遵守公共接口。"""
     def build():
@@ -121,6 +169,7 @@ def run_point_inference(
     forecast_strategy: str,
     X_hist: pd.DataFrame | None = None,
     X_future: pd.DataFrame | None = None,
+    use_update: bool = False,
 ) -> pd.Series:
     """执行点预测的统一多步推理编排。
 
@@ -128,10 +177,14 @@ def run_point_inference(
     direct: 每个预测步重新拟合一个模型并取对应步长的最后一个预测值；
     recursive: 每一步把上一轮预测追加回历史，再预测下一步；
     dirrec: 逐步重建模型，同时使用递归扩展后的历史。
+    use_update=True 时 recursive 走 forward 快速路径：首步 fit，
+    后续步固定参数 update 滤波（仅 supports_update 模型，无未来外生）。
     """
     strategy = normalize_forecast_strategy(forecast_strategy)
     validate_horizon(horizon)
     validate_single_step_horizon(strategy, horizon)
+    if use_update:
+        _validate_update_path(strategy, model_builder, X_future)
 
     model_builder = checked_model_builder(model_builder, strategy, X_future, history=history, X_hist=X_hist)
     history_series = to_univariate_series(history).astype(float).reset_index(drop=True)
@@ -163,6 +216,9 @@ def run_point_inference(
             preds.append(_predict_direct_step(model, step_idx + 1, prefix))
         return pd.Series(preds, name="yhat")
 
+    if strategy == "recursive" and use_update:
+        return _recursive_with_update(model_builder, history_series, history_frame, horizon)
+
     hist = history_series.copy()
     hist_frame = history_frame.copy()
     preds = []
@@ -191,23 +247,20 @@ def run_interval_inference(
     """执行区间预测编排。
 
     native/single_step/direct 从同一拟合模型同时取点预测与原生区间；
-    recursive/dirrec 暂时返回点预测和 NaN 区间，避免伪造不可靠置信区间。
+    recursive/dirrec 下原生区间不可用（逐步重拟合破坏解析连续性），
+    在此显式失败并指向 conformal，不再产出 NaN 区间列（P6 行为变更）。
     """
     strategy = normalize_forecast_strategy(forecast_strategy)
     validate_horizon(horizon)
     validate_single_step_horizon(strategy, horizon)
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
-    model_builder = checked_model_builder(model_builder, strategy, X_future, intervals=True, history=history, X_hist=X_hist)
     if strategy in {"recursive", "dirrec"}:
-        point = run_point_inference(model_builder, history, horizon, strategy, X_hist, X_future)
-        return pd.DataFrame(
-            {
-                "yhat": point.values,
-                "yhat_lower": np.full(len(point), np.nan),
-                "yhat_upper": np.full(len(point), np.nan),
-            }
+        raise ValueError(
+            f"native intervals are unavailable under strategy={strategy!r}; "
+            "use interval_method=conformal instead"
         )
+    model_builder = checked_model_builder(model_builder, strategy, X_future, intervals=True, history=history, X_hist=X_hist)
 
     history_series = to_univariate_series(history).astype(float).reset_index(drop=True)
     history_frame = combine_history_frame(history, X_hist).astype(float).reset_index(drop=True)

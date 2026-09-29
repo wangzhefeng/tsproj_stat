@@ -1,7 +1,7 @@
 import pandas as pd
 
-import models.selector as selector_module
-from models.selector import AutoSelector
+import evaluation.selector as selector_module
+from evaluation.selector import AutoSelector
 
 
 class DummyBacktestResult:

@@ -76,7 +76,7 @@ def test_backtest_train_size_explicit_overrides_default():
 def test_results_data_name_overrides_data_name_resolution(tmp_path):
     # 显式 results_data_name 优先于 data_path stem；未设置时回落 stem；非法路径拒绝。
     # 注意：合法名分支会真实 mkdir，results_dir 必须指向 tmp_path，避免污染仓库 results/。
-    from app.results import _resolve_data_name, prepare_run_artifacts
+    from artifacts.paths import _resolve_data_name, prepare_run_artifacts
 
     cfg = AppConfig(data_path="dataset/aidc_power_month/derived/A_Loads_1day_mean_20251001_20260728.csv")
     assert _resolve_data_name(cfg) == "A_Loads_1day_mean_20251001_20260728"

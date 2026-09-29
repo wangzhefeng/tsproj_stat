@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.forecasting import _validate_forecast
+from forecasting.forecaster import _validate_forecast
 
 
 def test_validate_forecast_raises_on_nan_by_default():

@@ -8,6 +8,14 @@
 
 ```bash
 .venv/bin/python run.py --model_name arima --forecast_strategy direct --do_train true --do_test true --do_forecast true
+
+多模型单 run 对比（数据准备/EDA 只做一次，各模型独立 experiment_path）：
+
+```bash
+.venv/bin/python run.py --model_names naive,arima,seasonal_naive --auto_select true --do_train true --do_test true --do_forecast true
+```
+
+对比表写入 `results/{data_name}/results_test/comparison/model_comparison.csv`；`auto_select` 按指标方向（r2 越大越好，其余越小越好）从该表选优。
 ```
 
 仅 EDA：

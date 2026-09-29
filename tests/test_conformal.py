@@ -6,7 +6,7 @@ from models.factory import ModelFactory
 
 
 def test_conformal_stepwise_errors_are_original_scale():
-    from models.calibration import predict_frame
+    from forecasting.intervals import predict_frame
     # 线性序列的 naive 多步误差应为 [1, 2]，校准不得混合 horizon。
     result = predict_frame(lambda: ModelFactory().create_model("naive"),
                            pd.Series(np.arange(20.), name="y"), 2, "recursive",
@@ -19,7 +19,7 @@ def test_conformal_stepwise_errors_are_original_scale():
 
 def test_conformal_fits_preprocessor_within_each_origin():
     from data_provider.data_processor import DataProcessor
-    from models.calibration import predict_frame
+    from forecasting.intervals import predict_frame
     fitted = []
 
     class AuditedProcessor(DataProcessor):
@@ -37,7 +37,7 @@ def test_conformal_fits_preprocessor_within_each_origin():
 
 
 def test_conformal_rejects_unattainable_finite_sample_level():
-    from models.calibration import predict_frame
+    from forecasting.intervals import predict_frame
     with pytest.raises(ValueError, match="calibration"):
         predict_frame(lambda: ModelFactory().create_model("naive"), pd.Series(range(30)),
                       2, "native", interval_method="conformal", n_windows=4, alpha=0.05)

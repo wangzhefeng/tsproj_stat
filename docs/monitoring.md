@@ -20,7 +20,7 @@ results/{data_name}/monitor/{experiment_path}/predictions_log.csv
 
 ## 实际值回填
 
-`evaluation.monitor.ModelMonitor` 或 `run.py --monitor_actuals_path ...` 支持后续回填真实值到 `actuals_log.csv`，并基于最近 `monitor_window` 个匹配样本生成 `metrics_history.csv`：
+`monitoring.monitor.ModelMonitor` 或 `run.py --monitor_actuals_path ...` 支持后续回填真实值到 `actuals_log.csv`，并基于最近 `monitor_window` 个匹配样本生成 `metrics_history.csv`：
 
 ```bash
 .venv/bin/python run.py \
@@ -30,5 +30,5 @@ results/{data_name}/monitor/{experiment_path}/predictions_log.csv
   --monitor_actuals_run_id manual-backfill-1
 ```
 
-- 回填入口已收口到 `evaluation.monitor.run_monitor_actuals_backfill()`；`run.py` 只负责解析配置并调用统一入口
+- 回填入口已收口到 `monitoring.monitor.run_monitor_actuals_backfill()`；`run.py` 只负责解析配置并调用统一入口
 - 面板入口不与监控回填混用（见 [exogenous.md](exogenous.md#面板多序列多模型)）

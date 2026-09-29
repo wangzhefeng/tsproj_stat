@@ -4,7 +4,7 @@ import pandas as pd
 
 from evaluation.backtest import rolling_backtest
 from models.factory import ModelFactory
-from models.inference import normalize_forecast_strategy
+from forecasting.strategies import normalize_forecast_strategy
 from models.registry import MODEL_REGISTRY
 
 import os

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import pandas as pd
 from typing import Callable
@@ -6,7 +6,7 @@ from data_provider.data_processor import DataProcessor
 
 from evaluation.backtest import BacktestResult, rolling_backtest
 from models.factory import ModelFactory
-from models.inference import normalize_forecast_strategy, normalize_window_mode
+from forecasting.strategies import normalize_forecast_strategy, normalize_window_mode
 
 
 class Tester:

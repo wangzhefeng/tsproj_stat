@@ -526,3 +526,75 @@
 - 2026-09-29：AGENTS.md 修改经用户重新审批落盘（§3 smoke 路径 A/B→route_A/route_B；§4 升级为"文档同步与检查"含定期人工核查条款；§7 实施记录引用改指 docs/statsforecast-extension.md）；`eda/EDA_REPORT_GUIDE.md` 经用户指令 git mv 至 `docs/eda_report_guide.md`，同步更新 `eda/report_generator.py` 页脚引用、AGENTS.md §6、docs/README.md 与 docs/eda.md 链接。验证：全仓无残留旧引用（LOG 历史条目除外）、EDA smoke 真实跑通且新生成报告页脚指向 docs/eda_report_guide.md、相关单测通过。
 - 2026-09-29：结果路径按 scripts 组织重构——新增一等 CLI 参数 `--results_data_name`（默认 data_path stem，显式覆盖支持层级路径，绝对路径/`..` 拒绝），落地于 `config/default.py`、`run.py`、`app/results.py`（`_resolve_data_name`）、`app/batch.py`、`evaluation/monitor.py`；AIDC route 脚本（60 个）统一传 `aidc_power_month/route_A|B`。存量结果迁移：当前窗口 `A|B_Loads_1day_mean_20251001_20260728` → `results/aidc_power_month/route_A|route_B/`；过期窗口（`20260708` 系列 4 个 + 非 mean 的 `20260728` 2 个，数据文件已不存在）归档到 `results/aidc_power_month/_archive/`。新增 `tests/test_app_config.py::test_results_data_name_overrides_data_name_resolution`。验证：全量 pytest 192 passed、`route_A/run_eda.sh` 真实跑通（data_name=aidc_power_month/route_A，EDA 报告落新路径且未触发重聚合）、docs/usage.md 与 docs/data.md 同步。注意：monitor 回填旧实验路径时需带 `--results_data_name` 或使用新的相对 experiment path。
 - 2026-09-29：清理 `results/abs/` 空目录树（54 个空目录、0 文件）——系 results_data_name 首版实现 bug（`strip("/")` 先于校验执行，非法值 `/abs` 被洗成合法名）在测试运行时真实 mkdir 的残留；bug 已于同日修复，残留经用户确认删除。教训落地：`test_results_data_name_overrides_data_name_resolution` 补合法层级名分支（`results_dir` 指向 `tmp_path` 并断言目录真实展开），杜绝此类副作用再写进仓库 `results/`。验证：该测试 9 项全过，测试运行后 `results/` 根无新增目录。
+
+## 2026-09-29 P1 架构重构：app/ 拆分与预测引擎/编排/产物分层
+
+- 动因：对照 statsforecast 架构评审后确定的 5 点改进之首——`app/` 上帝包拆分，职责对齐时序预测心智模型
+- 变更：`app/pipeline.py → pipeline/runner.py`、`app/batch.py → pipeline/panel.py`、`app/training.py → pipeline/trainer.py`、`app/testing.py → pipeline/tester.py`、`app/forecasting.py → forecasting/forecaster.py`、`models/inference.py → forecasting/strategies.py`、`models/calibration.py → forecasting/intervals.py`、`models/selector.py → evaluation/selector.py`、`evaluation/monitor.py → monitoring/monitor.py`；`app/results.py` 拆为 `artifacts/paths.py`（RunArtifacts/路径构建）+ `artifacts/writers.py`（落盘原语）；`app/` 目录删除
+- 行为：零变化（纯迁移，monitor.py 相对导入 `.metrics` 改绝对导入 `evaluation.metrics`，逻辑无改动）
+- 验证：`env -u PYTHONPATH .venv/bin/python -m pytest tests/ -q` 192 passed（exit=0）；CLI smoke 3 条全通过（naive 主链 / EDA-only / backtest_n_jobs=2+monitor）
+- 文档同步：AGENTS.md 命名空间与 Pyright 范围、README 目录树、docs/monitoring.md 入口路径；docs/LOG.md 历史记录不回改
+- 后续：P2 拆 stages 纯函数；P3 多模型单 run；P4 面板并行；P5 forward 快速路径；P6 区间组件化（NaN→RAISE 行为变更需再次确认）
+
+
+## 2026-09-29 P2 拆分 stages 纯函数层
+
+- 动因：ModelApp 的 train/test/forecast 三个方法计算与落盘交织，无法被面板并行（P4）和多模型单 run（P3）复用
+- 变更：新增 `pipeline/stages.py`——`run_train_stage`/`run_test_stage`/`run_forecast_stage` 三个纯计算函数 + `PrepareResult`（自 runner 移入，契约层归属）+ `new_processor_from_config`（自 runner._new_processor 下沉并委托）；runner 的三个阶段方法改为"调 stage → 落盘"，不再直接组装 Trainer/Tester/Forecaster
+- 行为：零变化。区间路径的 forecast_df 组装（step/timestamp/三列）与 NaN 打标语义（区间路径 last_nan_filled=0）逐项对照原实现保持
+- 验证：`env -u PYTHONPATH .venv/bin/python -m pytest tests/ -q` 192 passed exit=0；CLI smoke：naive 主链 exit=0；conformal 区间路径（hist-120 alpha=0.2 n_windows=8）exit=0，forecast.csv 含 yhat/yhat_lower/yhat_upper 三列数值正常
+- 过程记录：alpha=0.05+n_windows=8 的区间失败为既有校验（rank>n_windows，HEAD 即有），非 P2 回归，已用 git show HEAD:models/calibration.py 核实
+- 后续：P3 多模型单 run（复用 stages 循环）；P4 面板并行（stages 无副作用可分片）；P5 forward 快速路径；P6 区间组件化
+
+## 2026-09-29 P3 多模型单 run
+
+- 动因：一次 run 只能跑一个模型，多模型对比依赖 66 个 shell 各自完整跑一遍（重复加载/预处理/EDA）；auto_select 与主链路存在平行回测实现
+- 变更：`AppConfig.model_names` + `resolved_model_names()/is_multi_model()`（config/default.py）；CLI `--model_names` CSV 解析（run.py）；runner 新增 `_run_multi_model`（数据准备一次、逐模型重建 artifacts 跑三阶段、逐模型 run_summary）+ `_write_model_comparison`（model_comparison.csv）+ `_select_best_from_comparison`（多模型 auto_select 消费对比表）；`ModelApp.__init__` 归一化 model_names→model_name（单元素也同步，修 artifacts 与实际模型不一致缺口）
+- 行为：单模型路径零变化；auto_select 单模型模式语义不变
+- 验证：全量 pytest 196 passed exit=0（新增 tests/test_multi_model.py 4 例：去重回退/独立产物/comparison+选优/单模型不进多模型路径）；CLI smoke：`--model_names naive,seasonal_naive --auto_select true` exit=0，EDA 仅 1 次，两模型独立 experiment_path，comparison 表 2 行，选优 naive(mae)
+- 已知边界：comparison 依赖各模型 test_summary.json（test 阶段失败时该模型不进对比表并记 test_error）；auto_select 多模型选优失败记 auto_select_error 不中断
+
+## 2026-09-29 P4 面板容器与任务级并行
+
+- 动因：run_batch 双重串行循环 + 每任务写 CSV 再读回（文件系统模拟内存数据结构），无并行
+- 变更：`pipeline/panel.py` 重写——`SeriesPanel`（groupby 切片容器）+ `_build_task_configs`/`_execute_task`/`_collect_task_outputs`（先局部收集再发布，保留旧"失败任务不贡献部分产物"语义）+ `batch_n_jobs` 进程池分片；`DataLoader` 增 `data_frame`/`future_exog_frame` 内存直通（与 path 互斥，共用同一清洗/质检链）；`ModelApp` 构造器增帧注入参数；config 增 `batch_n_jobs`（默认 1）+ CLI `--batch_n_jobs`
+- 关键修复：child.data_path 置 None 后 `_resolve_data_name` 退化 demo_series 导致所有任务共享 experiment_path 互相覆盖（测试当场抓到）→ child.results_data_name 显式指定序列级名称；`_collect_task_outputs` 收集失败回滚该任务已发布帧（local_frames 记录 + remove）
+- 行为：batch_n_jobs=1 与旧版语义逐项一致；>1 为新并行能力
+- 验证：全量 pytest 197 passed exit=0（含新增 test_batch_parallel_matches_serial_results：串行/并行 assert_frame_equal 一致）；CLI smoke：3 序列×2 模型 batch_n_jobs=2 exit=0，6 任务 0 失败，18 行预测，series/model 标签齐全
+
+## 2026-09-29 P5 forward 快速路径
+
+- 动因：direct/recursive 每步全量重拟合（auto_arima 跑 5 步 direct = 5 次完整阶数搜索）；statsforecast 的 forecast/forward 双路径分离思路
+- 变更：`forecasting/strategies.py` 新增 `_validate_update_path`（策略/能力/外生三重门禁，进入路径前 RAISE）与 `_recursive_with_update`（首步 fit + 后续 update 滤波 + 预测值追加历史）；`run_point_inference` 增 `use_update` 参数；`Forecaster`/`run_forecast_stage`/CLI 逐层透传 `forecast_use_update`（config 默认 false）
+- 行为：默认零变化（use_update=false 走旧路径）；开启后数值与旧路径首步逐值一致、后续步接近（滤波 vs 重估计的预期差异）
+- 验证：全量 pytest 202 passed exit=0（新增 tests/test_forward_update.py 5 例：三重门禁 RAISE / 首步逐值一致+整体相对差<15% / fit 计数=1 且 update 计数=horizon-1）；CLI smoke：arima recursive + forecast_use_update=true exit=0，5 步预测数值连续合理
+- 已知边界：update 路径不支持未来外生（门禁拒绝）；区间路径与 update 正交（interval_method 独立生效）
+
+## 2026-09-29 P6 区间组件化（NaN→RAISE 行为变更）
+
+- 动因：区间逻辑散在 strategies.py（native 分支）/intervals.py（conformal 校准）/各模型 predict_with_intervals 三处；「策略 × 区间方法」组合矩阵以 if/else 形式散在编排层；native×recursive 以 NaN 列静默暴露失败
+- 变更：`forecasting/intervals.py` 新增 `IntervalSpec`（frozen dataclass，构造即校验）与 `resolve_interval_plan`（none 任意策略放行；native 在 recursive/dirrec 拒绝并给 conformal 替代；conformal 任意策略放行）；`predict_frame` 接受 spec 参数并在入口裁决；`run_interval_inference` 源头删除 NaN 分支改为 RAISE；`config.validate()` 前置拦截（运行前而非推理时失败）
+- 行为变更（已确认）：native×recursive/dirrec 从「NaN 区间列」改为显式失败——符合项目「显式失败优于静默打标」哲学，失败信息含可行替代
+- 验证：全量 pytest 207 passed exit=0（新增 tests/test_interval_component.py 5 例：spec 构造校验/裁决矩阵/推理层与 config 层双 RAISE/conformal×recursive 正常）；CLI smoke：native×recursive exit=1 且错误信息指向 conformal；conformal×recursive exit=0 区间三列数值正常
+- AGENTS §7 对应已知限制条目已更新为已解决状态
+
+## 2026-09-29 架构重构 P1–P6 全部完成
+
+- 六阶段：P1 包重组（app/ 拆为 pipeline/forecasting/artifacts/monitoring）→ P2 stages 纯函数层 → P3 多模型单 run → P4 面板容器+进程池并行 → P5 forward 快速路径 → P6 区间组件化
+- 测试基线：136 → 207 passed；全部改动 staged 待 review
+
+## 2026-09-29 可选后续落地：场景级合并脚本 + 区间边界文档
+
+### 后续 1：66 shell 收敛（部分）
+- 新增 3 个场景级合并脚本 `run_models_all.sh`（wind/route_A/route_B）：一次 run 跑完 21 个基座模型，每模型独立超参经 `--batch_models '{model: params}'` 传入
+- 支撑改动：runner 多模型循环消费 batch_models 作为每模型参数源（`per_model_params` 覆盖 + 未覆盖回退空参）；config.validate 放开「batch_models 必须搭配 series_id_col」（双语义：面板 vs 单表多模型）
+- 修正过程：首版提取脚本 glob 覆盖导致变体参数混入基座（arima 变成 [2,1,0] 等）——改为白名单基座脚本逐一提取并核对关键模型参数
+- 不合并项：neuralprophet（holidays 库兼容损坏，import 即 TypeError）、7 类参数变体（detrend/order/周期轴不同）、run_all.sh 的 16 配置基准（引用变体脚本）
+- 验证：wind 合并脚本实跑 exit=0（21 模型全通过，1 分钟内）；wind 沿用 do_test=false 历史设定故无 comparison 表（脚本注释说明）；route_A 实跑验证进行中（do_test=true 应产 comparison 表）；全量 pytest 208 passed（新增 batch_models 参数生效回归测试）
+- 旧 66 shell 保留不删（对比基准与单模型复跑入口）
+
+### 后续 2：limitations.md 区间边界
+- 新增三条：native×recursive/dirrec 已改 RAISE（双重拦截）；Forecaster.forecast_with_intervals 底层接口同样 RAISE；conformal×recursive 校准半径随步长递增属预期
+- 删除旧 NaN 行为条目（已被取代）
+- 修复（route_A 实跑暴露）：P3 的 comparison 事后按 experiment_path 重建读 summary，但循环内 params 已随模型变化导致路径失配（只有最后 1 个模型进表）——改为 test 成功后当场读入内存字典，comparison/选优从内存取；重跑 route_A 验证 21 模型全进表且按 mae 排序（rar 298 最优 / garch 1873 垫底，量级与模型特性吻合）
+- 最终基线：全量 pytest 208 passed exit=0；route_A 合并脚本 21 模型 exit=0 产完整 comparison

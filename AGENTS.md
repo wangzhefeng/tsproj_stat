@@ -4,7 +4,7 @@
 
 ## 1. 主线边界
 
-- 主线目录命名空间：`app / config / models / evaluation / data_provider / features / eda / utils / tests`
+- 主线目录命名空间：`pipeline / forecasting / artifacts / monitoring / config / models / evaluation / data_provider / features / eda / utils / tests`
 - 统一入口：`run.py` 为唯一 CLI 入口
 - 当前仓库以“统计模型时间序列预测 + EDA + 可逆预处理”为主线，不在主线内的实验性内容不得直接混入上述目录
 - 历史迁移目录（`todo_models_source/`、`todo_ts_eda/`、`models/models_todo/`、`eda/eda_todo/`、`src/`）均已清理；后续若新增迁移/过渡目录，必须先定义生命周期与清理时机
@@ -32,12 +32,18 @@
 - 若处理趋势项、季节项或分解，必须通过 `DataProcessor` 主线完成，不允许让 ARIMA 类模型各自再维护一套分解/重组逻辑
 - MSTL 使用 `seasonal_periods` 列表、仅加法分解；每个训练/校准窗口必须长于最大周期的两倍，不允许静默删周期
 - Conformal 区间以实际策略的逐步原始尺度误差校准；每窗独立预处理，不使用最终测试段或原点外数据。校准样本不足或有限样本置信水平不可达时显式失败
+- 区间方法组件化（P6）：`forecasting/intervals.py` 的 `IntervalSpec`（method/alpha/conformal_n_windows）+ `resolve_interval_plan` 裁决「区间方法 × 策略」组合；`native × recursive/dirrec` 非法组合在 config.validate 与 predict_frame 入口双重 RAISE 并提示 conformal 替代，不再产出 NaN 区间列
 - 固定参数状态更新仅向支持的 ARIMA/SARIMA 家族开放，要求 native、串行、无预处理、无区间；`backtest_refit_every=0` 首窗拟合，N>0 每 N 窗拟合，中间用真实历史重新滤波
+- forward 快速路径（P5）：`forecast_use_update=true` 时 recursive 策略首步 fit、后续步固定参数 update 滤波（O(fit + h×filter) 替代 O(h×fit)）；门禁=策略必须 recursive + 模型 supports_update + 无未来外生，不满足即 RAISE；默认 false，旧逐步重拟合语义不变
 - `ETSModel` 作为统一指数平滑入口维护 `SES / DES / TES`，不得再平行拆出脚本式 `ses/des/tes` 入口
 - `prophet / tbats / neuralprophet` 统一归入 `models/model/extended_models.py` 维护；若依赖缺失或运行时不兼容，必须显式 fallback 或报可读错误
 - `bayesian_tmt` 名称沿用历史 registry，但当前只允许表示“实验性单序列贝叶斯滞后回归近似”；不得把旧 `BayesianTMT.py` 的矩阵分解算法混入现有单目标接口
 - CLI 配置统一经由 `config/AppConfig` 与 `run.py` 参数覆盖，不允许平行新增另一套入口参数体系
+- 多模型单 run：`--model_names a,b,c`（AppConfig.model_names，去重保序，未设置回退 [model_name] 兼容糖）；数据加载/聚合/预处理/EDA 只做一次，train/test/forecast 逐模型循环并各自写入独立 experiment_path；回测指标横向对比表归 `results/{data_name}/results_test/comparison/model_comparison.csv`；多模型模式下 `auto_select` 消费该对比表选优（r2 越大越好，其余越小越好），不再运行 AutoSelector 平行扫描回测
+- `batch_models` 双语义：`series_id_col` 非空 = 面板批量参数表；为空 = 单表多模型的每模型独立参数源（与 `model_names` 组合，runner 多模型循环按 `{model: params}` 覆盖全局 model_params）
+- 场景级合并脚本（P3 下游，2026-09-29）：`scripts/{wind_univariate,aidc_power_month/route_A,aidc_power_month/route_B}/run_models_all.sh` 各自一次 run 跑完 21 个基座模型（neuralprophet 环境损坏未纳入，原脚本保留）；参数变体对照（arima_110/210、ets_trend、sarima_D0、theta_p1、ar_detrend_*）参数轴不同，保留独立脚本；wind 版沿用 do_test=false 历史设定故不产 comparison 表
 - 面板批量入口仍为 run.py：`series_id_col` 和 `batch_models`，序列×模型逐任务隔离；分拆输入归 results_train/batch_inputs，批量 manifest/汇总归 results_forecast/batch。默认任务失败导致非零退出，容忍须显式 `batch_allow_failed=true` 并标注 survivor_bias
+- 面板执行形态（P4）：`pipeline/panel.py` 的 `SeriesPanel` 容器（长表 groupby 切片）+ 内存帧直通（`DataLoader(data_frame=...)`，`data_path` 与 `data_frame` 互斥）+ `batch_n_jobs`（1=串行，>1=ProcessPoolExecutor 按序列×模型任务分片并行）；batch_inputs 审计 CSV 仍写但计算不读回；每序列结果根 = `{data_stem}-series-{token}`（child.results_data_name 显式指定）
 - 多源数据主线约定：
   - `endog_cols` 表示历史内生协变量列，不包含 `target_col`
   - `exog_cols` 表示历史外生变量列
@@ -59,7 +65,7 @@
 - 仓库根目录不得产生 `.uv_cache` / `.pytest_cache` / `.mplconfig` 缓存目录：pytest 经 `pyproject.toml` addopts `-p no:cacheprovider` 从源头禁用缓存；matplotlib 默认用用户级 `~/.matplotlib`，不可写时回退系统临时目录（`utils/runtime_env.py`）
 - Python 基线：`3.12`（以 `.python-version` 与当前开发环境为准）
 - 默认验证基线：`.venv/bin/python -m pytest -q`
-- 类型检查使用 Pyright 与项目 `.venv`；dev extra 固定匹配 pandas 3.0 的 `pandas-stubs`，不可通过关闭诊断或批量 `Any` 消除错误。当前验收范围为 `app config data_provider models evaluation run.py`；第三方错误注解仅允许在已核实、具备数值回归测试的适配边界使用精确契约。
+- 类型检查使用 Pyright 与项目 `.venv`；dev extra 固定匹配 pandas 3.0 的 `pandas-stubs`，不可通过关闭诊断或批量 `Any` 消除错误。当前验收范围为 `pipeline forecasting artifacts monitoring config data_provider models evaluation run.py`；第三方错误注解仅允许在已核实、具备数值回归测试的适配边界使用精确契约。
 - CLI 烟雾验证基线（前缀均为 `.venv/bin/python`，MC/Hermes 会话加 `env -u PYTHONPATH`）：
   - `.venv/bin/python run.py --model_name naive --do_train true --do_test true --do_forecast true --history_size 60 --predict_horizon 5`
   - `.venv/bin/python run.py --do_eda true --do_train false --do_test false --do_forecast false`
@@ -126,8 +132,17 @@
 - `auto_select` 默认候选已收紧为 `stable` 模型，并按指标方向选择最优模型：`r2` 越大越好，其余误差指标越小越好
 - `models.stability.build_smoke_matrix()` 已提供 optional/experimental 模型 smoke matrix，状态固定为 `success / dependency_unavailable / fit_failed`
 - 主线当前仍只输出单目标 `yhat`，但 `train/test/forecast` 已可向模型透传 `X_hist` / `X_future`
-- forecast 阶段可通过 `monitor_enabled=true` 写入本地监控预测日志，并通过 `evaluation.monitor.ModelMonitor` 或 `run.py --monitor_actuals_path ...` 后续回填实际值和计算滚动指标
+- forecast 阶段可通过 `monitor_enabled=true` 写入本地监控预测日志，并通过 `monitoring.monitor.ModelMonitor` 或 `run.py --monitor_actuals_path ...` 后续回填实际值和计算滚动指标
 - `run_auto_arima.sh` 与 `run_sarima.sh` 当前默认采用偏快的日常脚本参数集，并支持终端回测进度输出
+
+### 架构分层（P1/P2，2026-09-29）
+
+- `pipeline/`：运行编排。`runner.py`（ModelApp 调度+落盘收口）、`stages.py`（run_train_stage / run_test_stage / run_forecast_stage 纯计算 + PrepareResult/TrainStageResult/ForecastStageResult 契约 + new_processor_from_config）、`trainer.py`/`tester.py`（阶段执行器）、`panel.py`（面板批量）
+- `forecasting/`：预测引擎。`strategies.py`（native/single_step/direct/recursive/dirrec 多步推理）、`intervals.py`（conformal/native 区间）、`forecaster.py`（Forecaster 组装）
+- `artifacts/`：产物层。`paths.py`（RunArtifacts/experiment_path/eda_path 构建与目录创建）、`writers.py`（write_json/dataframe_to_csv/model_info_payload/forecast_timestamps 落盘原语）
+- `monitoring/`：监控闭环（monitor.py，原 evaluation/monitor.py）
+- `evaluation/selector.py`：auto_select 选型（回测指标驱动）
+- stages 契约：内存进内存出，不 import Path、不写盘；落盘一律由 runner 收口
 
 ## 7. 当前已知问题
 
@@ -139,4 +154,4 @@
 - 已知限制（T18 逐项评估后记录，暂不影响主线正确性）：
   - 分解模式的未来趋势外推为常数（`_future_trend` 平推 `_last_trend`），长 horizon 下趋势项不再增长；需要趋势外推时请用 `detrend_method=linear`
   - `detrend_method=moving_average` 的趋势窗口复用 `denoise_window`（默认 3），跨职责参数耦合；需要独立趋势窗口时当前无单独参数
-  - `interval_method=native` 在 `recursive / dirrec` 下仍返回 NaN 区间；需策略一致区间时显式使用 `conformal`，并满足校准样本要求
+  - `interval_method=native` 在 `recursive / dirrec` 下已改为显式 RAISE（P6，2026-09-29）；需策略一致区间时显式使用 `conformal`，并满足校准样本要求

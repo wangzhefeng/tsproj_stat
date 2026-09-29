@@ -8,11 +8,11 @@ from typing import Callable
 import pandas as pd
 import numpy as np
 
-from models.inference import normalize_forecast_strategy, normalize_window_mode, run_point_inference
+from forecasting.strategies import normalize_forecast_strategy, normalize_window_mode, run_point_inference
 from .metrics import bias, mae, mape, max_error, mse, r2, rmse, smape
 from .metrics import coverage, interval_width, winkler_score
-from models.calibration import predict_frame
-from models.inference import checked_model_builder
+from forecasting.intervals import predict_frame
+from forecasting.strategies import checked_model_builder
 from models.base import BaseStatModel
 from data_provider.data_processor import DataProcessor
 from utils.log_util import logger

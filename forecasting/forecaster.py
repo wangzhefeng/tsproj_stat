@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from models.factory import ModelFactory
-from models.inference import normalize_forecast_strategy, run_interval_inference, run_point_inference
+from forecasting.strategies import normalize_forecast_strategy, run_interval_inference, run_point_inference
 
 import os
 from pathlib import Path
@@ -47,7 +47,7 @@ def _validate_forecast(
 class Forecaster:
     """预测阶段封装。
 
-    模型创建交给 ModelFactory，多步预测交给 models.inference；
+    模型创建交给 ModelFactory，多步预测交给 forecasting.strategies；
     本类只负责组装参数并做输出质量校验。
     """
 
@@ -58,12 +58,14 @@ class Forecaster:
         forecast_strategy: str | None = None,
         allow_nan_fill: bool = False,
         ignore_unsupported_inputs: bool = False,
+        use_update: bool = False,
     ):
         self.model_name = model_name
         self.model_params = model_params or {}
         self.forecast_strategy = normalize_forecast_strategy(forecast_strategy)
         self.allow_nan_fill = allow_nan_fill
         self.ignore_unsupported_inputs = ignore_unsupported_inputs
+        self.use_update = use_update
         # 最近一次预测中被填充的 NaN 数量（未填充为 0），供 forecast_summary 打标。
         self.last_nan_filled = 0
         self.factory = ModelFactory()
@@ -83,6 +85,7 @@ class Forecaster:
             forecast_strategy=self.forecast_strategy,
             X_hist=X_hist,
             X_future=X_future,
+            use_update=self.use_update,
         )
         self.last_nan_filled = int(yhat.isna().sum()) if self.allow_nan_fill else 0
         return _validate_forecast(yhat, horizon, self.model_name, allow_nan_fill=self.allow_nan_fill)

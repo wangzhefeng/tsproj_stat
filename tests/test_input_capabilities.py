@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.forecasting import Forecaster
-from models.selector import AutoSelector
+from forecasting.forecaster import Forecaster
+from evaluation.selector import AutoSelector
 
 
 def test_history_covariates_require_capability_or_explicit_ignore():

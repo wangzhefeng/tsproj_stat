@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import argparse
@@ -7,8 +7,8 @@ from typing import Any
 
 from config import AppConfig, ensure_output_dirs
 from utils.random_seed import set_seed
-from app import ModelApp
-from evaluation.monitor import run_monitor_actuals_backfill
+from pipeline import ModelApp
+from monitoring.monitor import run_monitor_actuals_backfill
 from data_provider.data_aggregate import resolve_config_aggregation
 from utils.log_util import logger
 from utils.runtime_env import ensure_mpl_config_dir
@@ -108,6 +108,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.batch_models = _parse_model_params(args.batch_models)
     if getattr(args, "batch_allow_failed", None) is not None:
         cfg.batch_allow_failed = _parse_bool(args.batch_allow_failed)
+    if getattr(args, "batch_n_jobs", None) is not None:
+        cfg.batch_n_jobs = args.batch_n_jobs
     if getattr(args, "time_col", None) is not None:
         cfg.time_col = args.time_col
     if getattr(args, "target_col", None) is not None:
@@ -140,6 +142,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.aggregation_output_path = args.aggregation_output_path
     if getattr(args, "model_name", None) is not None:
         cfg.model_name = args.model_name
+    if getattr(args, "model_names", None) is not None:
+        cfg.model_names = _parse_csv_list(args.model_names)
     if getattr(args, "model_params", None) is not None:
         cfg.model_params = _parse_model_params(args.model_params)
     if getattr(args, "forecast_strategy", None) is not None:
@@ -258,6 +262,8 @@ def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
         cfg.interval_method = args.interval_method
     if getattr(args, "conformal_n_windows", None) is not None:
         cfg.conformal_n_windows = args.conformal_n_windows
+    if getattr(args, "forecast_use_update", None) is not None:
+        cfg.forecast_use_update = _parse_bool(args.forecast_use_update)
     if getattr(args, "forecast_allow_nan_fill", None) is not None:
         cfg.forecast_allow_nan_fill = _parse_bool(args.forecast_allow_nan_fill)
     if getattr(args, "monitor_enabled", None) is not None:
@@ -315,9 +321,11 @@ def parse_args() -> AppConfig:
     parser.add_argument("--aggregation_output_path", type=str, default=None)
     # 模型参数：model_params 使用 JSON 对象文本，避免为每类模型扩散专用 CLI 字段。
     parser.add_argument("--model_name", type=str, default=None)
+    parser.add_argument("--model_names", type=str, default=None, help="Comma-separated model list for single-run multi-model comparison")
     parser.add_argument("--series_id_col", type=str, default=None)
     parser.add_argument("--batch_models", type=str, default=None)
     parser.add_argument("--batch_allow_failed", default=None)
+    parser.add_argument("--batch_n_jobs", type=int, default=None)
     parser.add_argument("--model_params", type=str, default=None)
     parser.add_argument("--forecast_strategy", type=str, default=None)
     parser.add_argument("--ignore_unsupported_inputs", default=None)
@@ -387,7 +395,8 @@ def parse_args() -> AppConfig:
     parser.add_argument("--interval_alpha", type=float, default=None)
     parser.add_argument("--interval_method", choices=["native", "conformal"], default=None)
     parser.add_argument("--conformal_n_windows", type=int, default=None)
-    parser.add_argument("--forecast_allow_nan_fill", default=None)                # 默认 false：预测含 NaN 即失败
+    parser.add_argument("--forecast_allow_nan_fill", default=None)
+    parser.add_argument("--forecast_use_update", default=None)                # recursive 前向快速路径：首步 fit + 固定参数 update（默认 false）
     # 本地监控
     parser.add_argument("--monitor_enabled", default=None)
     parser.add_argument("--monitor_window", type=int, default=None)
@@ -446,7 +455,7 @@ def main() -> None:
     logger.info("Loading config...")
     cfg = parse_args()
     if cfg.series_id_col:
-        from app.batch import run_batch
+        from pipeline.panel import run_batch
         result = run_batch(cfg)
         logger.info(f"Batch result: {result}")
         return

@@ -4,7 +4,7 @@ import pandas as pd
 
 from models.factory import ModelFactory
 from models.model.fallbacks import NaiveModel
-from models.inference import checked_model_builder
+from forecasting.strategies import checked_model_builder
 
 import os
 from pathlib import Path
