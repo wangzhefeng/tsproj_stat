@@ -41,6 +41,8 @@
 
 ## 验证记录
 
+> 2026-09-30 起原始产物目录 `results/statsforecast_validation/` 已随 results 清空移除；关键验收报告（final_validation_report.json、type-review.json、typecheck-final.json、pytest-final.xml、pytest-typecheck.xml）备份于本地 `.hermes/plans/statsforecast_validation_evidence/`（gitignored），下文路径以该备份为准。
+
 - 实施前基线：138 项通过；已有 statsmodels ConvergenceWarning。
 - 实施前探针：AutoETS horizon=8，direct 拟合 8 次、区间拟合 16 次；与原生一次拟合点预测最大差 0.0。
 

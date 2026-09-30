@@ -7,7 +7,7 @@
 ## 1. 目的与范围
 
 - `run_eda.sh` 跑完后，EDA 产物是结构化的 `eda_summary.json` / `eda_diagnostics.csv` / `eda_recommendations.json` / `plots/`。`EDA_REPORT.md` 把这些**叙述化**成一份可读的全面分析报告。
-- 范本：`results/A_Loads_1day_20251001_20260708/results_eda/.../EDA_REPORT.md`（手工撰写、已校验准确）——它是结构与质量目标。
+- 范本：历史手工撰写、已校验准确的 `EDA_REPORT.md`（2026-09-30 results 清空时随产物移除）——结构与质量目标仍以八段结构为准。
 - 自动报告是**草稿**：数字与统计判读由生成器保证正确，但命名、措辞、领域名词仍建议人工/Agent 精修。
 
 ---
