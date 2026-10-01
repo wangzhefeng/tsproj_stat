@@ -22,9 +22,11 @@
 | 已知限制 | [limitations.md](limitations.md) | 已知问题、技术债、清理时机 |
 | EDA 报告精修 | [eda_report_guide.md](eda_report_guide.md) | EDA_REPORT.md 生成原理与精修指南 |
 | 实施记录 | [statsforecast-extension.md](statsforecast-extension.md) | StatsForecast 扩展实施与验收记录 |
+| 数据层重构 | [data-provider-refactor.md](data-provider-refactor.md) | 场景迁移、通用能力拆分与验收记录 |
+| 数据层职责 | [data-architecture.md](data-architecture.md) | 子包边界、处理顺序、旧接口迁移表 |
 
 ## 维护规则
 
-- 修改主线功能（`app / config / models / evaluation / data_provider / features / eda / utils`）时，同步更新上表中受影响的主题文档；不确定改哪篇时更新 [LOG.md](LOG.md)。
+- 修改主线功能（`pipeline / forecasting / artifacts / monitoring / config / models / evaluation / data_provider / features / eda / utils`）时，同步更新上表中受影响的主题文档；不确定改哪篇时更新 [LOG.md](LOG.md)。
 - 新增文档统一放 `docs/`，先在本索引登记再写内容；单文件原则 ≤60 行，超了就按主题再拆。
 - 文档间用相对链接互引，不复制内容；同一事实只在一处维护，其余地方链接过去。

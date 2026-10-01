@@ -5,7 +5,7 @@
 ## 1. 主线边界
 
 - 主线目录命名空间：`pipeline / forecasting / artifacts / monitoring / config / models / evaluation / data_provider / features / eda / utils / tests`
-- 统一入口：`run.py` 为唯一 CLI 入口
+- 统一建模 CLI 入口：`run.py`；`scripts/<数据集>/` 可提供调用通用模块的数据准备入口，不另建模型参数体系
 - 当前仓库以“统计模型时间序列预测 + EDA + 可逆预处理”为主线，不在主线内的实验性内容不得直接混入上述目录
 - 历史迁移目录（`todo_models_source/`、`todo_ts_eda/`、`models/models_todo/`、`eda/eda_todo/`、`src/`）均已清理；后续若新增迁移/过渡目录，必须先定义生命周期与清理时机
 
@@ -22,14 +22,18 @@
 - 轻量统计基线主线模型名约定为 `seasonal_naive / historic_average / croston`；自动统计模型扩展当前约定为 `dynamic_theta / auto_ets / auto_theta`
 - 新增 EDA 能力必须接入 `eda/pipeline.py`，并输出结构化结果与可追踪产物路径
 - EDA 属于数据项目级流程；已接入数据必须通过对应的 `scripts/**/run_eda.sh` 独立执行，模型 shell 必须显式保持 `--do_eda false`，不得重复携带其他 `--eda_*` 参数
-- 频率聚合统一由 `data_provider/data_aggregate.py` 在 DataLoader 前执行；聚合会生成派生 CSV 与审计 JSON，不得混入可逆 `DataProcessor`
-- 趋势去除、去噪、逆变换等可逆预处理统一放在 `data_provider/data_processor.py`
+- 频率聚合由 `data_provider/resampling/service.py` 在 DataLoader 前执行；应用配置适配归 `pipeline/data_preparation.py`，聚合生成派生 CSV 与审计 JSON，不混入目标变换
+- 数据集路径、日期、路由与任务表只放 `scripts/<数据集>/`；AIDC 独立准备入口为 `scripts/aidc_power_month/prepare_data.py`，不得复制通用聚合实现
+- 数据层按 `loading / cleaning / quality / resampling / target_transforms` 分包：接入、结构规范化与缺失修复、质量检查、频率聚合、目标变换；窗口/未来时间对齐归 pipeline，模型输入适配归 models/contracts
+- Loader 只规范化字段/时间/数值，保留缺失与时间缺口；max_missing_ratio 对修复前目标生效。训练缺失仅在已切出的历史窗口内线性修复，评估真值不填；全缺列失败。离线聚合双向补缺仍为非 as-of，审计必须披露
+- EDA 只消费显式有限、等频数据视图，不隐式补时间轴或插值；不满足时明确失败。features 负责派生列，不负责目标缩放或逆变换
+- `target_transforms/TargetTransformer` 持有去噪/趋势/分解/目标缩放状态；顺序为去噪→趋势或分解→缩放，逆序还原尺度与分量。去噪不可逆；train/test/forecast/校准共享同配窗口内变换器
 - forecast 原点约定：原点显式定义为数据末尾，history 窗口 = 尾部 `history_size` 行；必须先切分再在 history 窗口内 `fit_transform`（预处理不得接触窗口外数据）；尾部不再预留 horizon 行，历史评估统一由 `do_test` rolling backtest 承担
 - 回测窗口不变量：`backtest_train_size` 未显式设置时默认等于 `history_size`（回测与 final fit 同窗口）；解析优先级为 `backtest_train_size` > 兼容旧字段 `backtest_initial_train_size` > `history_size`
 - 显式失败策略约定：回测窗口失败与 forecast 输出 NaN 默认 RAISE；容忍须显式开关（`backtest_allow_failed_windows` / `forecast_allow_nan_fill`），且产物必须打标（`survivor_bias` / `forecast_nan_filled`）
-- checkpoint 语义约定：train 阶段的 `model.pkl`/`model_meta.json` 是归档产物；forecast/test 按策略在推理时拟合，不消费 checkpoint；native 一次拟合，兼容策略按步拟合。`--do_train false --do_forecast true` 仍是合法原点即时训练用法
+- checkpoint 语义约定：train 阶段的 `model.pkl`/`model_meta.json` 与 `target_transformer.pkl` 是归档产物；模型元数据标明输出尺度与变换器路径，独立回读时按 enabled 还原。forecast/test 按策略在推理时拟合，不消费 checkpoint；native 一次拟合，兼容策略按步拟合。`--do_train false --do_forecast true` 仍是合法原点即时训练用法
 - 去噪主线约定当前只保留轻量方法：`moving_average / moving_median`；`LOWESS / Kalman / OnOff` 不得直接混入主线
-- 若处理趋势项、季节项或分解，必须通过 `DataProcessor` 主线完成，不允许让 ARIMA 类模型各自再维护一套分解/重组逻辑
+- 若处理趋势项、季节项或分解，必须通过 `TargetTransformer` 主线完成，不允许让 ARIMA 类模型各自再维护一套分解/重组逻辑
 - MSTL 使用 `seasonal_periods` 列表、仅加法分解；每个训练/校准窗口必须长于最大周期的两倍，不允许静默删周期
 - Conformal 区间以实际策略的逐步原始尺度误差校准；每窗独立预处理，不使用最终测试段或原点外数据。校准样本不足或有限样本置信水平不可达时显式失败
 - 区间方法组件化（P6）：`forecasting/intervals.py` 的 `IntervalSpec`（method/alpha/conformal_n_windows）+ `resolve_interval_plan` 裁决「区间方法 × 策略」组合；`native × recursive/dirrec` 非法组合在 config.validate 与 predict_frame 入口双重 RAISE 并提示 conformal 替代，不再产出 NaN 区间列
@@ -45,6 +49,8 @@
 - 多模型单 run：`--model_names a,b,c`（AppConfig.model_names，去重保序，未设置回退 [model_name] 兼容糖）；数据加载/聚合/预处理/EDA 只做一次，train/test/forecast 逐模型循环并各自写入独立 experiment_path；回测指标横向对比表归 `results/{data_name}/results_test/comparison/model_comparison.csv`；多模型模式下 `auto_select` 消费该对比表选优（r2 越大越好，其余越小越好），不再运行 AutoSelector 平行扫描回测
 - `batch_models` 双语义：`series_id_col` 非空 = 面板批量参数表；为空 = 单表多模型的每模型独立参数源（与 `model_names` 组合，runner 多模型循环按 `{model: params}` 覆盖全局 model_params）
 - 场景级合并脚本（P3 下游，2026-09-29）：`scripts/{wind_univariate,aidc_power_month/route_A,aidc_power_month/route_B}/run_models_all.sh` 各自一次 run 跑完 21 个基座模型（neuralprophet 环境损坏未纳入，原脚本保留）；2026-09-30 起显式 `--forecast_strategy native`（消除 h 倍逐步重拟合放大；direct/native 数值等价性见 statsforecast-extension.md P1.1 探针）——全局默认仍为 direct，默认化需单独审批；参数变体对照（arima_110/210、ets_trend、sarima_D0、theta_p1、ar_detrend_*）参数轴不同，保留独立脚本；wind 版沿用 do_test=false 历史设定故不产 comparison 表
+- AIDC 脚本模板化（2026-09-30）：route_A/route_B 的 62 个脚本为薄包装，仅设 `ROUTE=A|B` 并 exec 共用体——单模型变体经 `scripts/aidc_power_month/variants/<name>.sh`（模型名/超参/detrend/backtest_verbose/LOG_NAME 覆盖）+ `_common.sh` 的 `run_single_model`；`run_eda.sh`/`run_models_all.sh` 分别走 `_run_eda.sh`/`_run_models_all.sh`。数据路径、派生路径与 `results_data_name` 由 ROUTE 派生，新增变体只改 `variants/` 一处
+- 通用输入形状工具归 `models/contracts/inputs.py`，预测长度校验归 `models/contracts/validation.py`，forecasting/models 共享唯一实现；区间列名协议（`interval_bound_columns`/`iter_bound_pairs`）唯一归属 `forecasting/intervals.py`
 - 面板批量入口仍为 run.py：`series_id_col` 和 `batch_models`，序列×模型逐任务隔离；分拆输入归 results_train/batch_inputs，批量 manifest/汇总归 results_forecast/batch。默认任务失败导致非零退出，容忍须显式 `batch_allow_failed=true` 并标注 survivor_bias
 - 面板执行形态（P4）：`pipeline/panel.py` 的 `SeriesPanel` 容器（长表 groupby 切片）+ 内存帧直通（`DataLoader(data_frame=...)`，`data_path` 与 `data_frame` 互斥）+ `batch_n_jobs`（1=串行，>1=ProcessPoolExecutor 按序列×模型任务分片并行）；batch_inputs 审计 CSV 仍写但计算不读回；每序列结果根 = `{data_stem}-series-{token}`（child.results_data_name 显式指定）
 - 多源数据主线约定：
@@ -113,10 +119,10 @@
 - 统计模型当前按 `models/model/` 家族模块维护，fallback 和公共 helper 已独立；registry 位于 `models/registry.py`
 - EDA 子系统已并入主流程，入口为 `eda/pipeline.py`，产出结构化摘要、诊断表、图表路径与 `eda_recommendations.json/csv` 建模建议
 - EDA 运行后由 `eda/report_generator.py` 自动生成中文叙述报告 `EDA_REPORT.md`（8 段，复用 recommendations 不重算阈值）；默认 `eda_generate_report=true`，手写报告（无 auto-generated marker）默认保留跳过，`--eda_report_overwrite true` 强制覆盖；精修参考 `docs/eda_report_guide.md`
-- wind、AIDC A 日峰和 AIDC B 日峰已提供独立 `run_eda.sh`；66 个模型 shell 统一关闭 EDA，避免同一数据随模型运行重复分析
-- 数据预处理已集中到 `data_provider/data_processor.py`，支持去噪、去趋势与预测逆变换
-- `DataProcessor` 已补充自动季节周期推断与 `seasonal_decompose / stl` 可逆分解；主线可对 `trend_resid / resid_only` 序列建模后再重组趋势项与季节项
-- `DataProcessor` 当前去噪策略统一为 `denoise_method=none|moving_average|moving_median`；`denoise_enabled` 仅作为兼容旧 CLI 的开关
+- wind、AIDC A 日峰和 AIDC B 日峰已提供独立 `run_eda.sh`；模型 shell 统一关闭 EDA，避免同一数据随模型运行重复分析（AIDC 两路脚本 2026-09-30 起为 ROUTE 薄包装，见 §2 模板化条目）
+- 目标变换集中到 `data_provider/target_transforms/`，支持去噪、去趋势、分解、目标缩放与逆变换；职责和接口迁移见 `docs/data-architecture.md`
+- `TargetTransformer` 已补充自动季节周期推断与 `seasonal_decompose / stl` 可逆分解；主线可对 `trend_resid / resid_only` 序列建模后再重组趋势项与季节项
+- `TargetTransformer` 当前去噪策略统一为 `denoise_method=none|moving_average|moving_median`；`denoise_enabled` 仅作为兼容旧 CLI 的开关
 - `DataLoader` 已支持多源输入：历史内生/外生列保留、独立未来外生文件加载与最小校验
 - `DataLoader` 数据质量报告已补充清洗审计字段，包括原始/清洗后样本数、插值数量、补齐时间戳数量与 dropna 行数
 - `BayesianTMT` / `RAR` 已完成非占位实现，并纳入测试覆盖

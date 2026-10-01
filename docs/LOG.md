@@ -641,3 +641,25 @@
 - 验证：pytest 244 passed / 42 warnings（新增 test_simulate.py 6 例：形状/锚定/精确分位/种子确定性/参数拒绝/历史不足）；CLI simulate 端到端（simulated_paths+quantiles 落盘、嵌套单调）；Pyright 0 errors；compileall/git diff --check 通过
 - 未做（待审批）：forecast_strategy 全局默认 direct→native 是语义变更，需用户单独批准
 - 2026-09-30：经用户授权清空 `results/`（102M：demo_series/panel_smoke/wind_dataset/aidc_power_month 含 _archive/statsforecast_validation）与 `logs/`（22M：service 日志/eda/multi_model/runner/None）。删除前核实：无进程持有 logs 文件、最后写入 16 小时前（非活跃批次）；statsforecast_validation 的 5 份关键验收报告（final_validation_report/type-review/typecheck-final/pytest-final.xml/pytest-typecheck.xml，84K）备份至本地 `.hermes/plans/statsforecast_validation_evidence/`（gitignored）。docs/statsforecast-extension.md 与 docs/eda_report_guide.md 中指向已删产物的引用同步改为备份位置说明。验证：清空后 naive CLI smoke 通过（exit 0，产物正常落 results/demo_series，复验后已删）；git 工作区 0 改动（results/logs 均 gitignore）。
+
+## 2026-09-30 数据层场景迁移与通用能力重构
+
+- 2026-09-30 数据层通用能力重构（用户批准）：AIDC 独立准备入口迁至 `scripts/aidc_power_month/prepare_data.py`，移除 `data_provider/data_aggregate_only.py` 复制实现；内存聚合提取为 `aggregation.py`，质检提取为 `data_quality.py`，周期/去噪/分解提取至 `preprocessing/`；CSV/内存/demo 统一清洗质检。公共 DataLoader/DataProcessor/周期推断接口与算法语义保留，旧缓存只补缺失审计披露、不改写 CSV。验收：全量 pytest 253 passed / 42 warnings；Pyright 0 errors / 0 warnings；81 组旧/新预处理精确相同；A/B 全部六份真实聚合 CSV 逐字节相同且重复运行复用；正式数据目录 20 个文件哈希不变；naive 训练/20 窗回测/5 步预测/归档回读数值及 EDA-only 产物验证通过；git diff --check 通过。文档漂移：索引仍使用已迁移的 app 命名空间，已改为当前分层。剩余限制与完整记录见 [数据层重构](data-provider-refactor.md)；未提交或推送。
+
+## 2026-09-30 全模块代码审计与四批次清理（MC 执行，用户批准）
+
+- 范围：artifacts/config/data_provider/eda/evaluation/features/forecasting/models/monitoring/pipeline/utils + run.py + scripts/aidc_power_month
+- 批次 A（纯删除）：删 `artifacts/writers.py::dataclass_to_dict`（零调用）、`BaseStatModel.forecast()`（零调用兼容别名）、`ModelMonitor.check_degradation()`（从未接线的休眠 API）、`utils/demo_data.py` 与 `utils/log_util.py` 的 `__main__` 手调残留、run.py 的 4 个 `# TODO` 注释与英文草稿注释；清除 7 个文件的 UTF-8 BOM（config/__init__、data_provider/__init__、data_loader、eda/pipeline、features/×2、models/factory），并统一 4 个 CRLF 文件为 LF
+- 批次 B（重复合一）：`validate_horizon` 三处定义（data_transfer/fallbacks/strategies，严格度不一）统一到 `data_provider/data_transfer.py` 严格版（拒绝 bool/非正数）；`_iter_bound_pairs`（strategies）与 `_iter_interval_pairs`（backtest）逐字节重复，归并为 `forecasting/intervals.py::iter_bound_pairs`（区间列名协议唯一归属）；`_preserve_univariate_series`/`_resolve_freq` 双份实现归并为 data_transfer 的 `preserve_univariate_series`/`resolve_series_freq`；`artifacts/paths.py` 的 `_path_token`/`_resolve_data_name` 转公开（`path_token`/`resolve_data_name`），`monitor.run_monitor_actuals_backfill` 改为复用（顺带补上原内联版缺失的非法路径拒绝），panel.py 不再引用私有名
+- 批次 C（注释补全）：约 40 个文件补模块 docstring，公共 API（BaseStatModel 抽象方法、metrics 八指标、Trainer/Tester/Forecaster/SeriesPanel/AutoSelector 等）补 docstring；config/loader.py 与 utils/log_util.py 英文 docstring 统一为中文；25 个模型类补类级 docstring（fit/predict 契约归 BaseStatModel 文档，不逐方法重复）；39 个纯注释文件经 AST 去 docstring 等价检查全部 IDENTICAL
+- 批次 D（结构抽象）：`run.py::_apply_overrides` 从 214 行手写 getattr 链改为 dataclasses.fields 驱动 + `_parse_field_value` 分派表（17 行）；`utils/log_util.py` 文件日志改懒挂载（LOG_NAME 存在才在 import/configure_logging 时创建 logs/{LOG_NAME}/，消除 logs/None 与 import 顺序竞态），删除 runner/trainer/forecaster/stages/selector 五处 `os.environ.setdefault('LOG_NAME')` 前导 hack；AIDC 62 个 route 脚本模板化（`_common.sh` + `variants/`×29 + `_run_eda.sh`/`_run_models_all.sh` + 薄包装）
+- 验证：全量 pytest 253 passed / 42 warnings（基线一致）；Pyright（AGENTS §3 范围）0 errors 0 warnings；compileall 通过；脚本模板化经 fake-repo 拦截验证——新旧 62 对脚本的最终 CLI argv 与 LOG_NAME 逐字节一致；log_util 懒挂载在干净子进程验证（无 LOG_NAME 不建目录、晚绑定可挂载）；CLI 端到端 naive smoke 通过
+- 剩余事项：仓库根 logs/None 与 logs/runner 是本次修复前验证运行的残留（gitignored），可手动清理
+- 2026-09-30 补充：AGENTS.md 两处条目（AIDC 脚本模板化 + data_transfer/intervals 协议归属）经用户重新审批后已写入 §2 与 §6
+
+## 2026-09-30 数据层职责重组与行为修正（第二阶段）
+
+- 用户批准完整方案、保留并行工作区改动并授权修改 AGENTS.md。数据层按 loading/cleaning/quality/resampling/target_transforms 分包；模型输入与 horizon 契约迁 models/contracts，窗口与 AppConfig 聚合适配迁 pipeline；旧模块不留空壳。
+- Loader 保留缺失与时间轴，修复前门禁；历史窗口内修复，评估/校准标签不填；EDA 不再隐式补轴/插值；质量报告区分观察到的缺口与实际操作。目标缩放纳入 TargetTransformer，实现预测/回测/模拟/训练诊断业务尺度闭环；训练归档追加 target_transformer.pkl。features 收口日历/lag 计算，未来外生按原点后的时间选择。
+- 验证：全量 pytest **265 passed / 44 warnings（53.52s）**；约定范围及本轮新增模块 Pyright **0 errors / 0 warnings**；81组旧/新变换精确一致；6份真实 AIDC 聚合 CSV 逐字节一致、缓存复用、正式20文件哈希不变。standard/minmax CLI 各完成训练、20窗/140行回测和5行预测，模型+变换器归档联合回读数值通过；EDA-only 产物回读通过。diff/旧导入/文档链接检查通过，完整证据见 [数据层重构记录](data-provider-refactor.md)。
+- 文档同步：新增 [职责与迁移表](data-architecture.md)，同步 AGENTS/data/preprocessing/eda/exogenous/testing；第一阶段记录保留历史语义，不把此次行为修正混称纯迁移。剩余风险：外部旧 import 需迁移；缺失数据可能比旧版更早失败；离线聚合仍非 as-of；既有区间/特征组合门禁不扩张。未提交/推送，未覆盖正式数据/结果。

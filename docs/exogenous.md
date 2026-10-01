@@ -10,6 +10,8 @@
 | `exog_cols` | 历史外生变量列 |
 | `future_exog_path` + `future_exog_time_col` + `future_exog_cols` | 独立未来外生文件 |
 
+Loader 读取全部未来输入，`pipeline/windows.py` 按原点之后的实际预测时间戳选择 horizon，不再取文件前 N 行。重复时间戳、覆盖不足、选中值缺失均失败；额外历史/未来行不进入预测窗口。
+
 ```bash
 .venv/bin/python run.py \
   --data_path /abs/path/history.csv --time_col ds --target_col y \
