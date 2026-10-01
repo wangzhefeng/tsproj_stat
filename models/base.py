@@ -1,3 +1,8 @@
+"""模型基类：BaseStatModel 统一契约（fit/predict/predict_one/区间/拟合值）。
+
+主线模型只实现 fit(y, X_hist, X_future) 与 predict(horizon, X_future)；
+单步桥接、多水平区间委托与拟合值门禁的默认实现都在本模块。
+"""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -30,10 +35,13 @@ class BaseStatModel(ABC):
         X_hist: pd.DataFrame | None = None,
         X_future: pd.DataFrame | None = None,
     ) -> "BaseStatModel":
+        """拟合模型。y 为目标序列（建模尺度）；X_hist 为历史协变量（含目标列的
+        合并帧），X_future 为预测期已知外生。返回 self 以支持链式调用。"""
         raise NotImplementedError
 
     @abstractmethod
     def predict(self, horizon: int, X_future: pd.DataFrame | None = None) -> pd.Series:
+        """原生多步预测：返回长度恰为 horizon 的 yhat 序列。"""
         raise NotImplementedError
 
     def predict_one(self, X_future_one: pd.DataFrame | None = None) -> float | pd.Series:
@@ -115,6 +123,3 @@ class BaseStatModel(ABC):
             f"{type(self).__name__} does not provide fitted values "
             "(backend support required; see registry supports_fitted_values)"
         )
-
-    def forecast(self, horizon: int) -> pd.Series:
-        return self.predict(horizon)

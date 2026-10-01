@@ -1,3 +1,7 @@
+"""统一 CLI 入口：参数解析、配置装配与主流程调度（面板批量 / 单序列三阶段）。
+
+所有运行都经 `python run.py` 进入；场景脚本（scripts/）只是本入口的参数固化。
+"""
 from __future__ import annotations
 
 import json
@@ -9,7 +13,7 @@ from config import AppConfig, ensure_output_dirs
 from utils.random_seed import set_seed
 from pipeline import ModelApp
 from monitoring.monitor import run_monitor_actuals_backfill
-from data_provider.data_aggregate import resolve_config_aggregation
+from pipeline.data_preparation import resolve_config_aggregation
 from utils.log_util import logger
 from utils.runtime_env import ensure_mpl_config_dir
 ensure_mpl_config_dir()
@@ -75,6 +79,39 @@ def _parse_csv_float_list(value: str | None) -> list[float] | None:
     return [float(item) for item in items]
 
 
+def _parse_int_csv_list(value: str | None) -> list[int]:
+    """解析逗号分隔的整数列表（lags / seasonal_periods）。"""
+    return [int(item) for item in _parse_csv_list(value)]
+
+
+# CLI 字段解析分派表：只覆盖需要类型转换的字段，其余字段原样透传。
+# interval_levels / simulate_quantiles 由 argparse nargs="+" 直接产出 list[float]，无需转换。
+_JSON_FIELDS = {"model_params", "batch_models"}
+_CSV_STR_FIELDS = {
+    "endog_cols", "exog_cols", "future_exog_cols", "model_names",
+    "auto_select_candidates", "eda_comparison_paths", "eda_comparison_labels",
+}
+_INT_CSV_FIELDS = {"lags", "seasonal_periods"}
+_FLOAT_CSV_FIELDS = {
+    "ets_smoothing_grid_level", "ets_smoothing_grid_trend", "ets_smoothing_grid_seasonal",
+}
+
+
+def _parse_field_value(field_name: str, field_type: str, raw: Any) -> Any:
+    """按 AppConfig 字段名/类型把 CLI 原始值转换为最终类型。"""
+    if field_type == "bool":
+        return _parse_bool(raw)
+    if field_name in _JSON_FIELDS:
+        return _parse_model_params(raw)
+    if field_name in _CSV_STR_FIELDS:
+        return _parse_csv_list(raw)
+    if field_name in _INT_CSV_FIELDS:
+        return _parse_int_csv_list(raw)
+    if field_name in _FLOAT_CSV_FIELDS:
+        return _parse_csv_float_list(raw)
+    return raw
+
+
 def _load_default_config(config_module: str, config_class: str):
     """
     按模块名动态加载默认配置，允许未来复用同一 CLI 入口切换配置类。
@@ -90,217 +127,20 @@ def _load_default_config(config_module: str, config_class: str):
 
 
 def _apply_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
-    """
-    将显式传入的 CLI 参数覆盖到 AppConfig。
+    """将显式传入的 CLI 参数覆盖到 AppConfig。
 
-    只处理非 None 参数，避免未传入的命令行字段覆盖配置文件或默认值。
-    历史字段如 backtest_initial_train_size 仍在这里兼容。
+    只处理非 None 参数（未传入的命令行字段不覆盖配置文件或默认值）。
+    字段驱动：遍历 AppConfig 全部字段，按 _parse_field_value 分派表做类型转换；
+    argparse 中与配置无关的入口参数（config/config_module/config_class）不在
+    AppConfig 字段内，自然被跳过。
     """
-    if getattr(args, "project_name", None) is not None:
-        cfg.project_name = args.project_name
-    if getattr(args, "seed", None) is not None:
-        cfg.seed = args.seed
-    if getattr(args, "data_path", None) is not None:
-        cfg.data_path = args.data_path
-    if getattr(args, "series_id_col", None) is not None:
-        cfg.series_id_col = args.series_id_col
-    if getattr(args, "batch_models", None) is not None:
-        cfg.batch_models = _parse_model_params(args.batch_models)
-    if getattr(args, "batch_allow_failed", None) is not None:
-        cfg.batch_allow_failed = _parse_bool(args.batch_allow_failed)
-    if getattr(args, "batch_n_jobs", None) is not None:
-        cfg.batch_n_jobs = args.batch_n_jobs
-    if getattr(args, "time_col", None) is not None:
-        cfg.time_col = args.time_col
-    if getattr(args, "target_col", None) is not None:
-        cfg.target_col = args.target_col
-    if getattr(args, "freq", None) is not None:
-        cfg.freq = args.freq
-    if getattr(args, "endog_cols", None) is not None:
-        cfg.endog_cols = _parse_csv_list(args.endog_cols)
-    if getattr(args, "exog_cols", None) is not None:
-        cfg.exog_cols = _parse_csv_list(args.exog_cols)
-    if getattr(args, "future_exog_path", None) is not None:
-        cfg.future_exog_path = args.future_exog_path
-    if getattr(args, "future_exog_time_col", None) is not None:
-        cfg.future_exog_time_col = args.future_exog_time_col
-    if getattr(args, "future_exog_cols", None) is not None:
-        cfg.future_exog_cols = _parse_csv_list(args.future_exog_cols)
-    if getattr(args, "exog_future_known", None) is not None:
-        cfg.exog_future_known = _parse_bool(args.exog_future_known)
-    if getattr(args, "aggregation_enabled", None) is not None:
-        cfg.aggregation_enabled = _parse_bool(args.aggregation_enabled)
-    if getattr(args, "aggregation_source_freq", None) is not None:
-        cfg.aggregation_source_freq = args.aggregation_source_freq
-    if getattr(args, "aggregation_method", None) is not None:
-        cfg.aggregation_method = args.aggregation_method
-    if getattr(args, "aggregation_fill_method", None) is not None:
-        cfg.aggregation_fill_method = args.aggregation_fill_method
-    if getattr(args, "aggregation_fill_weeks", None) is not None:
-        cfg.aggregation_fill_weeks = args.aggregation_fill_weeks
-    if getattr(args, "aggregation_output_path", None) is not None:
-        cfg.aggregation_output_path = args.aggregation_output_path
-    if getattr(args, "model_name", None) is not None:
-        cfg.model_name = args.model_name
-    if getattr(args, "model_names", None) is not None:
-        cfg.model_names = _parse_csv_list(args.model_names)
-    if getattr(args, "model_params", None) is not None:
-        cfg.model_params = _parse_model_params(args.model_params)
-    if getattr(args, "forecast_strategy", None) is not None:
-        cfg.forecast_strategy = args.forecast_strategy
-    if getattr(args, "ignore_unsupported_inputs", None) is not None:
-        cfg.ignore_unsupported_inputs = _parse_bool(args.ignore_unsupported_inputs)
-    if getattr(args, "do_train", None) is not None:
-        cfg.do_train = _parse_bool(args.do_train)
-    if getattr(args, "do_test", None) is not None:
-        cfg.do_test = _parse_bool(args.do_test)
-    if getattr(args, "do_forecast", None) is not None:
-        cfg.do_forecast = _parse_bool(args.do_forecast)
-    if getattr(args, "do_eda", None) is not None:
-        cfg.do_eda = _parse_bool(args.do_eda)
-    if getattr(args, "eda_period", None) is not None:
-        cfg.eda_period = args.eda_period
-    if getattr(args, "eda_nlags", None) is not None:
-        cfg.eda_nlags = args.eda_nlags
-    if getattr(args, "eda_run_preprocessed", None) is not None:
-        cfg.eda_run_preprocessed = _parse_bool(args.eda_run_preprocessed)
-    if getattr(args, "eda_recommendation_enabled", None) is not None:
-        cfg.eda_recommendation_enabled = _parse_bool(args.eda_recommendation_enabled)
-    if getattr(args, "eda_comparison_paths", None) is not None:
-        cfg.eda_comparison_paths = _parse_csv_list(args.eda_comparison_paths)
-    if getattr(args, "eda_comparison_labels", None) is not None:
-        cfg.eda_comparison_labels = _parse_csv_list(args.eda_comparison_labels)
-    if getattr(args, "eda_generate_report", None) is not None:
-        cfg.eda_generate_report = _parse_bool(args.eda_generate_report)
-    if getattr(args, "eda_report_overwrite", None) is not None:
-        cfg.eda_report_overwrite = _parse_bool(args.eda_report_overwrite)
-    if getattr(args, "history_size", None) is not None:
-        cfg.history_size = args.history_size
-    if getattr(args, "predict_horizon", None) is not None:
-        cfg.predict_horizon = args.predict_horizon
-    if getattr(args, "backtest_train_size", None) is not None:
-        cfg.backtest_train_size = args.backtest_train_size
-    if getattr(args, "backtest_initial_train_size", None) is not None:
-        cfg.backtest_initial_train_size = args.backtest_initial_train_size
-    if getattr(args, "backtest_horizon", None) is not None:
-        cfg.backtest_horizon = args.backtest_horizon
-    if getattr(args, "backtest_step", None) is not None:
-        cfg.backtest_step = args.backtest_step
-    if getattr(args, "backtest_window_mode", None) is not None:
-        cfg.backtest_window_mode = args.backtest_window_mode
-    if getattr(args, "backtest_verbose", None) is not None:
-        cfg.backtest_verbose = _parse_bool(args.backtest_verbose)
-    if getattr(args, "backtest_progress_every", None) is not None:
-        cfg.backtest_progress_every = args.backtest_progress_every
-    if getattr(args, "backtest_n_jobs", None) is not None:
-        cfg.backtest_n_jobs = args.backtest_n_jobs
-    if getattr(args, "backtest_refit_every", None) is not None:
-        cfg.backtest_refit_every = args.backtest_refit_every
-    if getattr(args, "backtest_allow_failed_windows", None) is not None:
-        cfg.backtest_allow_failed_windows = _parse_bool(args.backtest_allow_failed_windows)
-    if getattr(args, "feature_mode", None) is not None:
-        cfg.feature_mode = args.feature_mode
-    if getattr(args, "enable_datetime_features", None) is not None:
-        cfg.enable_datetime_features = _parse_bool(args.enable_datetime_features)
-    if getattr(args, "lags", None) is not None:
-        cfg.lags = [int(v.strip()) for v in args.lags.split(",") if v.strip()]
-    if getattr(args, "scale", None) is not None:
-        cfg.scale = _parse_bool(args.scale)
-    if getattr(args, "scaler_type", None) is not None:
-        cfg.scaler_type = args.scaler_type
-    if getattr(args, "denoise_enabled", None) is not None:
-        cfg.denoise_enabled = _parse_bool(args.denoise_enabled)
-    if getattr(args, "denoise_method", None) is not None:
-        cfg.denoise_method = args.denoise_method
-    if getattr(args, "denoise_window", None) is not None:
-        cfg.denoise_window = args.denoise_window
-    if getattr(args, "detrend_method", None) is not None:
-        cfg.detrend_method = args.detrend_method
-    if getattr(args, "seasonal_period", None) is not None:
-        cfg.seasonal_period = args.seasonal_period
-    if getattr(args, "seasonal_periods", None) is not None:
-        cfg.seasonal_periods = [int(v) for v in _parse_csv_list(args.seasonal_periods)]
-    if getattr(args, "decomposition_method", None) is not None:
-        cfg.decomposition_method = args.decomposition_method
-    if getattr(args, "decomposition_target", None) is not None:
-        cfg.decomposition_target = args.decomposition_target
-    if getattr(args, "decomposition_model", None) is not None:
-        cfg.decomposition_model = args.decomposition_model
-    if getattr(args, "acf_max_lag", None) is not None:
-        cfg.acf_max_lag = args.acf_max_lag
-    if getattr(args, "seasonality_strength_threshold", None) is not None:
-        cfg.seasonality_strength_threshold = args.seasonality_strength_threshold
-    if getattr(args, "ets_tune_smoothing_params", None) is not None:
-        cfg.ets_tune_smoothing_params = _parse_bool(args.ets_tune_smoothing_params)
-    if getattr(args, "ets_smoothing_grid_level", None) is not None:
-        cfg.ets_smoothing_grid_level = _parse_csv_float_list(args.ets_smoothing_grid_level)
-    if getattr(args, "ets_smoothing_grid_trend", None) is not None:
-        cfg.ets_smoothing_grid_trend = _parse_csv_float_list(args.ets_smoothing_grid_trend)
-    if getattr(args, "ets_smoothing_grid_seasonal", None) is not None:
-        cfg.ets_smoothing_grid_seasonal = _parse_csv_float_list(args.ets_smoothing_grid_seasonal)
-    if getattr(args, "ets_validation_size", None) is not None:
-        cfg.ets_validation_size = args.ets_validation_size
-    if getattr(args, "log_format", None) is not None:
-        cfg.log_format = args.log_format
-    if getattr(args, "auto_select", None) is not None:
-        cfg.auto_select = _parse_bool(args.auto_select)
-    if getattr(args, "auto_select_candidates", None) is not None:
-        cfg.auto_select_candidates = _parse_csv_list(args.auto_select_candidates)
-    if getattr(args, "auto_select_metric", None) is not None:
-        cfg.auto_select_metric = args.auto_select_metric
-    if getattr(args, "auto_select_n_windows", None) is not None:
-        cfg.auto_select_n_windows = args.auto_select_n_windows
-    if getattr(args, "max_missing_ratio", None) is not None:
-        cfg.max_missing_ratio = args.max_missing_ratio
-    if getattr(args, "validate_freq", None) is not None:
-        cfg.validate_freq = _parse_bool(args.validate_freq)
-    if getattr(args, "return_intervals", None) is not None:
-        cfg.return_intervals = _parse_bool(args.return_intervals)
-    if getattr(args, "interval_alpha", None) is not None:
-        cfg.interval_alpha = args.interval_alpha
-    if getattr(args, "interval_method", None) is not None:
-        cfg.interval_method = args.interval_method
-    if getattr(args, "interval_levels", None) is not None:
-        cfg.interval_levels = args.interval_levels
-    if getattr(args, "conformal_n_windows", None) is not None:
-        cfg.conformal_n_windows = args.conformal_n_windows
-    if getattr(args, "train_fitted_values", None) is not None:
-        cfg.train_fitted_values = _parse_bool(args.train_fitted_values)
-    if getattr(args, "simulate_enabled", None) is not None:
-        cfg.simulate_enabled = _parse_bool(args.simulate_enabled)
-    if getattr(args, "simulate_n_paths", None) is not None:
-        cfg.simulate_n_paths = args.simulate_n_paths
-    if getattr(args, "simulate_error_distribution", None) is not None:
-        cfg.simulate_error_distribution = args.simulate_error_distribution
-    if getattr(args, "simulate_n_windows", None) is not None:
-        cfg.simulate_n_windows = args.simulate_n_windows
-    if getattr(args, "simulate_quantiles", None) is not None:
-        cfg.simulate_quantiles = args.simulate_quantiles
-    if getattr(args, "forecast_use_update", None) is not None:
-        cfg.forecast_use_update = _parse_bool(args.forecast_use_update)
-    if getattr(args, "forecast_allow_nan_fill", None) is not None:
-        cfg.forecast_allow_nan_fill = _parse_bool(args.forecast_allow_nan_fill)
-    if getattr(args, "monitor_enabled", None) is not None:
-        cfg.monitor_enabled = _parse_bool(args.monitor_enabled)
-    if getattr(args, "monitor_window", None) is not None:
-        cfg.monitor_window = args.monitor_window
-    if getattr(args, "monitor_actuals_path", None) is not None:
-        cfg.monitor_actuals_path = args.monitor_actuals_path
-    if getattr(args, "monitor_actuals_experiment_path", None) is not None:
-        cfg.monitor_actuals_experiment_path = args.monitor_actuals_experiment_path
-    if getattr(args, "monitor_actuals_forecast_ts", None) is not None:
-        cfg.monitor_actuals_forecast_ts = args.monitor_actuals_forecast_ts
-    if getattr(args, "monitor_actuals_value_col", None) is not None:
-        cfg.monitor_actuals_value_col = args.monitor_actuals_value_col
-    if getattr(args, "monitor_actuals_snapshot", None) is not None:
-        cfg.monitor_actuals_snapshot = _parse_bool(args.monitor_actuals_snapshot)
-    if getattr(args, "monitor_actuals_run_id", None) is not None:
-        cfg.monitor_actuals_run_id = args.monitor_actuals_run_id
-    if getattr(args, "results_dir", None) is not None:
-        cfg.results_dir = args.results_dir
-    if getattr(args, "results_data_name", None) is not None:
-        cfg.results_data_name = args.results_data_name
-    
+    import dataclasses
+
+    for f in dataclasses.fields(cfg):
+        raw = getattr(args, f.name, None)
+        if raw is None:
+            continue
+        setattr(cfg, f.name, _parse_field_value(f.name, str(f.type), raw))
     return cfg
 
 
@@ -348,10 +188,10 @@ def parse_args() -> AppConfig:
     parser.add_argument("--do_test", default=None)
     parser.add_argument("--do_forecast", default=None)
     parser.add_argument("--do_eda", default=None)
-    parser.add_argument("--eda_period", type=int, default=None)        # TODO
-    parser.add_argument("--eda_nlags", type=int, default=None)         # TODO
-    parser.add_argument("--eda_run_preprocessed", default=None)        # TODO
-    parser.add_argument("--eda_recommendation_enabled", default=None)  # TODO
+    parser.add_argument("--eda_period", type=int, default=None)            # EDA 季节周期假设（STL/季节差分诊断用）
+    parser.add_argument("--eda_nlags", type=int, default=None)             # EDA ACF/PACF 最大滞后阶数
+    parser.add_argument("--eda_run_preprocessed", default=None)            # 是否在预处理后的序列上追加一轮 EDA
+    parser.add_argument("--eda_recommendation_enabled", default=None)      # 是否输出 eda_recommendations 建模建议
     parser.add_argument("--eda_comparison_paths", type=str, default=None)
     parser.add_argument("--eda_comparison_labels", type=str, default=None)
     parser.add_argument("--eda_generate_report", default=None)
@@ -437,22 +277,18 @@ def parse_args() -> AppConfig:
 
     if getattr(args, "config", None) is not None:
         # 有配置文件时采用“默认配置 -> CLI 覆盖 -> YAML 加 CLI 覆盖”的顺序。
-        # 这里先构造 cli_override_dict，让 YAML 加载器只覆盖用户显式传入的字段。
+        # 先构造 cli_override_dict，让 YAML 加载器只覆盖用户显式传入的字段。
         cli_override_dict: dict = {}
-        
-        # 默认参数
+
         cfg_tmp = _load_default_config(args.config_module, args.config_class)
-        # 用命令行参数覆盖默认参数
         cfg_tmp = _apply_overrides(cfg_tmp, args)
-        
-        # Build override dict from args that differ from defaults when config file is used
-        # Simpler: just pass the fully applied cfg fields as overrides, skipping None args
+
+        # 从 cfg_tmp 回收显式 CLI 字段的解析后取值（bool/列表等已转换为最终类型）
         import dataclasses
         for f in dataclasses.fields(cfg_tmp):
             raw = getattr(args, f.name, None)
             if raw is not None:
                 cli_override_dict[f.name] = getattr(cfg_tmp, f.name)
-        # YAML path provided — use load_config with CLI overrides on top
         from config.loader import load_config
         cfg = load_config(config_path=args.config, cli_overrides=cli_override_dict)
     else:

@@ -1,4 +1,4 @@
-
+"""全局随机种子设置：保证 smoke/test 结果可复现。"""
 from __future__ import annotations
 
 import random

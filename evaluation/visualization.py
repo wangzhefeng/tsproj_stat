@@ -1,3 +1,4 @@
+"""回测与预测结果绘图：预测对比、残差序列、残差分布与历史-预测拼接图。"""
 from __future__ import annotations
 
 from pathlib import Path

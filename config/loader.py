@@ -1,3 +1,4 @@
+"""多级配置加载：默认值 → YAML 文件 → TSPROJ_* 环境变量 → CLI 覆盖。"""
 from __future__ import annotations
 
 import json
@@ -9,7 +10,11 @@ from config.default import AppConfig
 
 
 def _cast_value(field_name: str, raw: Any) -> Any:
-    """Cast a raw YAML / env-var string to the AppConfig field type."""
+    """把 YAML/环境变量的原始字符串按 AppConfig 字段类型转换。
+
+    未登记的字段名原样返回（由 AppConfig 构造器拒绝未知字段）。
+    bool 接受 true/1/yes；列表接受逗号分隔字符串或原生 list；dict 走 JSON。
+    """
     fields = AppConfig.__dataclass_fields__
     if field_name not in fields:
         return raw
@@ -62,16 +67,16 @@ def load_config(
     config_path: str | Path | None = None,
     cli_overrides: dict[str, Any] | None = None,
 ) -> AppConfig:
-    """Build AppConfig by merging sources from lowest to highest priority:
+    """按优先级从低到高合并配置来源，构建 AppConfig：
 
-    1. AppConfig defaults
-    2. YAML file (if config_path provided)
-    3. Environment variables with TSPROJ_ prefix
-    4. cli_overrides dict
+    1. AppConfig 默认值
+    2. YAML 文件（提供 config_path 时）
+    3. TSPROJ_ 前缀环境变量
+    4. cli_overrides（None 值忽略，表示该字段未被 CLI 显式传入）
 
     Args:
-        config_path: path to a YAML config file
-        cli_overrides: dict of field_name → value from CLI parsing (None values ignored)
+        config_path: YAML 配置文件路径
+        cli_overrides: CLI 解析出的「字段名 → 值」映射
     """
     params: dict[str, Any] = {}
 

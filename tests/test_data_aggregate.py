@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from data_provider.data_aggregate import aggregate_csv
+from data_provider.resampling.service import aggregate_csv
 
 
 def _write_source(tmp_path, days=3, freq="h"):

@@ -1,3 +1,8 @@
+"""文件级频率聚合：CSV 读取、派生文件落盘、审计 JSON 与缓存复用。
+
+内存计算归 core.py；本模块负责文件 IO 和审计披露；
+AppConfig 适配由 pipeline.data_preparation 承担。
+"""
 from __future__ import annotations
 
 import json
@@ -6,12 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
-
-AGGREGATION_METHODS = {"mean", "max", "min", "sum", "median"}
-FILL_METHODS = {"none", "linear", "seasonal_slot"}
+from .core import aggregate_frame, validate_aggregation_options
 
 # 填充方向披露（T16）：linear 的 limit_direction="both" 与 seasonal_slot 的 ±fill_weeks
 # 双向窗口都会用未来观测回填过去的缺失，不是 as-of 操作；离线数据准备可接受，但必须披露。
@@ -24,6 +26,8 @@ _FILL_DISCLOSURE = {
 
 @dataclass(frozen=True)
 class AggregationResult:
+    """一次聚合的产物定位与统计：派生 CSV/审计路径、是否重算、行数与补缺计数。"""
+
     data_path: Path
     audit_path: Path
     regenerated: bool
@@ -31,36 +35,6 @@ class AggregationResult:
     output_rows: int
     inserted_timestamp_count: int
     filled_value_count: int
-
-
-def _seasonal_slot_fill(series: pd.Series, weeks: int) -> pd.Series:
-    """用局部周窗口中相同星期和时刻的观测均值填充缺失点。"""
-    missing = series.isna().to_numpy()
-    if not missing.any():
-        return series
-
-    index = series.index
-    if not isinstance(index, pd.DatetimeIndex):
-        raise TypeError("seasonal_slot requires a DatetimeIndex")
-    day_of_week = index.dayofweek.to_numpy()
-    minute_of_day = (index.hour * 60 + index.minute).to_numpy()
-    values = series.to_numpy(dtype=float)
-    filled = series.copy()
-
-    for raw_position in np.flatnonzero(missing):
-        position = int(raw_position)
-        timestamp = index[position]
-        start = index.searchsorted(timestamp - pd.Timedelta(weeks=weeks), side="left")
-        end = index.searchsorted(timestamp + pd.Timedelta(weeks=weeks), side="right")
-        window = values[start:end]
-        candidates = (
-            (day_of_week[start:end] == day_of_week[position])
-            & (minute_of_day[start:end] == minute_of_day[position])
-            & ~np.isnan(window)
-        )
-        if candidates.any():
-            filled.iloc[position] = float(window[candidates].mean())
-    return filled
 
 
 def _default_output_path(source_path: Path, target_freq: str, method: str) -> Path:
@@ -120,12 +94,7 @@ def aggregate_csv(
     source = Path(source_path)
     if not source.exists():
         raise FileNotFoundError(f"Aggregation source file not found: {source}")
-    if method not in AGGREGATION_METHODS:
-        raise ValueError(f"aggregation_method must be one of {sorted(AGGREGATION_METHODS)}")
-    if fill_method not in FILL_METHODS:
-        raise ValueError(f"aggregation_fill_method must be one of {sorted(FILL_METHODS)}")
-    if fill_weeks <= 0:
-        raise ValueError("aggregation_fill_weeks must be > 0")
+    validate_aggregation_options(method, fill_method, fill_weeks)
 
     destination = Path(output_path) if output_path else _default_output_path(source, target_freq, method)
     if destination.resolve() == source.resolve():
@@ -143,6 +112,12 @@ def aggregate_csv(
     )
     if _can_reuse(destination, audit_path, config):
         audit = json.loads(audit_path.read_text(encoding="utf-8"))
+        # 迁移旧独立脚本缓存：仅补齐审计披露，不重算或改写派生 CSV。
+        if "fill_uses_future" not in audit or "fill_direction_note" not in audit:
+            audit["fill_uses_future"], audit["fill_direction_note"] = _FILL_DISCLOSURE[fill_method]
+            temp_audit = audit_path.with_name(f".{audit_path.name}.tmp")
+            temp_audit.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temp_audit, audit_path)
         return AggregationResult(
             data_path=destination,
             audit_path=audit_path,
@@ -153,34 +128,15 @@ def aggregate_csv(
             filled_value_count=int(audit["filled_value_count"]),
         )
 
-    frame = pd.read_csv(source)
-    missing_columns = [column for column in (time_col, target_col) if column not in frame.columns]
-    if missing_columns:
-        raise ValueError(f"Aggregation columns not found: {missing_columns}")
-    source_rows = len(frame)
-    frame = frame.loc[:, [time_col, target_col]].copy()
-    frame[time_col] = pd.to_datetime(frame[time_col], errors="raise")
-    frame[target_col] = pd.to_numeric(frame[target_col], errors="coerce")
-    if frame[target_col].isna().any():
-        raise ValueError(f"Aggregation target '{target_col}' contains non-numeric or missing values")
-
-    series = frame.sort_values(time_col).set_index(time_col).loc[:, target_col].resample(source_freq).mean()
-    inserted_count = int(series.isna().sum())
-    before_fill = inserted_count
-    if fill_method == "linear":
-        series = series.interpolate(method="time", limit_direction="both")
-    elif fill_method == "seasonal_slot":
-        series = _seasonal_slot_fill(series, fill_weeks)
-
-    remaining = int(series.isna().sum())
-    if remaining:
-        raise ValueError(
-            f"Aggregation has {remaining} missing source-frequency values after fill_method={fill_method!r}"
-        )
-    filled_count = before_fill - remaining
-    aggregated = getattr(series.resample(target_freq), method)().reset_index(name=target_col)
-    if aggregated[target_col].isna().any():
-        raise ValueError("Aggregation produced missing output values")
+    computed = aggregate_frame(
+        pd.read_csv(source), time_col=time_col, target_col=target_col,
+        source_freq=source_freq, target_freq=target_freq, method=method,
+        fill_method=fill_method, fill_weeks=fill_weeks,
+    )
+    aggregated = computed.frame
+    source_rows = computed.source_rows
+    inserted_count = computed.inserted_timestamp_count
+    filled_count = computed.filled_value_count
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp_csv = destination.with_name(f".{destination.name}.tmp")
@@ -194,7 +150,7 @@ def aggregate_csv(
         "filled_value_count": filled_count,
         "fill_uses_future": _FILL_DISCLOSURE[fill_method][0],
         "fill_direction_note": _FILL_DISCLOSURE[fill_method][1],
-        "duplicate_timestamp_count": int(frame[time_col].duplicated().sum()),
+        "duplicate_timestamp_count": computed.duplicate_timestamp_count,
         "time_range_start": str(aggregated[time_col].iloc[0]),
         "time_range_end": str(aggregated[time_col].iloc[-1]),
     }
@@ -210,22 +166,3 @@ def aggregate_csv(
         inserted_timestamp_count=inserted_count,
         filled_value_count=filled_count,
     )
-
-
-def resolve_config_aggregation(cfg) -> AggregationResult | None:
-    """按 AppConfig 生成派生文件，并把本次有效 data_path 切换到派生文件。"""
-    if not cfg.aggregation_enabled:
-        return None
-    result = aggregate_csv(
-        source_path=cfg.data_path,
-        time_col=cfg.time_col,
-        target_col=cfg.target_col,
-        source_freq=cfg.aggregation_source_freq,
-        target_freq=cfg.freq,
-        method=cfg.aggregation_method,
-        fill_method=cfg.aggregation_fill_method,
-        fill_weeks=cfg.aggregation_fill_weeks,
-        output_path=cfg.aggregation_output_path,
-    )
-    cfg.data_path = str(result.data_path)
-    return result

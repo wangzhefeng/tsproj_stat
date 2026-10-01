@@ -1,3 +1,8 @@
+"""EDA 建模建议：从诊断结果推导季节周期、差分阶数、预处理与候选模型族。
+
+启发式规则集中在本模块，阈值只在修改时改这里；建议仅供人工调参参考，
+不回写 AppConfig。
+"""
 from __future__ import annotations
 
 import math
@@ -84,6 +89,7 @@ def build_recommendations(summary: dict[str, Any], diagnostics: pd.DataFrame, pe
 
 
 def recommendations_to_frame(recommendations: dict[str, Any]) -> pd.DataFrame:
+    """把建议字典展开为长表（category/name/recommendation/confidence/reason），供 CSV 落盘。"""
     rows: list[dict[str, Any]] = []
     for category, payload in recommendations.items():
         if category == "model_family":

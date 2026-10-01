@@ -23,14 +23,14 @@ class _StatsForecastPredict(Protocol):
 
 import pandas as pd
 
-from data_provider.data_transfer import to_univariate_series
+from models.contracts.inputs import to_univariate_series
+from models.contracts.validation import validate_horizon
 from models.base import BaseStatModel
 from models.exogenous import ExogenousMixin
 from .fallbacks import (
     FallbackMixin,
     NaiveModel,
     TrendFallbackModel,
-    validate_horizon,
     warn_and_use_fallback,
 )
 
@@ -111,6 +111,11 @@ class _fit_warning_context:
 
 
 class FixedParameterUpdateMixin(ExogenousMixin):
+    """固定参数状态更新能力：在增长的真实历史上重新滤波，不重新估计参数。
+
+    仅 ARIMA/SARIMA 家族声明 supports_update；供 backtest refit_every
+    与 forecast_use_update 快速路径使用。
+    """
     def update(self, y, X_hist=None):
         """在当前真实历史窗口重新滤波，不重新估计参数。"""
         if self._result is None:
@@ -124,6 +129,11 @@ class FixedParameterUpdateMixin(ExogenousMixin):
 
 
 class ARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
+    """ARIMA(p,d,q) 主线实现（statsmodels SARIMAX 后端）。
+
+    支持外生变量、原生多步、预测区间与固定参数 update；拟合失败回退
+    NaiveModel/TrendFallbackModel 并在 model_info 记录原因。
+    """
     def __init__(
         self,
         order: tuple[int, int, int] | list[int] = (1, 1, 1),
@@ -210,6 +220,7 @@ class ARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
 
 
 class ARModel(ARIMAModel):
+    """AR(p)：ARIMA(p,0,0) 的参数糖。"""
     def __init__(self, p: int = 1):
         if p < 0:
             raise ValueError("p must be non-negative")
@@ -218,6 +229,7 @@ class ARModel(ARIMAModel):
 
 
 class MAModel(ARIMAModel):
+    """MA(q)：ARIMA(0,0,q) 的参数糖。"""
     def __init__(self, q: int = 1):
         if q < 0:
             raise ValueError("q must be non-negative")
@@ -226,6 +238,7 @@ class MAModel(ARIMAModel):
 
 
 class ARMAModel(ARIMAModel):
+    """ARMA(p,q)：ARIMA(p,0,q) 的参数糖。"""
     def __init__(self, p: int = 1, q: int = 1):
         if p < 0 or q < 0:
             raise ValueError("p and q must be non-negative")
@@ -235,6 +248,7 @@ class ARMAModel(ARIMAModel):
 
 
 class SARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
+    """SARIMA：在 ARIMA 之上叠加季节项 (P,D,Q,m) 的主线实现。"""
     def __init__(
         self,
         order: tuple[int, int, int] | list[int] = (1, 1, 1),
@@ -326,6 +340,11 @@ class SARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
 
 
 class AutoARIMAModel(ExogenousMixin, BaseStatModel):
+    """auto_arima：pmdarima 后端的阶数自动搜索（stepwise）。
+
+    与 sf_auto_arima（StatsForecast 后端）是两条独立实现，比较时必须
+    固定数据、窗口、策略和搜索范围。
+    """
     def __init__(
         self,
         seasonal: bool = False,

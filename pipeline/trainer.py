@@ -1,3 +1,4 @@
+"""训练阶段执行器：模型创建、统一 fit 契约调用与 NaiveModel fallback。"""
 from __future__ import annotations
 
 import pandas as pd
@@ -6,10 +7,6 @@ from models.factory import ModelFactory
 from models.model.fallbacks import NaiveModel
 from forecasting.strategies import checked_model_builder
 
-import os
-from pathlib import Path
-LOGGING_LABEL = Path(__file__).name[:-3]
-os.environ.setdefault('LOG_NAME', LOGGING_LABEL)
 from utils.log_util import logger
 
 
@@ -21,6 +18,12 @@ class Trainer:
     """
 
     def __init__(self, model_name: str, model_params: dict | None = None, ignore_unsupported_inputs=False):
+        """
+        Args:
+            model_name: registry 中的模型名。
+            model_params: 覆盖 registry 默认参数的超参字典。
+            ignore_unsupported_inputs: 显式容忍模型不支持的协变量输入（默认拒绝）。
+        """
         self.model_name = model_name
         self.model_params = model_params or {}
         self.factory = ModelFactory()

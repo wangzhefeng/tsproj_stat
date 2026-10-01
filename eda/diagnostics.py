@@ -1,3 +1,8 @@
+"""EDA 诊断计算：平稳性、ACF/PACF、分解强度、周期、异方差、白噪声与离群点。
+
+全部诊断只返回结构化 dict/DataFrame，不落盘不绘图；单个检验失败
+返回结构化错误（ok=False），不中断整套诊断。
+"""
 from __future__ import annotations
 
 import math
@@ -148,6 +153,7 @@ def heteroskedasticity_report(series: pd.Series) -> dict:
 
 
 def white_noise_report(series: pd.Series, lags: int = 12) -> dict:
+    """Ljung-Box 白噪声检验：p 值小表示序列仍含自相关结构。"""
     lb = acorr_ljungbox(series, lags=[min(lags, len(series) - 1)], return_df=True)
     return {
         "ljung_box_stat": float(lb["lb_stat"].iloc[0]),
@@ -192,6 +198,7 @@ def outlier_report(series: pd.Series) -> dict:
 
 
 def forecastability_score(series: pd.Series) -> float:
+    """可预测性评分：1 - 归一化谱熵，越接近 1 表示谱能量越集中（越好预测）。"""
     values = np.asarray(series.values, dtype=float)
     values = values - np.mean(values)
     spectrum = np.abs(np.fft.rfft(values))
@@ -207,6 +214,7 @@ def forecastability_score(series: pd.Series) -> float:
 
 
 def run_diagnostics(series: pd.Series, period: int = 7, nlags: int = 24) -> tuple[dict, pd.DataFrame]:
+    """运行全套诊断，返回 (summary 聚合字典, diagnostics 逐项检验明细表)。"""
     st = stationarity_report(series)
     ac = acf_pacf_report(series, nlags=nlags)
     dc = decomposition_report(series, period=period)

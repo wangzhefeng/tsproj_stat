@@ -1,3 +1,8 @@
+"""应用配置：AppConfig 全字段定义、派生解析方法与运行前集中校验。
+
+CLI/YAML/环境变量最终都收敛到本模块的 AppConfig；字段语义注释即配置文档，
+新增字段必须在此登记并在 validate() 中补充校验。
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -100,7 +105,7 @@ class AppConfig:
     scale: bool = False
     scaler_type: str = "standard"
 
-    # 数据预处理：保持可逆处理集中在 DataProcessor，模型实现不再各自拆解趋势/季节项。
+    # 数据预处理：保持可逆处理集中在 TargetTransformer，模型实现不再各自拆解趋势/季节项。
     denoise_enabled: bool = False
     denoise_method: str = "none"
     denoise_window: int = 3

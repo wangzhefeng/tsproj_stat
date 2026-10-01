@@ -18,11 +18,11 @@ class _VARForecastInterval(Protocol):
                  exog_future: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]: ...
 
 from models.base import BaseStatModel
-from data_provider.data_transfer import combine_history_frame, to_dataframe
+from models.contracts.inputs import combine_history_frame, to_dataframe
+from models.contracts.validation import validate_horizon
 from .fallbacks import (
     TrendFallbackModel,
     FallbackMixin,
-    validate_horizon,
     warn_and_use_fallback,
 )
 
@@ -38,6 +38,7 @@ def _require_multivariate_frame(
 
 
 class VARModel(FallbackMixin, BaseStatModel):
+    """VAR 向量自回归（statsmodels 后端）：多变量输入，只输出目标列的 yhat。"""
     def __init__(self, maxlags: int | None = None, ic: str | None = None):
         self.maxlags = maxlags
         self.ic = ic
@@ -98,6 +99,7 @@ class VARModel(FallbackMixin, BaseStatModel):
 
 
 class BayesianVARModel(FallbackMixin, BaseStatModel):
+    """贝叶斯 VAR 近似（experimental）：滞后回归 + 解析后验的轻量实现。"""
     def __init__(
         self,
         time_lags: list[int] | tuple[int, ...] = (1, 2),
@@ -195,6 +197,7 @@ class BayesianVARModel(FallbackMixin, BaseStatModel):
 
 
 class LinearVARModel(FallbackMixin, BaseStatModel):
+    """线性多变量回归（experimental）：目标滞后 + 特征滞后 + 未来外生。"""
     def __init__(
         self,
         target_lags: list[int] | tuple[int, ...] = (1, 2, 3),

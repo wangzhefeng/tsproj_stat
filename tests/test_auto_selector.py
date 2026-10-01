@@ -43,7 +43,7 @@ def test_auto_selector_default_candidates_are_stable_only():
 
 def test_auto_selector_matches_per_window_processor_pipeline():
     """T15：auto_select 与 test 同口径——同一数据两种入口分数一致。"""
-    from data_provider.data_processor import DataProcessor
+    from data_provider.target_transforms.transformer import TargetTransformer
     from evaluation.backtest import rolling_backtest
     from models.factory import ModelFactory
 
@@ -56,7 +56,7 @@ def test_auto_selector_matches_per_window_processor_pipeline():
     )
     train_size, horizon, n_windows = 30, 5, 3
     step = max(1, (n - train_size - horizon) // n_windows)
-    processor_builder = lambda: DataProcessor(detrend_method="linear")  # noqa: E731
+    processor_builder = lambda: TargetTransformer(detrend_method="linear")  # noqa: E731
 
     selector = AutoSelector(
         candidates=["naive"],

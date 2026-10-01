@@ -1,8 +1,9 @@
+"""回测阶段执行器：把 AppConfig 的窗口/策略/协变量参数传给 rolling_backtest。"""
 from __future__ import annotations
 
 import pandas as pd
 from typing import Callable
-from data_provider.data_processor import DataProcessor
+from data_provider.target_transforms.transformer import TargetTransformer
 
 from evaluation.backtest import BacktestResult, rolling_backtest
 from models.factory import ModelFactory
@@ -33,7 +34,7 @@ class Tester:
         verbose: bool = False,
         progress_every: int = 10,
         n_jobs: int = 1,
-        processor_builder: Callable[[], DataProcessor] | None = None,
+        processor_builder: Callable[[], TargetTransformer] | None = None,
         allow_failed_windows: bool = False,
         interval_method: str = "none",
         interval_alpha: float = 0.05,
@@ -42,6 +43,7 @@ class Tester:
         refit_every: int = 1,
         ignore_unsupported_inputs: bool = False,
     ):
+        """参数与 rolling_backtest 一一对应；本类只做配置装配，不做窗口逻辑。"""
         self.model_name = model_name
         self.model_params = model_params or {}
         self.target_col = target_col

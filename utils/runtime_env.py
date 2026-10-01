@@ -1,3 +1,4 @@
+"""运行时环境保障：matplotlib 可写配置目录等进程级前置条件。"""
 from __future__ import annotations
 
 import os

@@ -1,10 +1,15 @@
+"""运行编排收口：ModelApp 调度 EDA/train/test/forecast 阶段并统一落盘。
+
+阶段计算归 pipeline.stages（内存进内存出）；本模块负责配置解析、
+产物目录构建、多模型循环、comparison 表、监控写入与 run_summary 汇总。
+"""
 from __future__ import annotations
 
 import copy
-import os
 import uuid
 from pathlib import Path
 import json
+import pickle
 from datetime import datetime
 from dataclasses import asdict, dataclass, field
 
@@ -12,11 +17,11 @@ import numpy as np
 import pandas as pd
 
 from config import AppConfig
-from data_provider.data_loader import DataLoader
-from data_provider.data_aggregate import AggregationResult
-from data_provider.data_processor import DataProcessor
-from features.feature_engineering import FeatureEngineer
-from features.feature_scaling import FeatureScaler
+from data_provider.loading.loader import DataLoader
+from data_provider.resampling.service import AggregationResult
+from data_provider.cleaning.imputation import repair_history_frame
+from pipeline.windows import split_history, align_future_exog
+from features.feature_engineering import FeatureEngineer, build_history_features
 from models.persistence import save_model
 from eda import run_eda
 from evaluation.visualization import (
@@ -31,9 +36,6 @@ from artifacts.paths import build_experiment_path, prepare_run_artifacts, resolv
 from artifacts.writers import dataframe_to_csv, forecast_timestamps, model_info_payload, write_json
 from pipeline.stages import PrepareResult, new_processor_from_config, run_train_stage, run_test_stage, run_forecast_stage
 
-# global variable
-LOGGING_LABEL = Path(__file__).name[:-3]
-os.environ['LOG_NAME'] = LOGGING_LABEL
 from utils.log_util import logger, configure_logging, set_run_id, timed_stage
 
 
@@ -73,6 +75,12 @@ class ModelApp:
 
     def __init__(self, cfg: AppConfig, aggregation_result: AggregationResult | None = None,
                  data_frame: pd.DataFrame | None = None, future_exog_frame: pd.DataFrame | None = None):
+        """
+        Args:
+            cfg: 完整运行配置（须已通过 validate()）。
+            aggregation_result: 聚合阶段结果（仅聚合开启时非 None，用于审计与报告）。
+            data_frame / future_exog_frame: 内存帧直通（面板批量用），与 data_path 互斥。
+        """
         self.cfg = cfg
         self.aggregation_result = aggregation_result
         self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
@@ -131,6 +139,11 @@ class ModelApp:
         return resolve_model_params(self.cfg)
 
     def run(self) -> dict[str, str | dict[str, float]]:
+        """按 EDA → 数据准备 → train → test → forecast 顺序执行主流程。
+
+        返回产物路径与汇总指标的字典；阶段失败以 *_error 键记录（由 run.py
+        统一转为非零退出）。多模型模式委派给 _run_multi_model。
+        """
         # ------------------------------
         # 设置随机种子
         # ------------------------------
@@ -249,7 +262,7 @@ class ModelApp:
                 )
                 # T15：选型用原始（未预处理/未缩放）history 窗口 + per-window processor，
                 # 与 test 链路同口径，避免在预处理后的 history_y 上评估导致选错模型。
-                raw_history_df = self.loader.split_history(df, self.cfg.history_size)
+                raw_history_df = split_history(df, self.cfg.history_size)
                 best_model = selector.select(
                     y=raw_history_df[self.cfg.target_col].astype(float).reset_index(drop=True),
                     X_hist=raw_history_df[self.model_history_input_cols].astype(float).reset_index(drop=True),
@@ -521,25 +534,18 @@ class ModelApp:
                     "请改用已知未来外生或移出 future_exog_cols"
                 )
 
-        processor = DataProcessor(
-            detrend_method=self.cfg.detrend_method,
-            denoise_enabled=self.cfg.denoise_enabled,
-            denoise_method=self.cfg.denoise_method,
-            denoise_window=self.cfg.denoise_window,
-            seasonal_period=self.cfg.seasonal_period,
-            seasonal_periods=self.cfg.seasonal_periods,
-            decomposition_method=self.cfg.decomposition_method,
-            decomposition_target=self.cfg.decomposition_target,
-            decomposition_model=self.cfg.decomposition_model,
-            acf_max_lag=self.cfg.acf_max_lag,
-            seasonality_strength_threshold=self.cfg.seasonality_strength_threshold,
-        )
+        processor = self._new_processor()
 
         # 数据分割：forecast 原点显式定义为数据末尾，history = 尾部 history_size 行。
-        # 必须先切分再预处理：DataProcessor 只在 history 窗口内 fit_transform，
+        # 必须先切分再预处理：TargetTransformer 只在 history 窗口内 fit_transform，
         # 保证分解季节模板、detrend 与去噪不接触任何原点之后的数据（P09）。
-        history_df = self.loader.split_history(df=local_df, history_size=self.cfg.history_size)
+        history_df = split_history(df=local_df, history_size=self.cfg.history_size)
         raw_history_df = history_df.copy(deep=True)
+        history_df, repair = repair_history_frame(history_df, self.model_history_input_cols)
+        metadata["history_repair_policy"] = repair.policy
+        metadata["history_filled_value_count"] = str(repair.filled_value_count)
+        metadata["history_filled_by_column"] = json.dumps(repair.filled_by_column, ensure_ascii=False)
+
         if processor.enabled:
             history_df[self.cfg.target_col] = processor.fit_transform(
                 history_df[self.cfg.target_col]
@@ -585,26 +591,19 @@ class ModelApp:
         logger.info(f"After data split history_df shape={history_df.shape}, head:\n {history_df.head()}")
         logger.info(f"history_y length={len(history_y)}, history_time range=[{history_time.iloc[0] if not history_time.empty else None}, {history_time.iloc[-1] if not history_time.empty else None}]")
         
-        # 数据缩放：当前仅缩放目标列，并同步回多源输入中的 target_col。
         if self.cfg.scale:
-            scaler = FeatureScaler(self.cfg.scaler_type)
-            scaled = scaler.fit_transform(pd.DataFrame({self.cfg.target_col: history_y}))
-            history_y = scaled[self.cfg.target_col].reset_index(drop=True)
-            history_endog_df[self.cfg.target_col] = history_y.values
-            history_model_input_df[self.cfg.target_col] = history_y.values
             metadata["history_scaled"] = "true"
             metadata["history_scaler_type"] = self.cfg.scaler_type
-            logger.info(f"After scale history_y length={len(history_y)}, head: {history_y.head().tolist()}")
 
         future_exog_df = None
-        if self.cfg.future_exog_path is not None:
-            future_exog_raw = self.loader.load_future_exog(
-                future_exog_cols=self.cfg.future_exog_cols,
-                horizon=self.cfg.predict_horizon,
+        future_exog_raw = self.loader.load_future_exog(self.cfg.future_exog_cols)
+        if future_exog_raw is not None:
+            if self.cfg.future_exog_time_col is None:
+                raise ValueError("future_exog_time_col is required")
+            future_exog_df = align_future_exog(
+                future_exog_raw, self.cfg.future_exog_time_col, self.cfg.future_exog_cols,
+                pd.Timestamp(history_time.iloc[-1]), self.cfg.freq, self.cfg.predict_horizon,
             )
-            if future_exog_raw is None:
-                raise RuntimeError("Configured future exogenous data was not loaded")
-            future_exog_df = future_exog_raw[self.cfg.future_exog_cols].astype(float).reset_index(drop=True)
             metadata["future_exog_rows"] = str(len(future_exog_df))
 
         return PrepareResult(
@@ -625,28 +624,15 @@ class ModelApp:
         )
 
     def _new_processor(self):
-        """返回与 _prepare_target_series 同配但未拟合的 DataProcessor，供回测按窗口重建。"""
+        """返回与 _prepare_target_series 同配但未拟合的 TargetTransformer，供回测按窗口重建。"""
         return new_processor_from_config(self.cfg)
 
     def _build_model_input_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-        feature_df = pd.DataFrame(index=df.index)
-        feature_cols: list[str] = []
-        if self.cfg.enable_datetime_features and self.cfg.time_col in df.columns:
-            dt = pd.to_datetime(df[self.cfg.time_col])
-            for col, values in {
-                "hour": dt.dt.hour,
-                "dayofweek": dt.dt.dayofweek,
-                "month": dt.dt.month,
-                "dayofyear": dt.dt.dayofyear,
-            }.items():
-                feature_df[col] = values.astype(float)
-                feature_cols.append(col)
-        for lag in self.cfg.lags:
-            col = f"lag_{lag}"
-            # 头部 lag 行无真实历史可用，保留 NaN 由调用方整行丢弃，不做 bfill 回填（T18）
-            feature_df[col] = df[self.cfg.target_col].shift(lag).astype(float)
-            feature_cols.append(col)
-        return feature_df, feature_cols
+        frame, columns = build_history_features(
+            df, self.cfg.time_col, self.cfg.target_col,
+            self.cfg.enable_datetime_features, self.cfg.lags,
+        )
+        return frame.astype(float), columns
 
     def _export_feature_snapshot(self, df: pd.DataFrame) -> FeatureSnapshotResult:
         """导出分析型特征快照。
@@ -736,7 +722,12 @@ class ModelApp:
             )
         # model saving with metadata
         model_path = self.artifacts.checkpoints_dir / "model.pkl"
+        transformer_path = self.artifacts.checkpoints_dir / "target_transformer.pkl"
+        with transformer_path.open("wb") as stream:
+            pickle.dump(prepared.processor, stream)
         save_model(model, str(model_path), meta={
+            "model_output_scale": "transformed_target" if prepared.processor.enabled else "original_target",
+            "target_transformer_path": str(transformer_path),
             "model_name": self.cfg.model_name,
             "model_params": self.resolved_model_params,
             "train_rows": int(len(prepared.history_y)),
@@ -788,6 +779,8 @@ class ModelApp:
             "model_input_feature_columns": prepared.model_input_feature_columns,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "checkpoint_path": str(model_path),
+            "target_transformer_path": str(transformer_path),
+            "history_repair": {k: v for k, v in prepared.metadata.items() if k.startswith("history_")},
             "model_info_path": model_info_path,
             "residual_stats": stage.residual_stats,
         }
@@ -801,6 +794,7 @@ class ModelApp:
         
         result = {
             "model_path": str(model_path),
+            "target_transformer_path": str(transformer_path),
             "train_series_path": train_series_path,
             "model_info_path": model_info_path,
             "train_summary_path": train_summary_path,

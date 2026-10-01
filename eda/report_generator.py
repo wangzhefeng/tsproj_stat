@@ -23,7 +23,7 @@ from utils.log_util import logger
 
 if TYPE_CHECKING:
     from config.default import AppConfig
-    from data_provider.data_aggregate import AggregationResult
+    from data_provider.resampling.service import AggregationResult
 
 
 AUTOGEN_MARKER = (
@@ -323,11 +323,13 @@ def _decide_overwrite(report_path: Path, force: bool) -> str:
 # 各段 builder
 # ##############################
 def build_title(ctx: dict) -> list[str]:
+    """报告标题块。"""
     name = ctx.get("data_name") or "时间序列"
     return [f"# {name} EDA 报告", ""]
 
 
 def _exec_summary(ctx: dict) -> list[str]:
+    """执行摘要：核心结论要点列表。"""
     s = ctx.get("summary") or {}
     rec = ctx.get("recommendations") or {}
     bullets: list[str] = []
@@ -383,6 +385,7 @@ def _exec_summary(ctx: dict) -> list[str]:
 
 
 def build_section_1(ctx: dict) -> list[str]:
+    """第 1 节：数据概览（样本量、质量报告、聚合审计）。"""
     s = ctx.get("summary") or {}
     dq = ctx.get("data_quality") or {}
     agg = ctx.get("aggregation")
@@ -436,6 +439,7 @@ def build_section_1(ctx: dict) -> list[str]:
 
 
 def build_section_2(ctx: dict, output_dir: Path) -> list[str]:
+    """第 2 节：序列形态与分布（趋势/周期/离群点，引用对应图）。"""
     s = ctx.get("summary") or {}
     rec = ctx.get("recommendations") or {}
     lines = [
@@ -482,6 +486,7 @@ def build_section_2(ctx: dict, output_dir: Path) -> list[str]:
 
 
 def build_section_3(ctx: dict, output_dir: Path) -> list[str]:
+    """第 3 节：季节性与分解（季节强度、周期候选与谐波提示）。"""
     s = ctx.get("summary") or {}
     rec = ctx.get("recommendations") or {}
     ss = _as_float(_sget(s, "decomposition", "seasonal_strength"))
@@ -523,6 +528,7 @@ def build_section_3(ctx: dict, output_dir: Path) -> list[str]:
 
 
 def build_section_4(ctx: dict, output_dir: Path) -> list[str]:
+    """第 4 节：平稳性（ADF/KPSS/PP 方向裁决与差分建议）。"""
     s = ctx.get("summary") or {}
     rec = ctx.get("recommendations") or {}
     stat = _stationarity_by_name(s)
@@ -565,6 +571,7 @@ def build_section_4(ctx: dict, output_dir: Path) -> list[str]:
 
 
 def build_section_5(ctx: dict, output_dir: Path) -> list[str]:
+    """第 5 节：残差结构与异方差（Ljung-Box/ARCH/White/BP/BDS）。"""
     s = ctx.get("summary") or {}
     arch_p = _sget(s, "heteroskedasticity", "arch_lm_pvalue")
     white_p = _sget(s, "heteroskedasticity", "white_pvalue")
@@ -600,6 +607,7 @@ def build_section_5(ctx: dict, output_dir: Path) -> list[str]:
 
 
 def build_section_6(ctx: dict) -> list[str]:
+    """第 6 节：建模建议（复述 recommendations，不重算阈值）。"""
     rec = ctx.get("recommendations") or {}
     lines = ["## 6. 建模建议", ""]
     if not rec:
@@ -634,6 +642,7 @@ def build_section_6(ctx: dict) -> list[str]:
 
 
 def build_section_7(ctx: dict) -> list[str]:
+    """第 7 节：风险与限制（样本量、聚合填充披露等）。"""
     s = ctx.get("summary") or {}
     agg = ctx.get("aggregation")
     n = ctx.get("n_samples")
@@ -656,6 +665,7 @@ def build_section_7(ctx: dict) -> list[str]:
 
 
 def build_section_8(ctx: dict) -> list[str]:
+    """第 8 节：建议的下一步操作清单。"""
     rec = ctx.get("recommendations") or {}
     d = _sget(rec, "differencing", "recommended_d")
     detrend = _sget(rec, "preprocessing", "detrend_method")
@@ -677,6 +687,7 @@ def build_section_8(ctx: dict) -> list[str]:
 
 
 def build_footer(ctx: dict) -> list[str]:
+    """报告页脚（生成说明与产物索引）。"""
     return [
         "---",
         "",

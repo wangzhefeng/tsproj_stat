@@ -1,3 +1,4 @@
+"""内置 demo 序列生成：无 data_path 时的 smoke/test 数据回退。"""
 from __future__ import annotations
 
 import numpy as np
@@ -21,14 +22,3 @@ def load_demo_series(
     })
 
     return df
-
-
-
-
-# 测试代码 main 函数
-def main():
-    df = load_demo_series(time_col="ds", target_col="y", freq="D", n_points=200)
-    print(df)
-
-if __name__ == "__main__":
-    main()

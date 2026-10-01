@@ -3,7 +3,8 @@
 
 该模块提供了日志记录功能，包括：
 - 控制台日志输出
-- 按天轮转的文件日志
+- 按天轮转的文件日志（懒挂载：LOG_NAME 环境变量存在时，在 import 或
+  configure_logging 时创建 logs/{LOG_NAME}/service；未设置时只输出控制台）
 - 日志级别通过环境变量SERVICE_LOG_LEVEL配置
 - JSON结构化格式（通过 configure_logging 启用）
 - run_id 注入与阶段耗时追踪
@@ -21,14 +22,6 @@ from logging import handlers
 from pathlib import Path
 
 
-# 项目根路径
-ROOT_PATH = Path.cwd()
-
-# 日志路径
-LOG_DIR = Path(f"{ROOT_PATH}/logs/{os.environ.get('LOG_NAME')}")
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-LOG_PATH = LOG_DIR.joinpath("service")
-
 # 日志级别，默认为INFO
 LOG_LEVEL = os.environ.get("SERVICE_LOG_LEVEL", "INFO")
 
@@ -37,7 +30,7 @@ _current_run_id: str = ""
 
 
 class _RunIdFilter(logging.Filter):
-    """Inject current run_id into every log record."""
+    """把当前 run_id 注入每条日志记录。"""
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.run_id = _current_run_id
@@ -45,7 +38,7 @@ class _RunIdFilter(logging.Filter):
 
 
 class JsonFormatter(logging.Formatter):
-    """Format log records as single-line JSON objects."""
+    """把日志记录格式化为单行 JSON 对象。"""
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict = {
@@ -74,43 +67,73 @@ stream_handler = logging.StreamHandler(stream=sys.stderr)
 stream_handler.setLevel(LOG_LEVEL)
 stream_handler.setFormatter(_text_formatter)
 
-# 按天轮转文件日志处理器
-time_rotating_file_handler = handlers.TimedRotatingFileHandler(
-    filename=LOG_PATH,
-    when="MIDNIGHT",
-    interval=1,
-    backupCount=10,
-    encoding="utf-8",
-)
-time_rotating_file_handler.suffix = "%Y-%m-%d.log"
-time_rotating_file_handler.extMatch = re.compile(r"^\d{4}-\d{2}-\d{2}.log$")
-time_rotating_file_handler.setLevel(LOG_LEVEL)
-time_rotating_file_handler.setFormatter(_text_formatter)
-
 # 主日志记录器
 logger = logging.getLogger(__name__)
 logger.addHandler(stream_handler)
-logger.addHandler(time_rotating_file_handler)
 logger.addFilter(_RunIdFilter())
 logger.setLevel(LOG_LEVEL)
 logger.propagate = False
 
+# 按天轮转文件日志处理器（懒挂载）
+_file_handler: handlers.TimedRotatingFileHandler | None = None
+
+
+def _build_file_handler(log_name: str) -> handlers.TimedRotatingFileHandler:
+    """在 cwd/logs/{log_name}/ 下创建按天轮转的文件日志处理器。"""
+    log_dir = Path.cwd() / "logs" / log_name
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handler = handlers.TimedRotatingFileHandler(
+        filename=log_dir / "service",
+        when="MIDNIGHT",
+        interval=1,
+        backupCount=10,
+        encoding="utf-8",
+    )
+    handler.suffix = "%Y-%m-%d.log"
+    handler.extMatch = re.compile(r"^\d{4}-\d{2}-\d{2}.log$")
+    handler.setLevel(LOG_LEVEL)
+    handler.setFormatter(_text_formatter)
+    return handler
+
+
+def _ensure_file_handler() -> None:
+    """LOG_NAME 已设置且尚未挂载文件 handler 时挂载（幂等）。
+
+    文件日志目录在首次需要时才创建，避免 import 顺序竞态决定日志落点，
+    也避免未命名运行产生 logs/None 目录。
+    """
+    global _file_handler
+    if _file_handler is not None:
+        return
+    log_name = os.environ.get("LOG_NAME")
+    if not log_name:
+        return
+    _file_handler = _build_file_handler(log_name)
+    logger.addHandler(_file_handler)
+
+
+# import 时尝试挂载（脚本经 export LOG_NAME 运行时保持旧行为）
+_ensure_file_handler()
+
 
 def set_run_id(run_id: str) -> None:
-    """Update the run_id injected into all subsequent log records."""
+    """更新注入后续所有日志记录的 run_id。"""
     global _current_run_id
     _current_run_id = run_id
 
 
 def configure_logging(log_format: str = "text", run_id: str = "") -> None:
-    """Reconfigure the module logger format and optionally set run_id.
+    """重配置模块 logger 的格式，并可选设置 run_id。
 
     Args:
-        log_format: "text" (default) or "json"
-        run_id: identifier for the current run; injected into every record
+        log_format: "text"（默认）或 "json"
+        run_id: 当前运行标识，注入每条记录
     """
     global _current_run_id
     _current_run_id = run_id
+
+    # 运行边界处兜底挂载文件日志（LOG_NAME 在 import 后才设置的场合）
+    _ensure_file_handler()
 
     if log_format == "json":
         fmt = JsonFormatter()
@@ -123,9 +146,9 @@ def configure_logging(log_format: str = "text", run_id: str = "") -> None:
 
 @contextlib.contextmanager
 def timed_stage(stage_name: str, _logger=None):
-    """Context manager that logs elapsed time for a named pipeline stage.
+    """记录具名流水线阶段耗时的上下文管理器。
 
-    Usage:
+    用法：
         with timed_stage("train"):
             model.fit(...)
     """
@@ -139,16 +162,3 @@ def timed_stage(stage_name: str, _logger=None):
             f"[{stage_name}] completed in {elapsed_ms}ms",
             extra={"stage": stage_name, "duration_ms": elapsed_ms},
         )
-
-
-def main():
-    """日志功能演示"""
-    logger.debug("这是一条调试信息")
-    logger.info("这是一条普通信息")
-    logger.warning("这是一条警告信息")
-    logger.error("这是一条错误信息")
-    logger.critical("这是一条严重错误信息")
-
-
-if __name__ == "__main__":
-    main()

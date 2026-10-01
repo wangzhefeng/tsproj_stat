@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+"""模型工厂：按名称从 registry 创建模型实例，应用层不直接 import 具体模型类。"""
+from __future__ import annotations
 
 from dataclasses import dataclass
 

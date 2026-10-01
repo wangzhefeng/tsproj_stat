@@ -2,14 +2,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_provider.data_processor import DataProcessor
+from data_provider.target_transforms.transformer import TargetTransformer
 
 
 def test_mstl_roundtrip_and_future_phase():
     t = np.arange(205)
     seasonal = 3 * np.sin(2 * np.pi * t / 7) + 5 * np.cos(2 * np.pi * t / 24)
     y = pd.Series(100 + seasonal, name="y")
-    proc = DataProcessor(decomposition_method="mstl", seasonal_periods=[7, 24])
+    proc = TargetTransformer(decomposition_method="mstl", seasonal_periods=[7, 24])
     transformed = proc.fit_transform(y)
     np.testing.assert_allclose(proc.inverse_transform(transformed), y, atol=1e-10)
     future_t = np.arange(205, 225)
@@ -23,5 +23,5 @@ def test_mstl_roundtrip_and_future_phase():
 @pytest.mark.parametrize("periods,model,n", [([7, 24], "additive", 40), ([7, 7], "additive", 100), ([7, 24], "multiplicative", 100)])
 def test_mstl_rejects_unsupported_or_insufficient_data(periods, model, n):
     with pytest.raises(ValueError, match="MSTL|seasonal_periods"):
-        DataProcessor(decomposition_method="mstl", seasonal_periods=periods,
+        TargetTransformer(decomposition_method="mstl", seasonal_periods=periods,
                       decomposition_model=model).fit_transform(pd.Series(np.arange(n, dtype=float)))

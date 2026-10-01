@@ -76,13 +76,13 @@ def test_backtest_train_size_explicit_overrides_default():
 def test_results_data_name_overrides_data_name_resolution(tmp_path):
     # 显式 results_data_name 优先于 data_path stem；未设置时回落 stem；非法路径拒绝。
     # 注意：合法名分支会真实 mkdir，results_dir 必须指向 tmp_path，避免污染仓库 results/。
-    from artifacts.paths import _resolve_data_name, prepare_run_artifacts
+    from artifacts.paths import resolve_data_name, prepare_run_artifacts
 
     cfg = AppConfig(data_path="dataset/aidc_power_month/derived/A_Loads_1day_mean_20251001_20260728.csv")
-    assert _resolve_data_name(cfg) == "A_Loads_1day_mean_20251001_20260728"
+    assert resolve_data_name(cfg) == "A_Loads_1day_mean_20251001_20260728"
     cfg = AppConfig(data_path="dataset/x/y.csv", results_data_name="aidc_power_month/route_A")
-    assert _resolve_data_name(cfg) == "aidc_power_month/route_A"
-    assert _resolve_data_name(AppConfig()) == "demo_series"
+    assert resolve_data_name(cfg) == "aidc_power_month/route_A"
+    assert resolve_data_name(AppConfig()) == "demo_series"
     with pytest.raises(ValueError):
         prepare_run_artifacts(AppConfig(data_path="dataset/x/y.csv", results_data_name="../escape"))
     with pytest.raises(ValueError):

@@ -1,3 +1,8 @@
+"""rolling backtest：窗口切分、逐窗推理、窗口级指标与跨窗口汇总。
+
+默认 RAISE 语义：任一窗口失败即中止；显式 allow_failed_windows 才跳过
+并在 summary 打标 survivor_bias。区间指标按置信水平展开（interval_coverage_80 式）。
+"""
 from __future__ import annotations
 
 import time
@@ -11,10 +16,11 @@ import numpy as np
 from forecasting.strategies import normalize_forecast_strategy, normalize_window_mode, run_point_inference
 from .metrics import bias, mae, mape, max_error, mse, r2, rmse, smape
 from .metrics import coverage, interval_width, winkler_score
-from forecasting.intervals import predict_frame
+from forecasting.intervals import iter_bound_pairs, predict_frame
 from forecasting.strategies import checked_model_builder
 from models.base import BaseStatModel
-from data_provider.data_processor import DataProcessor
+from data_provider.target_transforms.transformer import TargetTransformer
+from data_provider.cleaning.imputation import repair_history_frame, require_finite
 from utils.log_util import logger
 
 
@@ -30,16 +36,6 @@ class BacktestResult:
     summary_df: pd.DataFrame
     summary: dict[str, float | int | str]
     failed_windows: list[dict]
-
-
-def _iter_interval_pairs(frame: pd.DataFrame):
-    """按水平配对迭代区间列：yhat_lower[_suffix] ↔ yhat_upper[_suffix]。"""
-    for col in frame.columns:
-        if col.startswith("yhat_lower"):
-            suffix = col[len("yhat_lower"):]
-            upper = f"yhat_upper{suffix}"
-            if upper in frame.columns:
-                yield col, upper
 
 
 def rolling_backtest(
@@ -58,7 +54,7 @@ def rolling_backtest(
     verbose: bool = False,
     progress_every: int = 10,
     n_jobs: int = 1,
-    processor_builder: Callable[[], DataProcessor] | None = None,
+    processor_builder: Callable[[], TargetTransformer] | None = None,
     allow_failed_windows: bool = False,
     interval_method: str = "none",
     interval_alpha: float = 0.05,
@@ -126,6 +122,7 @@ def rolling_backtest(
         start += step
 
     def evaluate_window(window: tuple[int, int, int]) -> dict:
+        """执行单个回测窗口：切分 →（可选预处理）→ 推理 → 指标与逐步预测明细。"""
         nonlocal cached_model
         window_id, train_start, start = window
         train_slice = df.iloc[train_start:start].reset_index(drop=True)
@@ -149,7 +146,18 @@ def rolling_backtest(
         did_refit = True
         interval_df = None
         bound_pairs: list[tuple[str, str]] = []
+        repaired_count = 0
         try:
+            require_finite(test_y, "evaluation target")
+            if test_x_future is not None:
+                require_finite(test_x_future, "future exogenous data")
+            if interval_method == "none":
+                # 原点之后的观测不可见；区间路径由每个内部校准原点独立修复。
+                repaired, audit = repair_history_frame(train_slice, available_hist_cols)
+                repaired_count = audit.filled_value_count
+                train_y = repaired[target_col].astype(float).reset_index(drop=True)
+                if train_x_hist is not None:
+                    train_x_hist = repaired[available_hist_cols].astype(float).reset_index(drop=True)
             if proc is not None and use_proc and interval_method == "none":
                 train_y_model = proc.fit_transform(train_y)
                 if train_x_hist is not None and target_col in train_x_hist.columns:
@@ -217,10 +225,12 @@ def rolling_backtest(
             "bias": bias(test_y.values, pred.values),
             "max_error": max_error(test_y.values, pred.values),
             "refitted": did_refit,
+            "history_filled_value_count": repaired_count if interval_method == "none" else None,
+            "history_repair_policy": "window_local_linear" if interval_method == "none" else "per_calibration_origin",
         }
         pred_rows = []
         if interval_df is not None:
-            bound_pairs = [(c, u) for c, u in _iter_interval_pairs(interval_df)]
+            bound_pairs = [(c, u) for c, u in iter_bound_pairs(interval_df)]
             for lower_col, upper_col in bound_pairs:
                 suffix = lower_col[len("yhat_lower"):]
                 level_tag = suffix.strip("_") if suffix else None

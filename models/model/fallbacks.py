@@ -10,15 +10,12 @@ import numpy as np
 import pandas as pd
 
 from models.base import BaseStatModel
-from data_provider.data_transfer import to_univariate_series
-
-
-def validate_horizon(horizon: int) -> None:
-    if horizon <= 0:
-        raise ValueError("horizon must be positive")
+from models.contracts.inputs import to_univariate_series
+from models.contracts.validation import validate_horizon
 
 
 def warn_and_use_fallback(*, model_name: str, fallback_name: str, exc: Exception) -> None:
+    """记录主模型拟合失败的 RuntimeWarning，并披露即将使用的 fallback 模型名。"""
     warnings.warn(f"{model_name} fit failed, fallback to {fallback_name}: {exc}", RuntimeWarning)
 
 

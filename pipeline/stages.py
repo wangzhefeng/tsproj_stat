@@ -5,14 +5,12 @@
 
 - run_train_stage  / run_test_stage / run_forecast_stage：
   对应 train / test(backtest) / forecast 三个阶段执行器；
-- new_processor_from_config：按 AppConfig 构建未拟合 DataProcessor，
+- new_processor_from_config：按 AppConfig 构建未拟合 TargetTransformer，
   供回测与选型按窗口重建同配处理器。
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Callable
 
 import numpy as np
@@ -24,11 +22,9 @@ from pipeline.tester import Tester
 from forecasting.forecaster import Forecaster
 from forecasting.intervals import predict_frame, simulate_frame
 from artifacts.paths import resolve_model_params
-from data_provider.data_processor import DataProcessor
+from data_provider.target_transforms.transformer import TargetTransformer
+from data_provider.cleaning.imputation import require_finite
 from evaluation.backtest import BacktestResult
-
-LOGGING_LABEL = Path(__file__).name[:-3]
-os.environ.setdefault("LOG_NAME", LOGGING_LABEL)
 from utils.log_util import logger
 
 
@@ -79,15 +75,17 @@ class PrepareResult:
     history_model_input_df: pd.DataFrame
     future_exog_df: pd.DataFrame | None
     history_time: pd.Series
-    processor: DataProcessor
+    processor: TargetTransformer
     raw_history_df: pd.DataFrame
     model_input_feature_columns: list[str] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)
 
 
-def new_processor_from_config(cfg: AppConfig) -> DataProcessor:
-    """按 AppConfig 构建未拟合的 DataProcessor（与 prepare 阶段同配）。"""
-    return DataProcessor(
+def new_processor_from_config(cfg: AppConfig) -> TargetTransformer:
+    """按 AppConfig 构建未拟合的 TargetTransformer（与 prepare 阶段同配）。"""
+    return TargetTransformer(
+        scale=cfg.scale,
+        scaler_type=cfg.scaler_type,
         detrend_method=cfg.detrend_method,
         denoise_enabled=cfg.denoise_enabled,
         denoise_method=cfg.denoise_method,
@@ -146,6 +144,7 @@ def run_train_stage(
         fitted = processor.inverse_transform(fitted)
     # history_y 是建模尺度；诊断表与残差用原始尺度 y（raw_history_df）对齐。
     y_raw = prepared.raw_history_df[cfg.target_col].astype(float).reset_index(drop=True)
+    require_finite(y_raw, "fitted-values diagnostic target")
     if len(y_raw) != len(fitted):
         # feature_mode=model_input 的 warmup 丢行会让 raw 视图与建模序列错位；
         # 该组合下原始尺度残差不可对齐，显式拒绝而非错位相减。
@@ -197,7 +196,7 @@ def run_test_stage(
     df: pd.DataFrame,
     model_history_input_cols: list[str],
     effective_endog_cols: list[str],
-    processor_builder: Callable[[], DataProcessor] | None,
+    processor_builder: Callable[[], TargetTransformer] | None,
 ) -> BacktestResult:
     """回测阶段：rolling backtest，返回 BacktestResult（不落盘）。"""
     tester = Tester(
@@ -232,7 +231,7 @@ def run_forecast_stage(
     cfg: AppConfig,
     prepared: "PrepareResult",
     model_history_input_cols: list[str],
-    processor_builder: Callable[[], DataProcessor] | None = None,
+    processor_builder: Callable[[], TargetTransformer] | None = None,
 ) -> ForecastStageResult:
     """预测阶段：推理未来 horizon 步，返回 yhat（或含区间）结果（不落盘）。"""
     forecaster = Forecaster(

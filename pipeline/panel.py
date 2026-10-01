@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 
 from pipeline.runner import ModelApp
-from artifacts.paths import _path_token
+from artifacts.paths import path_token
 from artifacts.writers import dataframe_to_csv, write_json
 from config import AppConfig
 
@@ -30,6 +30,11 @@ class SeriesPanel:
     """
 
     def __init__(self, source: pd.DataFrame, id_col: str):
+        """
+        Args:
+            source: 面板长表，必须包含 id_col 且无空值。
+            id_col: 序列标识列；同 id 的行构成一条序列。
+        """
         if id_col not in source or source[id_col].isna().to_numpy().any() or source.empty:
             raise ValueError("panel requires non-empty, non-null series identifiers")
         self.source = source
@@ -38,6 +43,7 @@ class SeriesPanel:
 
     @property
     def series_ids(self) -> list[str]:
+        """全部序列标识（按排序后的 groupby 键序）。"""
         return [str(key) for key in self._groups]
 
     def series_frame(self, series_id: str) -> pd.DataFrame:
@@ -45,12 +51,13 @@ class SeriesPanel:
         return self._groups[series_id].drop(columns=[self.id_col])
 
     def __len__(self) -> int:
+        """面板中的序列条数。"""
         return len(self._groups)
 
 
 def _series_token(series_id: str) -> str:
     """可读前缀 + 摘要，防斜杠/同名碰撞。"""
-    return _path_token(series_id)[:40] + "-" + hashlib.sha256(series_id.encode()).hexdigest()[:12]
+    return path_token(series_id)[:40] + "-" + hashlib.sha256(series_id.encode()).hexdigest()[:12]
 
 
 def _build_task_configs(cfg: AppConfig, panel: SeriesPanel, future: pd.DataFrame | None, input_dir: Path):
@@ -146,6 +153,12 @@ def _collect_task_outputs(task: dict, predictions: list, metrics: list,
 
 
 def run_batch(cfg: AppConfig) -> dict:
+    """执行面板批量：序列×模型任务分片运行，输出 manifest 与汇总 CSV。
+
+    默认任一任务失败即整体 RAISE；batch_allow_failed=true 时容忍并打标
+    survivor_bias。审计输入写 results_train/batch_inputs/{batch_id}/，
+    汇总产物写 results_forecast/batch/{batch_id}/。
+    """
     cfg.validate()
     if not cfg.data_path or not cfg.series_id_col:
         raise ValueError("batch requires data_path and series_id_col")

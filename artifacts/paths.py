@@ -28,7 +28,7 @@ class RunArtifacts:
     custom_monitor_dir: Path
 
 
-def _resolve_data_name(cfg) -> str:
+def resolve_data_name(cfg) -> str:
     """从数据路径提取数据名；显式 results_data_name 优先（支持层级路径）；demo 数据使用固定名称便于结果归类。"""
     explicit = getattr(cfg, "results_data_name", None)
     if explicit:
@@ -50,11 +50,11 @@ def _mapping_tokens(mapping: dict, prefix: str = "") -> list[str]:
         if isinstance(value, dict):
             tokens.extend(_mapping_tokens(value, full_key))
         else:
-            tokens.append(f"{_path_token(full_key)}_{_path_token(value)}")
+            tokens.append(f"{path_token(full_key)}_{path_token(value)}")
     return tokens
 
 
-def _path_token(value: Any) -> str:
+def path_token(value: Any) -> str:
     if value is None:
         return "none"
     if isinstance(value, bool):
@@ -62,7 +62,7 @@ def _path_token(value: Any) -> str:
     if isinstance(value, Path):
         value = value.name
     if isinstance(value, (list, tuple)):
-        return "+".join(_path_token(item) for item in value) or "none"
+        return "+".join(path_token(item) for item in value) or "none"
     if isinstance(value, dict):
         return "+".join(_mapping_tokens(value)) or "default"
     text = str(value)
@@ -89,32 +89,32 @@ def resolve_model_params(cfg: AppConfig) -> dict[str, Any]:
 def build_experiment_path(cfg: AppConfig) -> Path:
     """用完整可读参数构建稳定的模型实验相对路径。"""
     resolved_params = resolve_model_params(cfg)
-    params = _path_token(resolved_params) if resolved_params else "default"
+    params = path_token(resolved_params) if resolved_params else "default"
     scale = cfg.scaler_type if cfg.scale else "off"
     process = (
-        f"process-denoise-{_path_token(cfg.denoise_method)}_w-{cfg.denoise_window}"
-        f"_detrend-{_path_token(cfg.detrend_method)}"
-        f"_decomp-{_path_token(cfg.decomposition_method)}"
-        f"_period-{_path_token(cfg.seasonal_period)}"
-        f"{('_periods-' + _path_token(cfg.seasonal_periods)) if cfg.seasonal_periods else ''}"
+        f"process-denoise-{path_token(cfg.denoise_method)}_w-{cfg.denoise_window}"
+        f"_detrend-{path_token(cfg.detrend_method)}"
+        f"_decomp-{path_token(cfg.decomposition_method)}"
+        f"_period-{path_token(cfg.seasonal_period)}"
+        f"{('_periods-' + path_token(cfg.seasonal_periods)) if cfg.seasonal_periods else ''}"
     )
     return Path(
-        f"{_path_token(cfg.model_name)}-{_path_token(cfg.setting_strategy_label())}",
+        f"{path_token(cfg.model_name)}-{path_token(cfg.setting_strategy_label())}",
         f"params-{params}",
         f"hist-{cfg.history_size}_pred-{cfg.predict_horizon}",
         (
-            f"bt-{_path_token(cfg.resolved_backtest_window_mode())}"
+            f"bt-{path_token(cfg.resolved_backtest_window_mode())}"
             f"_train-{cfg.resolved_backtest_train_size()}"
             f"_h-{cfg.backtest_horizon}_step-{cfg.backtest_step}"
             + (f"_refit-{cfg.backtest_refit_every}" if cfg.backtest_refit_every != 1 else "")
         ),
         (
-            f"input-feature-{_path_token(cfg.feature_mode)}"
-            f"_lags-{_path_token(cfg.lags)}_scale-{_path_token(scale)}"
+            f"input-feature-{path_token(cfg.feature_mode)}"
+            f"_lags-{path_token(cfg.lags)}_scale-{path_token(scale)}"
             + ("_ignore-unsupported-on" if cfg.ignore_unsupported_inputs else "")
         ),
         process,
-        f"interval-{'on' if cfg.return_intervals else 'off'}_alpha-{_path_token(cfg.interval_alpha)}"
+        f"interval-{'on' if cfg.return_intervals else 'off'}_alpha-{path_token(cfg.interval_alpha)}"
         + (f"_conformal-{cfg.conformal_n_windows}" if cfg.return_intervals and cfg.interval_method == "conformal" else ""),
     )
 
@@ -124,20 +124,20 @@ def build_eda_path(cfg: AppConfig) -> Path:
     aggregation = cfg.aggregation_method if cfg.aggregation_enabled else "none"
     fill_method = cfg.aggregation_fill_method if cfg.aggregation_enabled else "none"
     return Path(
-        f"freq-{_path_token(cfg.freq)}",
+        f"freq-{path_token(cfg.freq)}",
         f"period-{cfg.eda_period}_nlags-{cfg.eda_nlags}",
         (
             f"recommend-{'on' if cfg.eda_recommendation_enabled else 'off'}"
             f"_preprocessed-{'on' if cfg.eda_run_preprocessed else 'off'}"
         ),
-        f"aggregation-{_path_token(aggregation)}_fill-{_path_token(fill_method)}",
+        f"aggregation-{path_token(aggregation)}_fill-{path_token(fill_method)}",
     )
 
 
 def prepare_run_artifacts(cfg: AppConfig) -> RunArtifacts:
     """按 data_name 和完整参数路径创建本次运行的产物目录。"""
-    # 提取数据名称；层级 data_name 支持把数据项目组织成子树（非法值在 _resolve_data_name 内拒绝）
-    data_name = _resolve_data_name(cfg)
+    # 提取数据名称；层级 data_name 支持把数据项目组织成子树（非法值在 resolve_data_name 内拒绝）
+    data_name = resolve_data_name(cfg)
     setting = f"{cfg.model_name}-{cfg.setting_strategy_label()}"
     experiment_path = build_experiment_path(cfg)
     eda_path = build_eda_path(cfg)

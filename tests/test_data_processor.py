@@ -2,12 +2,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_provider.data_processor import DataProcessor, infer_seasonal_period
+from data_provider.target_transforms.transformer import TargetTransformer, infer_seasonal_period
 
 
 def test_data_processor_fit_inverse_roundtrip_linear():
     s = pd.Series([1.0, 2.0, 3.0, 4.5, 5.2, 6.1])
-    p = DataProcessor(detrend_method="linear", denoise_enabled=False)
+    p = TargetTransformer(detrend_method="linear", denoise_enabled=False)
     t = p.fit_transform(s)
     restored = p.inverse_transform(t)
 
@@ -20,7 +20,7 @@ def test_data_processor_fit_inverse_roundtrip_linear():
 )
 def test_data_processor_inverse_forecast_restores_trend(method, denoise, expected):
     s = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0])
-    p = DataProcessor(detrend_method=method, denoise_enabled=denoise, denoise_window=3)
+    p = TargetTransformer(detrend_method=method, denoise_enabled=denoise, denoise_window=3)
     _ = p.fit_transform(s)
     pred = p.inverse_forecast([0.1, 0.2, 0.3])
 
@@ -41,7 +41,7 @@ def test_data_processor_seasonal_decompose_roundtrip():
     base = [10.0, 12.0, 11.0, 9.0]
     trend = np.linspace(0.0, 3.0, 24)
     s = pd.Series(np.asarray(base * 6) + trend)
-    p = DataProcessor(
+    p = TargetTransformer(
         detrend_method="none",
         denoise_enabled=False,
         decomposition_method="seasonal_decompose",
@@ -58,7 +58,7 @@ def test_data_processor_seasonal_decompose_roundtrip():
 def test_data_processor_stl_inverse_forecast_restores_seasonal_phase():
     # 非整周期结尾 + 超过一个周期的 horizon，检验相位和周期重复。
     s = pd.Series(([10.0, 12.0, 10.0, 8.0] * 7)[:26])
-    p = DataProcessor(
+    p = TargetTransformer(
         detrend_method="none",
         denoise_enabled=False,
         decomposition_method="stl",
@@ -73,7 +73,7 @@ def test_data_processor_stl_inverse_forecast_restores_seasonal_phase():
 
 def test_data_processor_moving_median_denoise_roundtrip():
     s = pd.Series([1.0, 50.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-    p = DataProcessor(detrend_method="none", denoise_method="moving_median", denoise_window=3)
+    p = TargetTransformer(detrend_method="none", denoise_method="moving_median", denoise_window=3)
     transformed = p.fit_transform(s)
     restored = p.inverse_transform(transformed)
 
@@ -85,7 +85,7 @@ def test_data_processor_moving_median_denoise_roundtrip():
 
 def test_data_processor_moving_median_short_series_returns_input():
     s = pd.Series([1.0, 5.0])
-    p = DataProcessor(detrend_method="none", denoise_method="moving_median", denoise_window=5)
+    p = TargetTransformer(detrend_method="none", denoise_method="moving_median", denoise_window=5)
 
     transformed = p.fit_transform(s)
 

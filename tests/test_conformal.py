@@ -18,11 +18,11 @@ def test_conformal_stepwise_errors_are_original_scale():
 
 
 def test_conformal_fits_preprocessor_within_each_origin():
-    from data_provider.data_processor import DataProcessor
+    from data_provider.target_transforms.transformer import TargetTransformer
     from forecasting.intervals import predict_frame
     fitted = []
 
-    class AuditedProcessor(DataProcessor):
+    class AuditedProcessor(TargetTransformer):
         def fit_transform(self, y):
             fitted.append(y.copy())
             return super().fit_transform(y)

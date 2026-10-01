@@ -70,7 +70,7 @@ def test_eda_raises_for_short_series(tmp_path):
         )
 
 
-def test_eda_fills_missing_timestamps_after_frequency_alignment(tmp_path):
+def test_eda_requires_explicit_frequency_alignment(tmp_path):
     df = pd.DataFrame(
         {
             "ds": pd.to_datetime(
@@ -91,16 +91,19 @@ def test_eda_fills_missing_timestamps_after_frequency_alignment(tmp_path):
         }
     )
 
-    out = run_eda(
-        df=df,
-        time_col="ds",
-        target_col="y",
-        freq="D",
-        output_dir=str(tmp_path),
-    )
+    from data_provider.resampling.core import aggregate_frame
 
+    with pytest.raises(ValueError, match="EDA input is not regular"):
+        run_eda(df, "ds", "y", "D", str(tmp_path))
+    assert not list(tmp_path.iterdir())
+    aligned = aggregate_frame(df, time_col="ds", target_col="y", source_freq="D",
+                              target_freq="D", fill_method="linear")
+    assert aligned.inserted_timestamp_count == aligned.filled_value_count == 1
+    assert aligned.frame.y.tolist() == list(range(1, 12))
+    out = run_eda(aligned.frame, "ds", "y", "D", str(tmp_path))
     summary = pd.read_json(out["eda_summary_path"], typ="series")
     assert summary["n_samples"] == 11.0
+    assert summary["input_view"]["policy"] == "as_provided"
 
 
 def test_eda_outputs_structured_recommendations(tmp_path):

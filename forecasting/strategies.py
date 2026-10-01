@@ -1,3 +1,10 @@
+"""多步预测策略与推理编排：native/single_step/direct/recursive/dirrec。
+
+策略语义：native 一次拟合原生多步；direct 逐步重拟合并取对应步长末值
+（兼容语义，非 horizon-specific 监督学习）；recursive 逐步把预测写回历史；
+dirrec 逐步重建模型且用递归扩展后的历史。模型能力门禁由 checked_model_builder
+在推理前统一校验。
+"""
 from __future__ import annotations
 
 import copy
@@ -6,7 +13,8 @@ from typing import Callable, Sequence
 import numpy as np
 import pandas as pd
 
-from data_provider.data_transfer import combine_history_frame, to_dataframe, to_univariate_series
+from models.contracts.inputs import combine_history_frame, to_dataframe, to_univariate_series
+from models.contracts.validation import validate_horizon
 from models.base import BaseStatModel
 
 
@@ -32,12 +40,8 @@ def normalize_window_mode(window_mode: str | None) -> str:
     return candidate
 
 
-def validate_horizon(horizon: int) -> None:
-    if isinstance(horizon, bool) or not isinstance(horizon, (int, np.integer)) or horizon <= 0:
-        raise ValueError("horizon must be positive")
-
-
 def validate_single_step_horizon(strategy: str, horizon: int) -> None:
+    """single_step 策略只允许 horizon=1（语义上就是单步预测）。"""
     if strategy == "single_step" and horizon != 1:
         raise ValueError("single_step forecast_strategy requires predict_horizon/backtest_horizon == 1")
 
@@ -136,6 +140,7 @@ def _recursive_with_update(
 def checked_model_builder(model_builder, strategy, X_future, intervals=False, history=None, X_hist=None):
     """注册模型能力是执行门禁；自定义模型仍遵守公共接口。"""
     def build():
+        """构建模型并按 registry 能力位校验「策略 × 输入 × 区间」组合。"""
         model = model_builder()
         spec = getattr(model, "_model_spec", None)
         if spec is not None:
@@ -258,7 +263,7 @@ def run_interval_inference(
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     # 延迟导入避免 intervals ↔ strategies 循环依赖（IntervalSpec 协议归 intervals）。
-    from forecasting.intervals import resolve_interval_levels
+    from forecasting.intervals import iter_bound_pairs, resolve_interval_levels
 
     resolved_levels = resolve_interval_levels(levels, alpha)
     multi = len(resolved_levels) > 1
@@ -285,7 +290,7 @@ def run_interval_inference(
             values = result[["yhat", *bound_cols]].to_numpy(dtype=float)
             if not np.isfinite(values).all():
                 raise ValueError("invalid native intervals; use conformal or inspect backend failure")
-            for lower_col, upper_col in _iter_bound_pairs(result):
+            for lower_col, upper_col in iter_bound_pairs(result):
                 if (result[lower_col] > result[upper_col]).any():
                     raise ValueError("invalid native intervals; use conformal or inspect backend failure")
         return result.reset_index(drop=True)
@@ -300,18 +305,8 @@ def run_interval_inference(
             raise ValueError("interval prediction length mismatch")
         row: dict[str, float] = {"yhat": float(result["yhat"].iloc[-1])}
         last = result.iloc[-1]
-        for lower_col, upper_col in _iter_bound_pairs(result):
+        for lower_col, upper_col in iter_bound_pairs(result):
             row[lower_col] = float(last[lower_col]) if pd.notna(last[lower_col]) else np.nan
             row[upper_col] = float(last[upper_col]) if pd.notna(last[upper_col]) else np.nan
         rows.append(row)
     return pd.DataFrame(rows)
-
-
-def _iter_bound_pairs(frame: pd.DataFrame):
-    """按水平配对迭代区间列：yhat_lower[_suffix] ↔ yhat_upper[_suffix]。"""
-    for col in frame.columns:
-        if col.startswith("yhat_lower"):
-            suffix = col[len("yhat_lower"):]
-            upper = f"yhat_upper{suffix}"
-            if upper in frame.columns:
-                yield col, upper

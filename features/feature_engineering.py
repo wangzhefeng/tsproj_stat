@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+"""派生特征：历史输入特征与分析快照共用计算；未来标签仅供分析。"""
+from __future__ import annotations
 
 import pandas as pd
 
@@ -6,8 +7,8 @@ import pandas as pd
 class FeatureEngineer:
     """分析型特征构造器。
 
-    当前 features/ 只导出快照用于检查时间特征、lag 特征和监督学习标签形态，
-    不直接参与统计模型训练输入。
+    create_features 输出分析快照；build_history_features 用于显式模型输入，
+    不生成未来标签、不填补 lag warmup。
     """
 
     def __init__(self, time_col: str = "ds", target_col: str = "y"):
@@ -28,14 +29,10 @@ class FeatureEngineer:
         if self.time_col in out.columns:
             out[self.time_col] = pd.to_datetime(out[self.time_col])
 
-        if enable_datetime_features and self.time_col in out.columns:
-            out["hour"] = out[self.time_col].dt.hour
-            out["dayofweek"] = out[self.time_col].dt.dayofweek
-            out["month"] = out[self.time_col].dt.month
-            out["dayofyear"] = out[self.time_col].dt.dayofyear
-
-        for lag in lags:
-            out[f"lag_{lag}"] = out[self.target_col].shift(lag)
+        derived, _ = build_history_features(out, self.time_col, self.target_col,
+                                            enable_datetime_features, lags)
+        for col in derived:
+            out[col] = derived[col]
 
         target_shift_cols = []
         for step in range(1, horizon + 1):
@@ -47,3 +44,19 @@ class FeatureEngineer:
         out = out.dropna().reset_index(drop=True)
 
         return out, feature_cols, target_shift_cols
+
+
+def build_history_features(df: pd.DataFrame, time_col: str, target_col: str,
+                           enable_datetime_features: bool, lags: list[int]) -> tuple[pd.DataFrame, list[str]]:
+    """只派生历史可用的列，保留缺失行供调用者同步切掉 warmup。"""
+    out = pd.DataFrame(index=df.index)
+    if enable_datetime_features and time_col in df:
+        dt = pd.to_datetime(df[time_col])
+        for name, values in {"hour": dt.dt.hour, "dayofweek": dt.dt.dayofweek,
+                             "month": dt.dt.month, "dayofyear": dt.dt.dayofyear}.items():
+            out[name] = values
+    for lag in lags:
+        if lag <= 0:
+            raise ValueError("feature lags must be positive")
+        out[f"lag_{lag}"] = df[target_col].shift(lag)
+    return out, list(out.columns)

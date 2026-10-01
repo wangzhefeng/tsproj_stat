@@ -1,3 +1,4 @@
+"""监控闭环：预测日志写入、实际值回填、滚动指标计算与快照。"""
 from __future__ import annotations
 
 import csv
@@ -240,40 +241,6 @@ class ModelMonitor:
         self._append_rows(self._metrics_path, self._METRICS_COLS, [row])
         return metrics
 
-    def check_degradation(
-        self,
-        baseline_metrics: dict[str, float],
-        threshold_ratio: float = 0.2,
-    ) -> list[str]:
-        """将当前滚动指标与基线比较，返回退化告警信息。
-
-        Args:
-            baseline_metrics: 参考指标，例如 {"mae": 3.2, "rmse": 4.5}。
-            threshold_ratio: 当前指标超过 baseline * (1 + threshold_ratio) 时告警。
-        """
-        rolling = self.compute_rolling_metrics()
-        if not rolling:
-            return ["[Monitor] insufficient data for degradation check"]
-
-        alerts: list[str] = []
-        for metric, baseline_val in baseline_metrics.items():
-            current_val = rolling.get(metric)
-            if current_val is None:
-                continue
-            if baseline_val <= 0:
-                continue
-            ratio = (current_val - baseline_val) / abs(baseline_val)
-            if ratio > threshold_ratio:
-                alerts.append(
-                    f"[Monitor] {metric} degraded: "
-                    f"current={current_val:.4f}, baseline={baseline_val:.4f}, "
-                    f"change=+{ratio:.1%}"
-                )
-        if alerts:
-            for alert in alerts:
-                logger.warning(alert)
-        return alerts
-
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -333,15 +300,10 @@ def run_monitor_actuals_backfill(cfg: AppConfig) -> dict[str, Any] | None:
     # 未配置 monitor_actuals_path 则返回 None
     if cfg.monitor_actuals_path is None:
         return None
-    # 监控数据保存路径
-    from artifacts.paths import build_experiment_path
+    # 监控数据保存路径；data_name 解析与校验统一复用 artifacts.paths 的唯一实现
+    from artifacts.paths import build_experiment_path, resolve_data_name
 
-    explicit_name = getattr(cfg, "results_data_name", None)
-    data_name = (
-        explicit_name.strip().strip("/")
-        if explicit_name
-        else ("demo_series" if cfg.data_path is None else Path(cfg.data_path).stem)
-    )
+    data_name = resolve_data_name(cfg)
     experiment_path = Path(cfg.monitor_actuals_experiment_path) if cfg.monitor_actuals_experiment_path else build_experiment_path(cfg)
     if experiment_path.is_absolute() or ".." in experiment_path.parts:
         raise ValueError("monitor_actuals_experiment_path must be a relative path under the data monitor directory")

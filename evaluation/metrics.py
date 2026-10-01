@@ -1,3 +1,4 @@
+"""评估指标：点误差（mae/rmse/mape/smape/r2/bias/max_error）与区间指标（coverage/width/winkler）。"""
 from __future__ import annotations
 
 import numpy as np
@@ -9,32 +10,38 @@ def _to_arrays(y_true, y_pred):
 
 
 def mae(y_true, y_pred):
+    """平均绝对误差：mean(|y_true - y_pred|)，与目标同量纲，越小越好。"""
     y_true, y_pred = _to_arrays(y_true, y_pred)
     return float(np.mean(np.abs(y_true - y_pred)))
 
 
 def mse(y_true, y_pred):
+    """均方误差：mean((y_true - y_pred)^2)，对大误差更敏感。"""
     y_true, y_pred = _to_arrays(y_true, y_pred)
     return float(np.mean((y_true - y_pred) ** 2))
 
 
 def rmse(y_true, y_pred):
+    """均方根误差：sqrt(mse)，与目标同量纲。"""
     return float(np.sqrt(mse(y_true, y_pred)))
 
 
 def mape(y_true, y_pred, eps: float = 1e-8):
+    """平均绝对百分比误差（小数形式，非百分数）；|y_true| < eps 时按 eps 兜底防除零。"""
     y_true, y_pred = _to_arrays(y_true, y_pred)
     denom = np.maximum(np.abs(y_true), eps)
     return float(np.mean(np.abs((y_true - y_pred) / denom)))
 
 
 def smape(y_true, y_pred, eps: float = 1e-8):
+    """对称 MAPE：2|y_true-y_pred| / (|y_true|+|y_pred|)，分母过小按 eps 兜底。"""
     y_true, y_pred = _to_arrays(y_true, y_pred)
     denom = np.maximum(np.abs(y_true) + np.abs(y_pred), eps)
     return float(np.mean(2.0 * np.abs(y_true - y_pred) / denom))
 
 
 def r2(y_true, y_pred):
+    """决定系数：1 - SS_res/SS_tot；样本 <2 或 y_true 无方差时返回 NaN。"""
     y_true, y_pred = _to_arrays(y_true, y_pred)
     if y_true.size < 2:
         return float("nan")
@@ -46,11 +53,13 @@ def r2(y_true, y_pred):
 
 
 def bias(y_true, y_pred):
+    """平均偏差：mean(y_pred - y_true)，正值表示系统性高估。"""
     y_true, y_pred = _to_arrays(y_true, y_pred)
     return float(np.mean(y_pred - y_true))
 
 
 def max_error(y_true, y_pred):
+    """最大绝对误差：max(|y_true - y_pred|)，刻画最坏单点。"""
     y_true, y_pred = _to_arrays(y_true, y_pred)
     return float(np.max(np.abs(y_true - y_pred)))
 

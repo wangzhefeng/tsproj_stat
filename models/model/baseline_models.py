@@ -12,29 +12,12 @@ import numpy as np
 import pandas as pd
 
 from models.base import BaseStatModel
-from .fallbacks import validate_horizon
-
-
-def _preserve_univariate_series(y: pd.Series | pd.DataFrame) -> pd.Series:
-    if isinstance(y, pd.DataFrame):
-        if y.shape[1] == 0:
-            raise ValueError("Input dataframe is empty")
-        series = y.iloc[:, 0].copy()
-    else:
-        series = y.copy()
-    return series.astype(float)
-
-
-def _resolve_freq(series: pd.Series, freq: str | None = None) -> str:
-    if isinstance(series.index, pd.DatetimeIndex):
-        inferred = series.index.freqstr or pd.infer_freq(series.index)
-        if inferred:
-            return inferred
-    return freq or "D"
+from models.contracts.inputs import preserve_univariate_series, resolve_series_freq
+from models.contracts.validation import validate_horizon
 
 
 def _build_single_series_frame(series: pd.Series, freq: str | None = None) -> tuple[pd.DataFrame, str]:
-    resolved_freq = _resolve_freq(series, freq)
+    resolved_freq = resolve_series_freq(series, freq)
     if isinstance(series.index, pd.DatetimeIndex):
         ds = pd.DatetimeIndex(series.index)
     else:
@@ -50,6 +33,7 @@ def _build_single_series_frame(series: pd.Series, freq: str | None = None) -> tu
 
 
 class SeasonalNaiveModel(BaseStatModel):
+    """季节朴素基线：预测值 = 上一季节周期的同位观测。"""
     def __init__(self, season_length: int = 1):
         if season_length <= 0:
             raise ValueError("season_length must be > 0")
@@ -57,7 +41,7 @@ class SeasonalNaiveModel(BaseStatModel):
         self._pattern: list[float] = []
 
     def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "SeasonalNaiveModel":
-        series = _preserve_univariate_series(y).reset_index(drop=True)
+        series = preserve_univariate_series(y).reset_index(drop=True)
         if len(series) == 0:
             raise ValueError("Input series is empty")
         take = min(self.season_length, len(series))
@@ -73,6 +57,7 @@ class SeasonalNaiveModel(BaseStatModel):
 
 
 class HistoricAverageModel(BaseStatModel):
+    """历史均值基线：预测值 = 训练窗口（可选最近 window 行）的均值。"""
     def __init__(self, window: int | None = None):
         if window is not None and window <= 0:
             raise ValueError("window must be > 0 when provided")
@@ -80,7 +65,7 @@ class HistoricAverageModel(BaseStatModel):
         self._mean: float | None = None
 
     def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "HistoricAverageModel":
-        series = _preserve_univariate_series(y).reset_index(drop=True)
+        series = preserve_univariate_series(y).reset_index(drop=True)
         if len(series) == 0:
             raise ValueError("Input series is empty")
         values = series if self.window is None else series.iloc[-self.window :]
@@ -95,6 +80,7 @@ class HistoricAverageModel(BaseStatModel):
 
 
 class CrostonModel(BaseStatModel):
+    """Croston 间歇需求模型（experimental）：需求规模与间隔分别指数平滑。"""
     def __init__(self, alpha: float = 0.1):
         if not 0.0 < alpha <= 1.0:
             raise ValueError("alpha must be in (0, 1]")
@@ -103,7 +89,7 @@ class CrostonModel(BaseStatModel):
         self._fitted = False
 
     def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "CrostonModel":
-        series = _preserve_univariate_series(y).reset_index(drop=True)
+        series = preserve_univariate_series(y).reset_index(drop=True)
         if (series < 0).any():
             raise ValueError("CrostonModel requires non-negative demand values")
         if len(series) == 0:
@@ -136,6 +122,10 @@ class CrostonModel(BaseStatModel):
 
 
 class _StatsForecastModelBase(BaseStatModel, ABC):
+    """StatsForecast 后端模型的公共基类：单序列数组接口、fitted 值与区间协议。
+
+    子类只需声明后端装配；pandas 3 CoW 下统一交付自有可写数组。
+    """
     def __init__(self, season_length: int = 1, freq: str | None = None):
         if season_length <= 0:
             raise ValueError("season_length must be > 0")
@@ -156,7 +146,7 @@ class _StatsForecastModelBase(BaseStatModel, ABC):
         raise NotImplementedError
 
     def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "_StatsForecastModelBase":
-        series = _preserve_univariate_series(y)
+        series = preserve_univariate_series(y)
         # 单序列使用数组接口；freq 保留兼容，不再制造虚拟时间轴。
         # pandas 3 CoW 暴露只读视图，CES 内核会原地工作，必须交付自有可写数组。
         self._train_y = series.astype(float).reset_index(drop=True)
@@ -208,6 +198,7 @@ class _StatsForecastModelBase(BaseStatModel, ABC):
 
 
 class AutoETSModel(_StatsForecastModelBase):
+    """AutoETS（StatsForecast 后端）：自动选择指数平滑误差/趋势/季节形式。"""
     def __init__(
         self,
         season_length: int = 1,
@@ -233,6 +224,7 @@ class AutoETSModel(_StatsForecastModelBase):
 
 
 class AutoThetaModel(_StatsForecastModelBase):
+    """AutoTheta（StatsForecast 后端）：自动 Theta 变体选择。"""
     def __init__(
         self,
         season_length: int = 1,
@@ -255,6 +247,7 @@ class AutoThetaModel(_StatsForecastModelBase):
 
 
 class DynamicThetaModel(_StatsForecastModelBase):
+    """DynamicTheta（StatsForecast 后端）：动态优化 Theta。"""
     def __init__(
         self,
         season_length: int = 1,
@@ -274,6 +267,7 @@ class DynamicThetaModel(_StatsForecastModelBase):
 
 
 class AutoCESModel(_StatsForecastModelBase):
+    """AutoCES（StatsForecast 后端）：复杂指数平滑自动选择。"""
     def __init__(self, season_length: int = 1, model: str = "Z"):
         super().__init__(season_length)
         self.model = model
@@ -284,6 +278,7 @@ class AutoCESModel(_StatsForecastModelBase):
 
 
 class RandomWalkWithDriftModel(_StatsForecastModelBase):
+    """带漂移随机游走（StatsForecast 后端）：预测值 = 末值 + 漂移×步长。"""
     def __init__(self):
         super().__init__()
 
@@ -293,6 +288,7 @@ class RandomWalkWithDriftModel(_StatsForecastModelBase):
 
 
 class SeasonalWindowAverageModel(_StatsForecastModelBase):
+    """季节窗口均值（StatsForecast 后端）：同季位最近 window_size 期均值。"""
     def __init__(self, season_length: int = 7, window_size: int = 2):
         super().__init__(season_length)
         if window_size < 1:

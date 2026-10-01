@@ -5,7 +5,6 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-from dataclasses import asdict
 
 import pandas as pd
 
@@ -68,7 +67,3 @@ def forecast_timestamps(history_time: pd.Series | None, horizon: int, freq: str)
     except Exception:
         return pd.Series([pd.NaT] * horizon, name="timestamp")
     return pd.Series(future_index, name="timestamp")
-
-
-def dataclass_to_dict(instance) -> dict[str, Any]:
-    return asdict(instance)

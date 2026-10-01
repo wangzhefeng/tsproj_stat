@@ -22,32 +22,14 @@ class _ProphetConstructor(Protocol):
                  daily_seasonality: str | bool | int) -> Prophet: ...
 
 from models.base import BaseStatModel
+from models.contracts.inputs import preserve_univariate_series, resolve_series_freq
+from models.contracts.validation import validate_horizon
 from .exponential_family import ETSModel
-from .fallbacks import FallbackMixin, TrendFallbackModel, validate_horizon, warn_and_use_fallback
-
-
-def _preserve_univariate_series(y: pd.Series | pd.DataFrame) -> pd.Series:
-    if isinstance(y, pd.DataFrame):
-        if y.shape[1] == 0:
-            raise ValueError("Input dataframe is empty")
-        series = y.iloc[:, 0].copy()
-    else:
-        series = y.copy()
-    name = series.name or "y"
-    series.name = name
-    return series.astype(float)
-
-
-def _resolve_series_freq(series: pd.Series, fallback_freq: str | None) -> str:
-    if isinstance(series.index, pd.DatetimeIndex):
-        inferred = series.index.freqstr or pd.infer_freq(series.index)
-        if inferred:
-            return inferred
-    return fallback_freq or "D"
+from .fallbacks import FallbackMixin, TrendFallbackModel, warn_and_use_fallback
 
 
 def _build_datetime_index(series: pd.Series, fallback_freq: str | None) -> tuple[pd.DatetimeIndex, str]:
-    resolved_freq = _resolve_series_freq(series, fallback_freq)
+    resolved_freq = resolve_series_freq(series, fallback_freq)
     if isinstance(series.index, pd.DatetimeIndex):
         return pd.DatetimeIndex(series.index), resolved_freq
     return pd.date_range("2000-01-01", periods=len(series), freq=resolved_freq), resolved_freq
@@ -113,6 +95,7 @@ def _extract_future_regressors(
 
 
 class TBATSModel(FallbackMixin, BaseStatModel):
+    """TBATS（多季节 + Box-Cox + ARMA 误差）；依赖缺失或失败时显式 fallback。"""
     def __init__(
         self,
         seasonal_periods: list[int] | tuple[int, ...] | None = None,
@@ -141,7 +124,7 @@ class TBATSModel(FallbackMixin, BaseStatModel):
         return TBATS
 
     def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "TBATSModel":
-        series = _preserve_univariate_series(y)
+        series = preserve_univariate_series(y)
         self._fallback.fit(series.reset_index(drop=True))
         try:
             tbats_cls = self._import_tbats()
@@ -173,6 +156,7 @@ class TBATSModel(FallbackMixin, BaseStatModel):
 
 
 class ProphetModel(FallbackMixin, BaseStatModel):
+    """Prophet 接入：支持未来外生；依赖缺失或运行不兼容时显式 fallback。"""
     def __init__(
         self,
         growth: str = "linear",
@@ -205,7 +189,7 @@ class ProphetModel(FallbackMixin, BaseStatModel):
         return cast(_ProphetConstructor, Prophet)
 
     def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "ProphetModel":
-        series = _preserve_univariate_series(y)
+        series = preserve_univariate_series(y)
         self._fallback.fit(series.reset_index(drop=True))
         try:
             ds, self._freq = _build_datetime_index(series, self.freq)
@@ -271,6 +255,7 @@ class ProphetModel(FallbackMixin, BaseStatModel):
 
 
 class NeuralProphetModel(FallbackMixin, BaseStatModel):
+    """NeuralProphet 接入（experimental）；环境损坏常见，失败必须可读地 fallback。"""
     def __init__(
         self,
         freq: str | None = None,
@@ -297,7 +282,7 @@ class NeuralProphetModel(FallbackMixin, BaseStatModel):
         return NeuralProphet
 
     def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "NeuralProphetModel":
-        series = _preserve_univariate_series(y)
+        series = preserve_univariate_series(y)
         self._fallback.fit(series.reset_index(drop=True))
         try:
             ds, self._freq = _build_datetime_index(series, self.freq)
@@ -368,7 +353,7 @@ class BayesianTMTModel(FallbackMixin, TrendFallbackModel):
         self._fallback = TrendFallbackModel()
 
     def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "BayesianTMTModel":
-        series = _preserve_univariate_series(y).reset_index(drop=True)
+        series = preserve_univariate_series(y).reset_index(drop=True)
         self._history = series.tolist()
         self._fallback.fit(series)
 
@@ -430,7 +415,7 @@ class RARModel(TrendFallbackModel):
         self._last_index = 0
 
     def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "RARModel":
-        series = _preserve_univariate_series(y).reset_index(drop=True)
+        series = preserve_univariate_series(y).reset_index(drop=True)
         super().fit(series)
         self._last_index = len(series) - 1
 

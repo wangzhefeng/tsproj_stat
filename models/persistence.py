@@ -1,3 +1,8 @@
+"""模型归档持久化：pickle 快照 + model_meta.json（依赖版本、fallback 状态）。
+
+归档语义：model.pkl 是 train 阶段的可追溯快照；主线 forecast/test 按策略在
+推理时拟合，不消费 checkpoint。load_model 仅供离线检查或外部消费。
+"""
 from __future__ import annotations
 
 import datetime

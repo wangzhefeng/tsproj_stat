@@ -1,3 +1,4 @@
+"""自动模型选型：用小规模 rolling backtest 对候选模型打分并返回最优者。"""
 from __future__ import annotations
 
 import pandas as pd
@@ -7,10 +8,6 @@ from models.factory import ModelFactory
 from forecasting.strategies import normalize_forecast_strategy
 from models.registry import MODEL_REGISTRY
 
-import os
-from pathlib import Path
-LOGGING_LABEL = Path(__file__).name[:-3]
-os.environ.setdefault('LOG_NAME', LOGGING_LABEL)
 from utils.log_util import logger
 
 
@@ -30,6 +27,16 @@ class AutoSelector:
         model_params_map: dict[str, dict] | None = None,
         forecast_strategy: str = "direct",
     ):
+        """
+        Args:
+            candidates: 候选模型名；None 时取 registry 中全部 stable 模型。
+            metric: 选优指标（mae/rmse/mape/smape/mse/r2/bias/max_error）；r2 越大越好，其余越小越好。
+            n_windows: 最多评估的回测窗口数（控制选型成本）。
+            initial_train_size: 选型回测的训练窗口长度。
+            horizon: 选型回测的预测步长。
+            model_params_map: 每模型独立超参映射，未覆盖的模型用 registry 默认参数。
+            forecast_strategy: 选型回测使用的多步策略。
+        """
         if candidates is None:
             candidates = [name for name, spec in MODEL_REGISTRY.items() if spec.stability == "stable"]
         if not candidates:
@@ -59,7 +66,7 @@ class AutoSelector:
         """评估全部候选模型，并返回有效得分最优的模型名。
 
         y 必须是原始（未预处理、未缩放）历史序列；processor_builder 提供与
-        test 链路一致的 per-window DataProcessor，保证选型分数与最终评估同口径（T15）。
+        test 链路一致的 per-window TargetTransformer，保证选型分数与最终评估同口径（T15）。
         """
         n = len(y)
         total_needed = self.initial_train_size + self.horizon
@@ -133,4 +140,5 @@ class AutoSelector:
 
     @property
     def scores(self) -> dict[str, float]:
+        """最近一次 select() 的候选得分表（失败的候选记为 inf）。"""
         return dict(self._scores)

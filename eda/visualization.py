@@ -1,3 +1,4 @@
+"""EDA 绘图：单序列诊断图（序列/差分/分布/周期图/STL/ACF-PACF）与多序列对比图。"""
 from __future__ import annotations
 
 from pathlib import Path

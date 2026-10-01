@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from config import AppConfig
-from data_provider.data_loader import DataLoader
+from data_provider.loading.loader import DataLoader
 from run import _apply_overrides
 
 
@@ -90,7 +90,6 @@ def test_data_loader_loads_future_exog_and_aligns_to_future_window(tmp_path):
     history_df = loader.load_data()
     future_exog_df = loader.load_future_exog(
         future_exog_cols=["temp", "is_holiday"],
-        horizon=2,
     )
 
     assert list(history_df.columns) == ["ds", "y", "load", "temp"]
@@ -114,4 +113,4 @@ def test_data_loader_future_exog_missing_required_columns_raises(tmp_path):
     )
 
     with pytest.raises(ValueError, match="future_exog_cols"):
-        loader.load_future_exog(future_exog_cols=["temp", "is_holiday"], horizon=2)
+        loader.load_future_exog(future_exog_cols=["temp", "is_holiday"])

@@ -1,3 +1,4 @@
+"""optional/experimental 模型的 smoke matrix：批量探测可用性与拟合状态。"""
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping

@@ -1,11 +1,11 @@
+"""建模链路的序列形状工具：单目标归一、历史帧合并与频率解析。
+
+被 forecasting 与 models 层共同消费；不放 forecasting/ 是为了避免
+models → forecasting 的反向依赖。本模块只做 pandas 形状归一，不做数据加载/清洗。
+"""
 from __future__ import annotations
 
 import pandas as pd
-
-
-def validate_horizon(horizon: int) -> None:
-    if horizon <= 0:
-        raise ValueError("horizon must be positive")
 
 
 def to_univariate_series(y: pd.Series | pd.DataFrame) -> pd.Series:
@@ -15,6 +15,31 @@ def to_univariate_series(y: pd.Series | pd.DataFrame) -> pd.Series:
             raise ValueError("Input dataframe is empty")
         return y.iloc[:, 0].reset_index(drop=True)
     return y.reset_index(drop=True)
+
+
+def preserve_univariate_series(y: pd.Series | pd.DataFrame) -> pd.Series:
+    """取单目标序列并保留原索引（不 reset），未命名序列统一命名为 y。
+
+    与 to_univariate_series 的差别：StatsForecast 等后端需要保留 DatetimeIndex
+    做频率推断，因此本函数不重置索引。
+    """
+    if isinstance(y, pd.DataFrame):
+        if y.shape[1] == 0:
+            raise ValueError("Input dataframe is empty")
+        series = y.iloc[:, 0].copy()
+    else:
+        series = y.copy()
+    series.name = series.name or "y"
+    return series.astype(float)
+
+
+def resolve_series_freq(series: pd.Series, fallback_freq: str | None = None) -> str:
+    """解析序列频率：DatetimeIndex 自带或推断优先，缺省回退 fallback_freq 或 "D"。"""
+    if isinstance(series.index, pd.DatetimeIndex):
+        inferred = series.index.freqstr or pd.infer_freq(series.index)
+        if inferred:
+            return inferred
+    return fallback_freq or "D"
 
 
 def to_dataframe(y: pd.Series | pd.DataFrame) -> pd.DataFrame:

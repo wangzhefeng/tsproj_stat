@@ -13,8 +13,10 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-from data_provider.data_transfer import combine_history_frame, to_univariate_series
-from forecasting.strategies import run_point_inference, run_interval_inference, validate_horizon
+from data_provider.cleaning.imputation import repair_history_frame, require_finite
+from models.contracts.inputs import combine_history_frame, to_univariate_series
+from models.contracts.validation import validate_horizon
+from forecasting.strategies import run_point_inference, run_interval_inference
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,20 @@ def interval_bound_columns(level: float, multi: bool = False) -> tuple[str, str]
     return "yhat_lower", "yhat_upper"
 
 
+def iter_bound_pairs(frame: pd.DataFrame):
+    """按水平配对迭代区间列：yhat_lower[_suffix] ↔ yhat_upper[_suffix]。
+
+    列名协议的唯一归属是本模块（interval_bound_columns）；回测与策略层
+    一律经本函数配对，不各自硬编码列名规则。
+    """
+    for col in frame.columns:
+        if col.startswith("yhat_lower"):
+            suffix = col[len("yhat_lower"):]
+            upper = f"yhat_upper{suffix}"
+            if upper in frame.columns:
+                yield col, upper
+
+
 @dataclass(frozen=True)
 class IntervalPlan:
     """resolve_interval_plan 的裁决结果：组合是否合法与拒绝理由。"""
@@ -115,6 +131,10 @@ def resolve_interval_plan(spec: IntervalSpec, strategy: str) -> IntervalPlan:
 
 def _forecast_origin(builder, y, h, strategy, X_hist, X_future, processor_builder, native_intervals, alpha, levels=None):
     frame = combine_history_frame(y, X_hist)
+    frame, audit = repair_history_frame(frame, list(frame.columns))
+    y = frame.iloc[:, 0]
+    if X_future is not None:
+        require_finite(X_future, "future exogenous data")
     proc = processor_builder() if processor_builder is not None else None
     values = proc.fit_transform(y) if proc is not None and proc.enabled else y
     frame.iloc[:, 0] = values.to_numpy()
@@ -134,6 +154,8 @@ def _forecast_origin(builder, y, h, strategy, X_hist, X_future, processor_builde
             result[upper_col] = np.maximum(bounds[:, 0], bounds[:, 1])
     if not np.isfinite(result["yhat"]).all():
         raise ValueError("non-finite point prediction in calibration/forecast")
+    result.attrs["history_filled_value_count"] = audit.filled_value_count
+    result.attrs["history_repair_policy"] = audit.policy
     return result
 
 

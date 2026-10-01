@@ -1,3 +1,4 @@
+"""EDA 结构化产物落盘：eda_summary.json / eda_diagnostics.csv / 建议表与图表。"""
 from __future__ import annotations
 
 import json

@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+"""EDA 主流程编排：序列准备 → 诊断 → 建议 → 结构化产物与图表落盘。"""
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -32,6 +33,8 @@ def run_eda(df: pd.DataFrame,
     
     # 诊断层只返回结构化结果，落盘和绘图统一交给 report 层。
     summary, diagnostics = run_diagnostics(series, period=period, nlags=nlags)
+    summary["input_view"] = {"policy": "as_provided", "rows": len(series),
+                             "imputed_values": 0, "inserted_timestamps": 0}
     recommendations = None
     recommendations_df = None
     if recommendation_enabled:

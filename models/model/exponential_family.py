@@ -10,15 +10,21 @@ import itertools
 
 import pandas as pd
 
-from data_provider.data_processor import infer_seasonal_period
+from data_provider.target_transforms.transformer import infer_seasonal_period
 from models.base import BaseStatModel
-from data_provider.data_transfer import to_univariate_series
+from models.contracts.inputs import to_univariate_series
+from models.contracts.validation import validate_horizon
 from .fallbacks import (
     NaiveModel, TrendFallbackModel,
-    FallbackMixin, validate_horizon, warn_and_use_fallback
+    FallbackMixin, warn_and_use_fallback
 )
 
 class ETSModel(FallbackMixin, BaseStatModel):
+    """统一指数平滑入口（SES/DES/TES，statsmodels 后端）。
+
+    支持可选 smoothing grid 调参；启用季节项但未显式给周期时先统一推断，
+    推断失败直接报错。不得再平行拆出 ses/des/tes 脚本式入口。
+    """
     def __init__(
         self,
         trend: str | None = "add",
@@ -211,6 +217,7 @@ class ETSModel(FallbackMixin, BaseStatModel):
 
 
 class ThetaModel(FallbackMixin, BaseStatModel):
+    """Theta 方法（statsmodels 后端）；注意该后端不提供 fittedvalues。"""
 
     def __init__(self, period: int = 1):
         self.period = period

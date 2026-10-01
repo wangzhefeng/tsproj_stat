@@ -63,7 +63,7 @@ def test_registry_supports_fitted_values_flags():
 def test_run_train_stage_fitted_diagnosis():
     """stages 返回 fitted_df（y/fitted/residual）与 residual_stats；processor enabled 时逆变换。"""
     from config import AppConfig
-    from data_provider.data_processor import DataProcessor
+    from data_provider.target_transforms.transformer import TargetTransformer
     from pipeline.stages import run_train_stage
 
     class Prepared:
@@ -76,7 +76,7 @@ def test_run_train_stage_fitted_diagnosis():
     prepared.history_model_input_df = pd.DataFrame({"y": y})
     prepared.raw_history_df = pd.DataFrame({"y": y})
     prepared.future_exog_df = None
-    prepared.processor = DataProcessor()  # 默认 disabled
+    prepared.processor = TargetTransformer()  # 默认 disabled
 
     cfg = AppConfig()
     cfg.model_name = "arima"
@@ -98,7 +98,7 @@ def test_run_train_stage_fitted_inverse_transformed():
     拟合值在建模尺度产出，经 inverse_forecast 回原始尺度后与原始 y 对齐。
     """
     from config import AppConfig
-    from data_provider.data_processor import DataProcessor
+    from data_provider.target_transforms.transformer import TargetTransformer
     from pipeline.stages import run_train_stage
 
     class Prepared:
@@ -106,7 +106,7 @@ def test_run_train_stage_fitted_inverse_transformed():
 
     prepared = Prepared()
     y_raw = pd.Series(2.0 * np.arange(1., 31.), name="y")  # 线性趋势
-    processor = DataProcessor(detrend_method="linear")
+    processor = TargetTransformer(detrend_method="linear")
     y_model = processor.fit_transform(y_raw)  # prepare 阶段语义：窗口内拟合
     prepared.history_y = y_model.reset_index(drop=True)
     prepared.history_time = pd.Series(range(30))

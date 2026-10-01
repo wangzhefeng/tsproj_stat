@@ -1,3 +1,4 @@
+"""预测器组装：模型创建 + 多步推理编排 + 输出质量校验（NaN/inf/长度）。"""
 from __future__ import annotations
 
 import numpy as np
@@ -6,11 +7,6 @@ import pandas as pd
 from models.factory import ModelFactory
 from forecasting.strategies import normalize_forecast_strategy, run_interval_inference, run_point_inference
 
-import os
-from pathlib import Path
-
-LOGGING_LABEL = Path(__file__).name[:-3]
-os.environ.setdefault("LOG_NAME", LOGGING_LABEL)
 from utils.log_util import logger
 
 
@@ -60,6 +56,15 @@ class Forecaster:
         ignore_unsupported_inputs: bool = False,
         use_update: bool = False,
     ):
+        """
+        Args:
+            model_name: registry 中的模型名。
+            model_params: 覆盖 registry 默认参数的超参字典。
+            forecast_strategy: 多步策略；None 时归一为 direct。
+            allow_nan_fill: 显式容忍 NaN 输出（ffill/bfill 修补并计数打标）。
+            ignore_unsupported_inputs: 显式容忍模型不支持的协变量输入。
+            use_update: recursive 前向快速路径（首步 fit + 固定参数 update 滤波）。
+        """
         self.model_name = model_name
         self.model_params = model_params or {}
         self.forecast_strategy = normalize_forecast_strategy(forecast_strategy)

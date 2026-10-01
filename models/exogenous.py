@@ -6,6 +6,12 @@ import pandas as pd
 
 
 class ExogenousMixin:
+    """回归型统计模型的外生输入校验与数组提取。
+
+    _fit_exog 在 fit 期记录外生列并校验行数/有限性；_predict_exog 在预测期
+    校验未来外生的列集合与行数（必须恰好等于 horizon）。
+    """
+
     def _fit_exog(self, y, X_hist=None, X_future=None):
         target = y.columns[0] if isinstance(y, pd.DataFrame) else (y.name or "y")
         frame = None if X_hist is None else X_hist.drop(columns=[target], errors="ignore").copy()

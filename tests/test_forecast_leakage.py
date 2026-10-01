@@ -2,7 +2,7 @@
 
 不变量：
 1. forecast 原点 = 数据末尾，history 窗口以数据最后一行结束，不预留尾部 horizon 行；
-2. DataProcessor 只在 history 窗口内 fit_transform，原点之后的数据不影响预处理结果。
+2. TargetTransformer 只在 history 窗口内 fit_transform，原点之后的数据不影响预处理结果。
 """
 
 import pandas as pd
@@ -10,7 +10,7 @@ import pytest
 
 from pipeline import ModelApp
 from config import AppConfig
-from data_provider.data_processor import DataProcessor
+from data_provider.target_transforms.transformer import TargetTransformer
 
 
 def _make_df(n: int = 100) -> pd.DataFrame:
@@ -74,7 +74,7 @@ def test_preprocessor_matches_manual_history_window_fit(tmp_path):
 
     prepared = _prepare(tmp_path, df, detrend_method="linear")
 
-    reference = DataProcessor(detrend_method="linear")
+    reference = TargetTransformer(detrend_method="linear")
     expected = reference.fit_transform(df["y"].iloc[-60:].astype(float).reset_index(drop=True))
     pd.testing.assert_series_equal(
         prepared.history_y.reset_index(drop=True),

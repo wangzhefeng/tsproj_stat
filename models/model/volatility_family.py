@@ -10,10 +10,11 @@ import numpy as np
 import pandas as pd
 
 from models.base import BaseStatModel
-from data_provider.data_transfer import to_univariate_series
+from models.contracts.inputs import to_univariate_series
+from models.contracts.validation import validate_horizon
 from .fallbacks import (
     NaiveModel, TrendFallbackModel,
-    FallbackMixin, validate_horizon, warn_and_use_fallback
+    FallbackMixin, warn_and_use_fallback
 )
 
 

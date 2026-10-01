@@ -1,5 +1,5 @@
-﻿from .data_loader import DataLoader
-from .data_processor import DataProcessor
-from .data_preparation import prepare_standard_frame
+"""数据接入与目标变换公共入口；各阶段边界见 docs/data.md。"""
+from .loading.loader import DataLoader
+from .target_transforms import TargetTransformer
 
-__all__ = ["DataLoader", "DataProcessor", "prepare_standard_frame"]
+__all__ = ["DataLoader", "TargetTransformer"]

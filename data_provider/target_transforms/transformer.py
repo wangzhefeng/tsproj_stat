@@ -1,65 +1,23 @@
+"""目标变换：去噪、趋势、季节分解与缩放的统一状态管理。
+
+纯算法（周期推断/去噪/分解）位于本包；本模块的 TargetTransformer
+持有拟合状态（趋势斜率、季节模板等），负责 fit_transform 与预测值的逆变换重组。
+"""
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
-
-def infer_seasonal_period(
-    series: pd.Series,
-    acf_max_lag: int = 48,
-    seasonality_strength_threshold: float = 0.3,
-) -> int | None:
-    """从 ACF 局部峰值和简单频域能量中推断候选季节周期。"""
-    values = pd.Series(series).astype(float).reset_index(drop=True)
-    if len(values) < 4:
-        return None
-
-    max_lag = min(acf_max_lag, max(2, len(values) // 2))
-    if max_lag <= 2:
-        return None
-
-    try:
-        from statsmodels.tsa.stattools import acf
-
-        acf_values = acf(values, nlags=max_lag, fft=True)
-        best_lag = None
-        best_score = float("-inf")
-        for lag in range(2, len(acf_values)):
-            score = float(acf_values[lag])
-            prev_score = float(acf_values[lag - 1]) if lag - 1 >= 0 else float("-inf")
-            next_score = float(acf_values[lag + 1]) if lag + 1 < len(acf_values) else float("-inf")
-            is_local_peak = score >= prev_score and score >= next_score
-            if is_local_peak and score > best_score:
-                best_score = score
-                best_lag = lag
-        if best_lag is not None and best_score >= seasonality_strength_threshold:
-            return int(best_lag)
-    except Exception:
-        pass
-
-    centered = values - values.mean()
-    if np.allclose(centered.to_numpy(dtype=float), 0.0):
-        return None
-
-    fft_values = np.fft.rfft(centered.to_numpy(dtype=float))
-    power = np.abs(fft_values) ** 2
-    if len(power) <= 1:
-        return None
-    power[0] = 0.0
-    peak_idx = int(np.argmax(power))
-    if peak_idx <= 0:
-        return None
-    period = int(round(len(values) / peak_idx))
-    if period < 2 or period > max_lag:
-        return None
-    if float(power[peak_idx]) / max(float(power.sum()), 1e-8) < seasonality_strength_threshold:
-        return None
-    return period
+from .seasonality import infer_seasonal_period
+from .denoising import remove_noise
+from .decomposition import decompose, decompose_mstl
+from .scaling import TargetScaler
+from .trend import fit_trend
 
 
-class DataProcessor:
+class TargetTransformer:
     """
-    可逆数据预处理器。
+    目标变换器；还原尺度和趋势/季节分量，不恢复去噪损失。
 
     主线支持轻量去噪、去趋势和季节分解。fit_transform() 会把目标序列转换到
     更适合统计模型学习的尺度；inverse_forecast() 再将预测值重组回原始业务尺度。
@@ -78,6 +36,8 @@ class DataProcessor:
         acf_max_lag: int = 48,
         seasonality_strength_threshold: float = 0.3,
         seasonal_periods: list[int] | None = None,
+        scale: bool = False,
+        scaler_type: str = "standard",
     ):
         valid_detrend_methods = {"none", "linear", "moving_average"}
         valid_denoise_methods = {"none", "moving_average", "moving_median"}
@@ -127,6 +87,7 @@ class DataProcessor:
         self.acf_max_lag = acf_max_lag
         self.seasonality_strength_threshold = seasonality_strength_threshold
 
+        self.scaler = TargetScaler(scaler_type) if scale else None
         self._fitted = False
         self._trend_train: pd.Series | None = None
         self._seasonal_train: pd.Series | None = None
@@ -142,14 +103,19 @@ class DataProcessor:
     def enabled(self) -> bool:
         """任一预处理能力开启时，下游预测输出需要执行逆变换。"""
         return (
-            self.denoise_method != "none"
+            self.scaler is not None
+            or self.denoise_method != "none"
             or self.detrend_method != "none"
             or self.decomposition_method != "none"
         )
 
     def fit_transform(self, series: pd.Series) -> pd.Series:
         """拟合预处理参数并返回建模用序列。"""
+        self._fitted = False
+        self._seasonal_templates = []
         values = pd.Series(series).astype(float).reset_index(drop=True)
+        if values.empty or not np.isfinite(values.to_numpy()).all():
+            raise ValueError("target transform requires finite non-empty history")
 
         if self.denoise_method != "none":
             values = self.remove_noise(values, method=self.denoise_method, window=self.denoise_window)
@@ -159,6 +125,8 @@ class DataProcessor:
         else:
             transformed = self._fit_simple_transform(values)
 
+        if self.scaler is not None:
+            transformed = self.scaler.fit_transform(transformed)
         self._index_offset = len(values)
         self._fitted = True
         transformed.name = series.name
@@ -168,6 +136,8 @@ class DataProcessor:
         """将训练期转换序列还原，主要用于验证可逆性。"""
         self._check_fitted()
         values = pd.Series(transformed_series).astype(float).reset_index(drop=True)
+        if self.scaler is not None:
+            values = self.scaler.inverse_transform(values)
         if self._mode == "decomposition":
             restored = self._inverse_from_components(values)
         else:
@@ -180,25 +150,15 @@ class DataProcessor:
         """将未来预测值从建模尺度还原到原始目标尺度。"""
         self._check_fitted()
         pred = pd.Series(forecast_values).astype(float).reset_index(drop=True)
+        if self.scaler is not None:
+            pred = self.scaler.inverse_transform(pred)
         if self._mode == "decomposition":
             return self._inverse_forecast_from_components(pred).rename("yhat")
         trend_future = self._future_trend(len(pred))
         return (pred + trend_future).rename("yhat")
 
-    @staticmethod
-    def remove_noise(series: pd.Series, method: str = "moving_average", window: int = 3) -> pd.Series:
-        """执行轻量去噪；当前只保留无额外依赖的滑动均值和滑动中位数。"""
-        if window < 1:
-            raise ValueError("window must be >= 1")
-        if method == "moving_average":
-            return series.rolling(window=window, min_periods=1).mean()
-        if method == "moving_median":
-            if len(series) < window:
-                return series.copy()
-            return series.rolling(window=window, min_periods=1, center=True).median().bfill().ffill()
-        if method == "none":
-            return series.copy()
-        raise ValueError("method must be one of {'none', 'moving_average', 'moving_median'}")
+    # 保留公开静态方法，算法只在本包计算模块中维护。
+    remove_noise = staticmethod(remove_noise)
 
     def _fit_simple_transform(self, series: pd.Series) -> pd.Series:
         """无季节分解时只拟合趋势项，并返回去趋势后的序列。"""
@@ -223,7 +183,7 @@ class DataProcessor:
         if period is None or period < 2 or len(series) < max(period * 2, period + 2):
             return self._fit_simple_transform(series)
 
-        trend, seasonal = self._decompose(series, period)
+        trend, seasonal = decompose(series, period, self.decomposition_method, self.decomposition_model)
         self._mode = "decomposition"
         self._resolved_period = period
         self._trend_train = trend.reset_index(drop=True)
@@ -243,62 +203,20 @@ class DataProcessor:
         return series.reset_index(drop=True) / base
 
     def _fit_mstl(self, series: pd.Series) -> pd.Series:
-        from statsmodels.tsa.seasonal import MSTL
-
-        if len(series) <= 2 * max(self.seasonal_periods):
-            raise ValueError("MSTL history must exceed twice the largest seasonal period")
-        result = MSTL(series, periods=self.seasonal_periods, stl_kwargs={"robust": True}).fit()
-        components = np.asarray(result.seasonal)
-        if components.ndim == 1:
-            components = components[:, None]
+        trend, components = decompose_mstl(series, self.seasonal_periods)
         self._seasonal_templates = [components[-period:, i].copy() for i, period in enumerate(self.seasonal_periods)]
         self._mode = "decomposition"
         self._resolved_period = max(self.seasonal_periods)
         self._seasonal_train = pd.Series(components.sum(axis=1))
-        self._trend_train = pd.Series(result.trend).reset_index(drop=True)
+        self._trend_train = trend
         self._last_trend = float(self._trend_train.iloc[-1])
         transformed = series.reset_index(drop=True) - self._seasonal_train
         if self.decomposition_target == "resid_only":
             transformed = transformed - self._trend_train
         return transformed
 
-    def _decompose(self, series: pd.Series, period: int) -> tuple[pd.Series, pd.Series]:
-        values = series.reset_index(drop=True)
-        if self.decomposition_method == "stl":
-            from statsmodels.tsa.seasonal import STL
-
-            result = STL(values, period=period, robust=True).fit()
-            trend = pd.Series(result.trend).interpolate(limit_direction="both")
-            seasonal = pd.Series(result.seasonal).interpolate(limit_direction="both")
-            return trend, seasonal
-
-        from statsmodels.tsa.seasonal import seasonal_decompose
-
-        result = seasonal_decompose(
-            values,
-            period=period,
-            model=self.decomposition_model,
-            extrapolate_trend=period - 1,  # statsmodels 对 "freq" 的等价展开。
-        )
-        trend = pd.Series(result.trend).interpolate(limit_direction="both")
-        seasonal = pd.Series(result.seasonal).interpolate(limit_direction="both")
-        return trend, seasonal
-
     def _fit_trend(self, series: pd.Series) -> pd.Series:
-        if self.detrend_method == "none":
-            return pd.Series(np.zeros(len(series)), index=series.index)
-
-        x = np.arange(len(series), dtype=float)
-        if self.detrend_method == "linear":
-            if len(series) < 2:
-                self._slope = 0.0
-                self._intercept = float(series.iloc[-1]) if len(series) else 0.0
-            else:
-                self._slope, self._intercept = np.polyfit(x, series.to_numpy(dtype=float), deg=1)
-            trend = self._slope * x + self._intercept
-            return pd.Series(trend, index=series.index)
-
-        trend = series.rolling(window=self.denoise_window, min_periods=1).mean()
+        trend, self._slope, self._intercept = fit_trend(series, self.detrend_method, self.denoise_window)
         return trend
 
     def _inverse_from_components(self, values: pd.Series) -> pd.Series:
@@ -369,4 +287,4 @@ class DataProcessor:
 
     def _check_fitted(self) -> None:
         if not self._fitted:
-            raise RuntimeError("DataProcessor is not fitted")
+            raise RuntimeError("TargetTransformer is not fitted")

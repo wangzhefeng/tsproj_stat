@@ -1,3 +1,4 @@
+"""统计模型主实现包：按模型家族分文件维护（ARIMA/基线/指数平滑/扩展/多变量/波动率）。"""
 from __future__ import annotations
 
 from .arima_family import ARMAModel, ARIMAModel, ARModel, AutoARIMAModel, MAModel, SARIMAModel

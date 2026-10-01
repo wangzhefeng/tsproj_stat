@@ -1,3 +1,8 @@
+"""模型 registry：名称 → ModelSpec（类、默认参数、家族、稳定性分层、能力声明）。
+
+supports_* 能力位参与运行门禁（checked_model_builder / config.validate）；
+stability 分层供 auto_select 候选收紧与 smoke matrix 使用。新增模型先在此登记。
+"""
 from __future__ import annotations
 
 import inspect
