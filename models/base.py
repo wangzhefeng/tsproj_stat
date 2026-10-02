@@ -27,6 +27,13 @@ class BaseStatModel(ABC):
     _ignore_unsupported_inputs = False
     _is_fallback: bool = False
     _fallback_reason: str | None = None
+    _runtime_backend_fields: tuple[str, ...] = ()
+    _runtime_fallback_name: str | None = None
+
+    def runtime_info(self):
+        """运行事实统一入口，字段声明归各后端模型。"""
+        from models.runtime_info import model_runtime_info
+        return model_runtime_info(self)
 
     @abstractmethod
     def fit(
@@ -96,7 +103,7 @@ class BaseStatModel(ABC):
         后端原生支持多水平的模型应重写本方法（如 StatsForecast 后端一次
         predict(level=[...]) 返回全部水平）。
         """
-        from forecasting.intervals import interval_bound_columns, resolve_interval_levels
+        from models.contracts.intervals import interval_bound_columns, resolve_interval_levels
 
         resolved = resolve_interval_levels(levels, alpha)
         multi = len(resolved) > 1

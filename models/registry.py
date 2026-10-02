@@ -11,15 +11,8 @@ from difflib import get_close_matches
 
 from models.base import BaseStatModel
 from models.model.arima_family import ARMAModel, ARIMAModel, ARModel, AutoARIMAModel, MAModel, SARIMAModel
-from models.model.arima_family import StatsForecastAutoARIMAModel
 from models.model.baseline_models import (
-    AutoETSModel,
-    AutoCESModel,
-    RandomWalkWithDriftModel,
-    SeasonalWindowAverageModel,
-    AutoThetaModel,
     CrostonModel,
-    DynamicThetaModel,
     HistoricAverageModel,
     SeasonalNaiveModel,
 )
@@ -27,6 +20,15 @@ from models.model.exponential_family import ETSModel, ThetaModel
 from models.model.extended_models import BayesianTMTModel, NeuralProphetModel, ProphetModel, RARModel, TBATSModel
 from models.model.fallbacks import NaiveModel
 from models.model.multivariate import BayesianVARModel, LinearVARModel, VARModel
+from models.model.statsforecast_backend import (
+    AutoCESModel,
+    AutoETSModel,
+    AutoThetaModel,
+    DynamicThetaModel,
+    RandomWalkWithDriftModel,
+    SeasonalWindowAverageModel,
+    StatsForecastAutoARIMAModel,
+)
 from models.model.volatility_family import ARCHModel, GARCHModel
 
 
@@ -53,23 +55,43 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
     "naive": ModelSpec(NaiveModel, {}, "fallbacks", "stable", False),
     "seasonal_naive": ModelSpec(SeasonalNaiveModel, {"season_length": 7}, "baseline_models", "stable", False),
     "historic_average": ModelSpec(HistoricAverageModel, {}, "baseline_models", "stable", False),
-    "random_walk_drift": ModelSpec(RandomWalkWithDriftModel, {}, "baseline_models", "optional", False, supports_prediction_intervals=True),
-    "seasonal_window_average": ModelSpec(SeasonalWindowAverageModel, {}, "baseline_models", "optional", False),
-    "auto_ces": ModelSpec(AutoCESModel, {}, "baseline_models", "optional", False, supports_prediction_intervals=True),
+    "random_walk_drift": ModelSpec(RandomWalkWithDriftModel, {}, "baseline_models", "optional", False,
+                                   supports_prediction_intervals=True, supports_fitted_values=True),
+    "seasonal_window_average": ModelSpec(SeasonalWindowAverageModel, {}, "baseline_models", "optional", False,
+                                         supports_fitted_values=True),
+    "auto_ces": ModelSpec(AutoCESModel, {}, "baseline_models", "optional", False,
+                          supports_prediction_intervals=True, supports_fitted_values=True),
     "croston": ModelSpec(CrostonModel, {}, "baseline_models", "experimental", False),
-    "ar": ModelSpec(ARModel, {"p": 1}, "arima_family", "stable", False),
-    "ma": ModelSpec(MAModel, {"q": 1}, "arima_family", "stable", False),
-    "arma": ModelSpec(ARMAModel, {"p": 1, "q": 1}, "arima_family", "stable", False),
-    "arima": ModelSpec(ARIMAModel, {"order": (1, 1, 1)}, "arima_family", "stable", False),
-    "auto_arima": ModelSpec(AutoARIMAModel, {}, "arima_family", "stable", False),
+    "ar": ModelSpec(ARModel, {"p": 1}, "arima_family", "stable", False,
+                    supports_future_exog=True, supports_prediction_intervals=True,
+                    supports_update=True, supports_fitted_values=True),
+    "ma": ModelSpec(MAModel, {"q": 1}, "arima_family", "stable", False,
+                    supports_future_exog=True, supports_prediction_intervals=True,
+                    supports_update=True, supports_fitted_values=True),
+    "arma": ModelSpec(ARMAModel, {"p": 1, "q": 1}, "arima_family", "stable", False,
+                      supports_future_exog=True, supports_prediction_intervals=True,
+                      supports_update=True, supports_fitted_values=True),
+    "arima": ModelSpec(ARIMAModel, {"order": (1, 1, 1)}, "arima_family", "stable", False,
+                       supports_future_exog=True, supports_prediction_intervals=True,
+                       supports_update=True, supports_fitted_values=True),
+    "auto_arima": ModelSpec(AutoARIMAModel, {}, "arima_family", "stable", False,
+                            supports_future_exog=True, supports_prediction_intervals=True,
+                            supports_fitted_values=True),
     "sf_auto_arima": ModelSpec(StatsForecastAutoARIMAModel, {}, "arima_family", "optional", False,
-                              supports_future_exog=True, supports_prediction_intervals=True),
-    "sarima": ModelSpec(SARIMAModel, {"order": (1, 1, 1), "seasonal_order": (1, 1, 1, 7)}, "arima_family", "stable", False),
-    "ets": ModelSpec(ETSModel, {}, "exponential_family", "stable", False),
+                               supports_future_exog=True, supports_prediction_intervals=True,
+                               supports_fitted_values=True),
+    "sarima": ModelSpec(SARIMAModel, {"order": (1, 1, 1), "seasonal_order": (1, 1, 1, 7)}, "arima_family", "stable", False,
+                        supports_future_exog=True, supports_prediction_intervals=True,
+                        supports_update=True, supports_fitted_values=True),
+    "ets": ModelSpec(ETSModel, {}, "exponential_family", "stable", False,
+                     supports_fitted_values=True),
     "theta": ModelSpec(ThetaModel, {}, "exponential_family", "stable", False),
-    "dynamic_theta": ModelSpec(DynamicThetaModel, {"season_length": 1}, "baseline_models", "optional", False),
-    "auto_ets": ModelSpec(AutoETSModel, {"season_length": 1}, "baseline_models", "optional", False),
-    "auto_theta": ModelSpec(AutoThetaModel, {"season_length": 1}, "baseline_models", "optional", False),
+    "dynamic_theta": ModelSpec(DynamicThetaModel, {"season_length": 1}, "baseline_models", "optional", False,
+                               supports_prediction_intervals=True, supports_fitted_values=True),
+    "auto_ets": ModelSpec(AutoETSModel, {"season_length": 1}, "baseline_models", "optional", False,
+                          supports_prediction_intervals=True, supports_fitted_values=True),
+    "auto_theta": ModelSpec(AutoThetaModel, {"season_length": 1}, "baseline_models", "optional", False,
+                            supports_prediction_intervals=True, supports_fitted_values=True),
     "var": ModelSpec(VARModel, {}, "multivariate", "stable", True),
     "bayesian_var": ModelSpec(BayesianVARModel, {}, "multivariate", "experimental", True),
     "linear_var": ModelSpec(LinearVARModel, {}, "multivariate", "experimental", True, supports_future_exog=True),
@@ -81,25 +103,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
     "bayesian_tmt": ModelSpec(BayesianTMTModel, {}, "extended_models", "experimental", False),
     "rar": ModelSpec(RARModel, {}, "extended_models", "experimental", False),
 }
-
-
-for _name in ("ar", "ma", "arma", "arima", "sarima", "auto_arima", "dynamic_theta", "auto_ets", "auto_theta"):
-    MODEL_REGISTRY[_name].supports_prediction_intervals = True
-
-for _name in ("ar", "ma", "arma", "arima", "sarima", "auto_arima"):
-    MODEL_REGISTRY[_name].supports_future_exog = True
-
-for _name in ("ar", "ma", "arma", "arima", "sarima"):
-    MODEL_REGISTRY[_name].supports_update = True
-
-# P8：后端提供拟合值且语义明确的模型开放 fitted values 诊断；
-# naive 类基线的一步拟合值是 t-1 平移，语义争议大，不纳入。
-# 注：theta（statsmodels 后端）不在此列——ThetaModelResults 不提供 fittedvalues；
-# SF 后端的 auto_theta/dynamic_theta 有 forecast(fitted=True)，保留。
-for _name in ("ar", "ma", "arma", "arima", "sarima", "auto_arima",
-              "sf_auto_arima", "ets", "auto_ets", "auto_theta",
-              "dynamic_theta", "auto_ces", "random_walk_drift", "seasonal_window_average"):
-    MODEL_REGISTRY[_name].supports_fitted_values = True
 
 
 def create_stat_model(name: str, params: dict | None = None) -> BaseStatModel:

@@ -1,5 +1,12 @@
-"""评估指标：点误差（mae/rmse/mape/smape/r2/bias/max_error）与区间指标（coverage/width/winkler）。"""
+"""评估指标：点误差（mae/rmse/mape/smape/r2/bias/max_error/mase/rmsse）与区间指标（coverage/width/winkler）。
+
+POINT_METRICS 是点指标的单一事实来源：回测窗口指标/汇总、AutoSelector 选优白名单与
+方向、多模型对比表的列与排序方向全部由它派生；新增指标只需在此注册。
+"""
 from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 
@@ -62,6 +69,91 @@ def max_error(y_true, y_pred):
     """最大绝对误差：max(|y_true - y_pred|)，刻画最坏单点。"""
     y_true, y_pred = _to_arrays(y_true, y_pred)
     return float(np.max(np.abs(y_true - y_pred)))
+
+
+# ── 缩放无关指标（跨序列/面板比较用）─────────────────────────────────────────────
+
+def _train_scale(y_train, m: int, squared: bool) -> float:
+    """训练窗缩放基准：m 阶差分的绝对值/平方均值；基准不可用（长度不足、非有限、为 0）返回 NaN。"""
+    y_train = np.asarray(y_train, dtype=float)
+    if y_train.size <= m:
+        return float("nan")
+    diffs = y_train[m:] - y_train[:-m]
+    scale = float(np.mean(diffs ** 2 if squared else np.abs(diffs)))
+    return scale if np.isfinite(scale) and scale > 0 else float("nan")
+
+
+def mase(y_true, y_pred, y_train, m: int = 1):
+    """平均绝对缩放误差：mae / 训练窗 m 阶差分绝对值均值（默认 m=1 naive 基准）。
+
+    尺度无关，用于跨序列比较；缩放基准不可用（常数训练窗等）时返回 NaN。
+    """
+    y_true, y_pred = _to_arrays(y_true, y_pred)
+    scale = _train_scale(y_train, m, squared=False)
+    if not np.isfinite(scale):
+        return float("nan")
+    return float(np.mean(np.abs(y_true - y_pred)) / scale)
+
+
+def rmsse(y_true, y_pred, y_train, m: int = 1):
+    """均方根缩放误差：sqrt(mse / 训练窗 m 阶差分平方均值)；基准不可用时返回 NaN。"""
+    y_true, y_pred = _to_arrays(y_true, y_pred)
+    scale = _train_scale(y_train, m, squared=True)
+    if not np.isfinite(scale):
+        return float("nan")
+    return float(np.sqrt(np.mean((y_true - y_pred) ** 2) / scale))
+
+
+# ── 点指标注册表（单一事实来源）────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class PointMetricSpec:
+    """点指标注册项。
+
+    func 签名为 (y_true, y_pred)；requires_train=True 的指标追加第三个参数 y_train
+    （原始尺度训练窗，用于缩放基准）。higher_is_better 声明选优方向，
+    absolute_for_selection 仅转换排名值，不修改原指标的报告值。
+    """
+    func: Callable[..., float]
+    higher_is_better: bool = False
+    requires_train: bool = False
+    absolute_for_selection: bool = False
+
+
+POINT_METRICS: dict[str, PointMetricSpec] = {
+    "mae": PointMetricSpec(mae),
+    "rmse": PointMetricSpec(rmse),
+    "mape": PointMetricSpec(mape),
+    "smape": PointMetricSpec(smape),
+    "mse": PointMetricSpec(mse),
+    "r2": PointMetricSpec(r2, higher_is_better=True),
+    "bias": PointMetricSpec(bias, absolute_for_selection=True),
+    "max_error": PointMetricSpec(max_error),
+    "mase": PointMetricSpec(mase, requires_train=True),
+    "rmsse": PointMetricSpec(rmsse, requires_train=True),
+}
+
+
+def point_metric_higher_is_better(metric: str) -> bool:
+    """指标选优方向；未知指标默认越小越好（兼容 interval_* 等表外指标）。"""
+    spec = POINT_METRICS.get(metric)
+    return spec.higher_is_better if spec is not None else False
+
+
+def selection_value(metric: str, value: float | None) -> float:
+    """排名值：缺失/非有限统一 NaN；bias 取绝对值，原报告不改。"""
+    if value is None or not np.isfinite(value):
+        return float("nan")
+    spec = POINT_METRICS.get(metric)
+    return abs(value) if spec is not None and spec.absolute_for_selection else value
+
+
+def train_scales(y_train, m: int = 1) -> tuple[float, float]:
+    """返回 (mase 基准, rmsse 基准) = (m 阶差分绝对值均值, m 阶差分平方均值)；不可用项为 NaN。
+
+    供回测按 horizon_step 聚合缩放指标时逐窗复用，避免重复扫描训练窗。
+    """
+    return _train_scale(y_train, m, squared=False), _train_scale(y_train, m, squared=True)
 
 
 # ── 区间预测评估指标 ────────────────────────────────────────────────────────────

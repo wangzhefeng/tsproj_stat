@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import numpy as np
+import pandas as pd
 
 from config import AppConfig
 from pipeline.runner import ModelApp
@@ -107,3 +109,23 @@ def test_multi_model_consumes_batch_models_params(multi_cfg: AppConfig):
     payload = _json.loads(Path(summary).read_text(encoding="utf-8"))
     assert payload["model_params"] == {"window": 5}
     assert payload["model_name"] == "historic_average"
+
+
+def test_multi_model_global_params_survive_other_model_override(tmp_path):
+    cfg = _base_cfg(tmp_path)
+    cfg.history_size, cfg.predict_horizon = 20, 2
+    cfg.do_test = False
+    cfg.model_names = ["naive", "historic_average"]
+    cfg.model_params = {"window": 2}
+    cfg.batch_models = {"naive": {}}
+    frame = pd.DataFrame({"ds": pd.date_range("2024-01-01", periods=40), "y": np.arange(40.)})
+    result = ModelApp(cfg, data_frame=frame).run()
+    outputs = result["model::historic_average"]
+    assert isinstance(outputs, dict)
+    prediction_path, summary_path = outputs["prediction_path"], outputs["train_summary_path"]
+    assert isinstance(prediction_path, str) and isinstance(summary_path, str)
+    prediction = pd.read_csv(prediction_path)
+    np.testing.assert_allclose(prediction.yhat, 38.5)
+    import json
+    summary = json.loads(Path(summary_path).read_text())
+    assert summary["model_params"] == {"window": 2}

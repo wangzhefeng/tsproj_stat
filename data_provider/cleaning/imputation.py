@@ -29,9 +29,3 @@ def repair_history_frame(frame: pd.DataFrame, columns: list[str]) -> tuple[pd.Da
         counts[col] = int((missing & repaired.notna()).sum())
         out[col] = repaired
     return out, RepairAudit(sum(counts.values()), counts)
-
-
-def require_finite(frame: pd.DataFrame | pd.Series, role: str) -> None:
-    """未来输入和评分真值不得通过插值伪造。"""
-    if not np.isfinite(frame.to_numpy(dtype=float)).all():
-        raise ValueError(f"{role} contains missing or non-finite observations")

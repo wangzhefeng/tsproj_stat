@@ -29,6 +29,10 @@ def build_recommendations(summary: dict[str, Any], diagnostics: pd.DataFrame, pe
     dominant_period = _as_float(cycle.get("dominant_period_fft"))
     acf_peaks = [int(v) for v in cycle.get("acf_peak_lags", []) if _is_number(v)]
     recommended_period = _choose_period(period, seasonal_strength, dominant_period, acf_peaks)
+    multi_seasonal = summary.get("multi_seasonal") or {}
+    multi_strengths = (
+        (multi_seasonal.get("seasonal_strengths") or {}) if multi_seasonal.get("ok") else {}
+    )
 
     d = _recommend_regular_diff(stationarity)
     D = _recommend_seasonal_diff(seasonal_diff)
@@ -71,6 +75,7 @@ def build_recommendations(summary: dict[str, Any], diagnostics: pd.DataFrame, pe
                 "seasonal_strength": seasonal_strength,
                 "dominant_period_fft": dominant_period if _is_number(dominant_period) else None,
                 "acf_peak_lags": acf_peaks,
+                "multi_seasonal_strengths": multi_strengths,
             },
         },
         "differencing": {
@@ -85,6 +90,39 @@ def build_recommendations(summary: dict[str, Any], diagnostics: pd.DataFrame, pe
             "confidence": _confidence(max(forecastability, seasonal_strength, trend_strength)),
             "reason": f"forecastability={forecastability:.3f}",
         },
+        **_covariate_recommendation(summary),
+    }
+
+
+def _covariate_recommendation(summary: dict[str, Any]) -> dict[str, Any]:
+    """协变量建议：Granger p<0.05 的协变量视为对目标有预测价值的候选。
+
+    仅在 summary 携带 covariates 诊断时输出该类别，保持无协变量运行零变化。
+    """
+    covariates = summary.get("covariates") or {}
+    if not covariates:
+        return {}
+    useful: list[str] = []
+    per_covariate: dict[str, Any] = {}
+    for col, info in covariates.items():
+        if not isinstance(info, dict) or not info.get("ok"):
+            continue
+        pvalue = _as_float(info.get("granger_pvalue"))
+        per_covariate[col] = {
+            "granger_pvalue": pvalue if _is_number(pvalue) else None,
+            "granger_best_lag": info.get("granger_best_lag"),
+            "ccf_best_lag": info.get("ccf_best_lag"),
+            "ccf_abs_max": info.get("ccf_abs_max"),
+        }
+        if _is_number(pvalue) and pvalue < 0.05:
+            useful.append(col)
+    return {
+        "covariates": {
+            "useful": useful,
+            "per_covariate": per_covariate,
+            "confidence": _confidence(0.7 if useful else 0.4),
+            "reason": "Granger causality (x -> y) with per-covariate CCF lead/lag structure",
+        }
     }
 
 
@@ -102,6 +140,27 @@ def recommendations_to_frame(recommendations: dict[str, Any]) -> pd.DataFrame:
                     "reason": payload.get("reason", ""),
                 }
             )
+            continue
+        if category == "covariates":
+            rows.append(
+                {
+                    "category": category,
+                    "name": "useful",
+                    "recommendation": ",".join(payload.get("useful", [])),
+                    "confidence": payload.get("confidence", "low"),
+                    "reason": payload.get("reason", ""),
+                }
+            )
+            for col, detail in (payload.get("per_covariate") or {}).items():
+                rows.append(
+                    {
+                        "category": category,
+                        "name": f"{col}::granger_pvalue",
+                        "recommendation": detail.get("granger_pvalue"),
+                        "confidence": payload.get("confidence", "low"),
+                        "reason": payload.get("reason", ""),
+                    }
+                )
             continue
         for name, value in payload.items():
             if name in {"confidence", "reason", "evidence"}:

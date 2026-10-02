@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 
 from models.factory import ModelFactory
+from models.base import BaseStatModel
 from models.model.fallbacks import NaiveModel
 from forecasting.strategies import checked_model_builder
 
@@ -34,11 +35,16 @@ class Trainer:
         y: pd.Series | pd.DataFrame,
         X_hist: pd.DataFrame | None = None,
         X_future: pd.DataFrame | None = None,
-    ):
+    ) -> BaseStatModel:
         """拟合模型；异常时返回带 fallback 标记的 NaiveModel。"""
-        model = checked_model_builder(
+        # 门禁口径与 forecast 阶段的 direct 策略一致：训练期输入能力校验
+        # （native 多步/未来外生/历史协变量）按 direct 语义检查，具体规则归
+        # forecasting.strategies.checked_model_builder。
+        build_model = checked_model_builder(
             lambda: self.factory.create_model(self.model_name, self.model_params, self.ignore_unsupported_inputs),
-            "direct", X_future, history=y, X_hist=X_hist)()
+            "direct", X_future, history=y, X_hist=X_hist,
+        )
+        model = build_model()
         try:
             model.fit(y=y, X_hist=X_hist, X_future=X_future)
             logger.info(f"[Train] {self.model_name} fit success (n={len(y)})")

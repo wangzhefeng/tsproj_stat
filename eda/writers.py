@@ -1,23 +1,23 @@
 """EDA 结构化产物落盘：eda_summary.json / eda_diagnostics.csv / 建议表与图表。"""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pandas as pd
 
 from .visualization import save_series_plots
+from artifacts.writers import write_json, dataframe_to_csv
 
 
 def save_eda_outputs(
     series: pd.Series,
     summary: dict,
     diagnostics: pd.DataFrame,
+    output_dir: str,
     recommendations: dict | None = None,
     recommendations_df: pd.DataFrame | None = None,
     period: int = 7,
     acf_nlags: int = 24,
-    output_dir: str = None,
     save_plots: bool = True,
 ) -> dict[str, str]:
     """保存 EDA 结构化结果和可选图表。
@@ -30,8 +30,8 @@ def save_eda_outputs(
     summary_path = out_dir / "eda_summary.json"
     diagnostics_path = out_dir / "eda_diagnostics.csv"
 
-    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    diagnostics.to_csv(diagnostics_path, index=False)
+    write_json(summary_path, summary)
+    dataframe_to_csv(diagnostics_path, diagnostics)
 
     out = {
         "eda_summary_path": str(summary_path),
@@ -40,11 +40,11 @@ def save_eda_outputs(
 
     if recommendations is not None:
         recommendations_path = out_dir / "eda_recommendations.json"
-        recommendations_path.write_text(json.dumps(recommendations, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json(recommendations_path, recommendations)
         out["eda_recommendations_path"] = str(recommendations_path)
     if recommendations_df is not None:
         recommendations_csv_path = out_dir / "eda_recommendations.csv"
-        recommendations_df.to_csv(recommendations_csv_path, index=False)
+        dataframe_to_csv(recommendations_csv_path, recommendations_df)
         out["eda_recommendations_csv_path"] = str(recommendations_csv_path)
 
     if save_plots:

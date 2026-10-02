@@ -19,7 +19,7 @@ from statsmodels.formula.api import ols
 from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
 from statsmodels.tsa._bds import bds
 from statsmodels.tools.sm_exceptions import InterpolationWarning
-from statsmodels.tsa.seasonal import STL
+from statsmodels.tsa.seasonal import MSTL, STL
 from statsmodels.tsa.stattools import acf, adfuller, kpss, pacf
 
 
@@ -126,15 +126,23 @@ def seasonal_diff_report(series: pd.Series, seasonal_periods: int = 7) -> dict:
 
 
 def heteroskedasticity_report(series: pd.Series) -> dict:
-    """输出异方差相关检验，重点关注 ARCH-LM。"""
-    ret = series.diff().dropna()
-    result: dict = {"arch_lm_stat": math.nan, "arch_lm_pvalue": math.nan,
-                    "white_pvalue": math.nan, "bp_pvalue": math.nan}
+    """输出异方差相关检验（ARCH-LM / White / Breusch-Pagan）。
 
+    单个检验失败按 _safe_stat 契约结构化返回（ok=False + error），不静默吞错；
+    平铺键（arch_lm_stat 等）供 recommendations/report_generator 消费，tests 承载明细状态。
+    """
+    tests: dict[str, dict] = {}
+    ret = series.diff().dropna()
     if len(ret) >= 20:
-        stat, pvalue, *_ = het_arch(ret)
-        result["arch_lm_stat"] = float(stat)
-        result["arch_lm_pvalue"] = float(pvalue)
+        tests["arch_lm"] = _safe_stat("arch_lm", lambda: het_arch(ret))
+    else:
+        tests["arch_lm"] = {
+            "name": "arch_lm",
+            "statistic": math.nan,
+            "pvalue": math.nan,
+            "ok": False,
+            "error": f"need >= 20 differenced samples, got {len(ret)}",
+        }
 
     # White and Breusch-Pagan via OLS residuals (time as regressor)
     try:
@@ -142,22 +150,41 @@ def heteroskedasticity_report(series: pd.Series) -> dict:
         s.columns = ["time", "value"]
         s["time"] += 1
         olsr = ols("value ~ time", s).fit()
-        _, white_p, _, _ = sms.het_white(olsr.resid, olsr.model.exog)
-        _, bp_p, _, _ = sms.het_breuschpagan(olsr.resid, olsr.model.exog)
-        result["white_pvalue"] = float(white_p)
-        result["bp_pvalue"] = float(bp_p)
-    except Exception:
-        pass
+        tests["white"] = _safe_stat("white", lambda: sms.het_white(olsr.resid, olsr.model.exog))
+        tests["breusch_pagan"] = _safe_stat(
+            "breusch_pagan", lambda: sms.het_breuschpagan(olsr.resid, olsr.model.exog)
+        )
+    except Exception as exc:
+        for name in ("white", "breusch_pagan"):
+            tests[name] = {
+                "name": name,
+                "statistic": math.nan,
+                "pvalue": math.nan,
+                "ok": False,
+                "error": str(exc),
+            }
 
-    return result
+    return {
+        "arch_lm_stat": tests["arch_lm"]["statistic"],
+        "arch_lm_pvalue": tests["arch_lm"]["pvalue"],
+        "white_pvalue": tests["white"]["pvalue"],
+        "bp_pvalue": tests["breusch_pagan"]["pvalue"],
+        "tests": tests,
+    }
 
 
 def white_noise_report(series: pd.Series, lags: int = 12) -> dict:
-    """Ljung-Box 白噪声检验：p 值小表示序列仍含自相关结构。"""
-    lb = acorr_ljungbox(series, lags=[min(lags, len(series) - 1)], return_df=True)
+    """Ljung-Box 白噪声检验：p 值小表示序列仍含自相关结构。失败结构化返回，不中断诊断。"""
+    def _run():
+        lb = acorr_ljungbox(series, lags=[min(lags, len(series) - 1)], return_df=True)
+        return float(lb["lb_stat"].iloc[0]), float(lb["lb_pvalue"].iloc[0])
+
+    result = _safe_stat("ljung_box", _run)
     return {
-        "ljung_box_stat": float(lb["lb_stat"].iloc[0]),
-        "ljung_box_pvalue": float(lb["lb_pvalue"].iloc[0]),
+        "ljung_box_stat": result["statistic"],
+        "ljung_box_pvalue": result["pvalue"],
+        "ok": result["ok"],
+        "error": result.get("error", ""),
     }
 
 
@@ -197,6 +224,34 @@ def outlier_report(series: pd.Series) -> dict:
     }
 
 
+def multi_seasonal_report(series: pd.Series, periods: list[int]) -> dict:
+    """MSTL 多周期分解：估计每个候选周期的季节强度（周期 >= 2 且样本需长于最大周期两倍）。
+
+    候选不足或样本不够时结构化失败（ok=False），不抛异常、不静默删周期。
+    """
+    unique = sorted({int(p) for p in periods if p is not None and int(p) >= 2})
+    if len(unique) < 2:
+        return {"ok": False, "error": "need >= 2 distinct candidate periods (>= 2)",
+                "periods": unique, "seasonal_strengths": {}}
+    if len(series) <= 2 * max(unique):
+        return {"ok": False,
+                "error": f"series length {len(series)} must exceed 2 * max(periods)={max(unique)}",
+                "periods": unique, "seasonal_strengths": {}}
+    try:
+        mstl = MSTL(series, periods=unique).fit()
+        resid = np.asarray(mstl.resid, dtype=float)
+        # seasonal 多周期时为 (n, len(periods)) 矩阵，列序与传入 periods 一致
+        seasonal = np.asarray(mstl.seasonal, dtype=float)
+        strengths = {}
+        for idx, p in enumerate(unique):
+            comp = seasonal[:, idx]
+            strength = 1.0 - (np.var(resid) / (np.var(comp + resid) + 1e-12))
+            strengths[str(p)] = float(np.clip(strength, 0.0, 1.0))
+        return {"ok": True, "periods": unique, "seasonal_strengths": strengths}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "periods": unique, "seasonal_strengths": {}}
+
+
 def forecastability_score(series: pd.Series) -> float:
     """可预测性评分：1 - 归一化谱熵，越接近 1 表示谱能量越集中（越好预测）。"""
     values = np.asarray(series.values, dtype=float)
@@ -226,17 +281,26 @@ def run_diagnostics(series: pd.Series, period: int = 7, nlags: int = 24) -> tupl
     sc = stochasticity_report(series)
     ol = outlier_report(series)
 
+    # 多周期候选：配置周期 + ACF 峰值，去重过滤；>=2 个候选时运行 MSTL 多周期分解
+    candidates: list[int] = []
+    for p in [period, *cy.get("acf_peak_lags", [])]:
+        p_int = int(p)
+        if 2 <= p_int <= len(series) // 2 and p_int not in candidates:
+            candidates.append(p_int)
+    ms = multi_seasonal_report(series, candidates) if len(candidates) >= 2 else None
+    # pandas-stubs 的标量联合过宽；浮点数组边界保持原 pandas 样本矩估计。
+    moments = series.agg(["skew", "kurt"]).to_numpy(dtype=float)
+
     summary = {
         "n_samples": int(len(series)),
         "mean": float(series.mean()),
         "std": float(series.std()),
         "min": float(series.min()),
         "max": float(series.max()),
-        "skewness": float(series.skew()),
-        "kurtosis": float(series.kurt()),
+        "skewness": float(moments[0]),
+        "kurtosis": float(moments[1]),
         "q1": float(series.quantile(0.25)),
         "q3": float(series.quantile(0.75)),
-        "missing_rate": float(series.isna().mean()),
         "forecastability": fc,
         "decomposition": dc,
         "cycle": cy,
@@ -249,6 +313,8 @@ def run_diagnostics(series: pd.Series, period: int = 7, nlags: int = 24) -> tupl
         "acf_head": ac["acf"][:10],
         "pacf_head": ac["pacf"][:10],
     }
+    if ms is not None:
+        summary["multi_seasonal"] = ms
 
     rows = []
     for item in st:
@@ -263,17 +329,23 @@ def run_diagnostics(series: pd.Series, period: int = 7, nlags: int = 24) -> tupl
             }
         )
 
-    rows.append({"category": "white_noise", "name": "ljung_box", "statistic": wn["ljung_box_stat"], "pvalue": wn["ljung_box_pvalue"], "ok": True, "error": ""})
-    rows.append({"category": "heteroskedasticity", "name": "arch_lm", "statistic": he["arch_lm_stat"], "pvalue": he["arch_lm_pvalue"], "ok": True, "error": ""})
-    rows.append({"category": "heteroskedasticity", "name": "white", "statistic": math.nan, "pvalue": he["white_pvalue"], "ok": True, "error": ""})
-    rows.append({"category": "heteroskedasticity", "name": "breusch_pagan", "statistic": math.nan, "pvalue": he["bp_pvalue"], "ok": True, "error": ""})
-    rows.append({"category": "stochasticity", "name": "bds_dim2", "statistic": sc["bds_stat_dim2"], "pvalue": sc["bds_pvalue_dim2"], "ok": True, "error": ""})
-    rows.append({"category": "stochasticity", "name": "bds_dim3", "statistic": sc["bds_stat_dim3"], "pvalue": sc["bds_pvalue_dim3"], "ok": True, "error": ""})
+    rows.append({"category": "white_noise", "name": "ljung_box", "statistic": wn["ljung_box_stat"], "pvalue": wn["ljung_box_pvalue"], "ok": bool(wn["ok"]), "error": wn["error"]})
+    for het_name in ("arch_lm", "white", "breusch_pagan"):
+        t = he["tests"][het_name]
+        rows.append({"category": "heteroskedasticity", "name": het_name, "statistic": t["statistic"], "pvalue": t["pvalue"], "ok": bool(t["ok"]), "error": t.get("error", "")})
+    bds_ok = "error" not in sc
+    rows.append({"category": "stochasticity", "name": "bds_dim2", "statistic": sc["bds_stat_dim2"], "pvalue": sc["bds_pvalue_dim2"], "ok": bds_ok, "error": sc.get("error", "")})
+    rows.append({"category": "stochasticity", "name": "bds_dim3", "statistic": sc["bds_stat_dim3"], "pvalue": sc["bds_pvalue_dim3"], "ok": bds_ok, "error": sc.get("error", "")})
     rows.append({"category": "outlier", "name": "n_outliers_iqr", "statistic": float(ol["n_outliers_iqr"]), "pvalue": math.nan, "ok": True, "error": ""})
     rows.append({"category": "outlier", "name": "n_outliers_zscore", "statistic": float(ol["n_outliers_zscore"]), "pvalue": math.nan, "ok": True, "error": ""})
     rows.append({"category": "decomposition", "name": "trend_strength", "statistic": dc["trend_strength"], "pvalue": math.nan, "ok": True, "error": ""})
     rows.append({"category": "decomposition", "name": "seasonal_strength", "statistic": dc["seasonal_strength"], "pvalue": math.nan, "ok": True, "error": ""})
     rows.append({"category": "cycle", "name": "dominant_period_fft", "statistic": cy["dominant_period_fft"], "pvalue": math.nan, "ok": True, "error": ""})
+    if ms is not None:
+        for p_str, strength in ms["seasonal_strengths"].items():
+            rows.append({"category": "multi_seasonal", "name": f"seasonal_strength_p{p_str}", "statistic": strength, "pvalue": math.nan, "ok": bool(ms["ok"]), "error": ms.get("error", "")})
+        if not ms["ok"]:
+            rows.append({"category": "multi_seasonal", "name": "mstl", "statistic": math.nan, "pvalue": math.nan, "ok": False, "error": ms.get("error", "")})
     rows.append({"category": "seasonal_diff", "name": "D_ch", "statistic": float(sd["D_ch"]), "pvalue": math.nan, "ok": True, "error": ""})
     rows.append({"category": "seasonal_diff", "name": "D_ocsb", "statistic": float(sd["D_ocsb"]), "pvalue": math.nan, "ok": True, "error": ""})
     rows.append({"category": "forecastability", "name": "score", "statistic": fc, "pvalue": math.nan, "ok": True, "error": ""})

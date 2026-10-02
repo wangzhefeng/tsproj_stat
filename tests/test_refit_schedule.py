@@ -6,7 +6,6 @@ from evaluation.backtest import rolling_backtest
 from models.factory import ModelFactory
 from models.model.arima_family import ARIMAModel
 
-
 def test_refit_schedule_reuses_parameters_and_updates_observations(monkeypatch):
     # ARIMA(0,0,0) 常数均值：固定参数的中间窗口必须保持上一拟合均值。
     df = pd.DataFrame({"y": np.arange(24., dtype=float)})

@@ -17,13 +17,16 @@ import numpy as np
 import pandas as pd
 
 from config import AppConfig
+from features.model_inputs import ModelFeatureSpec, FutureFeatures
+from models.base import BaseStatModel
 from pipeline.trainer import Trainer
 from pipeline.tester import Tester
 from forecasting.forecaster import Forecaster
-from forecasting.intervals import predict_frame, simulate_frame
-from artifacts.paths import resolve_model_params
+from forecasting.intervals import predict_frame
+from forecasting.simulation import simulate_frame
+from config.model_params import resolve_model_params
 from data_provider.target_transforms.transformer import TargetTransformer
-from data_provider.cleaning.imputation import require_finite
+from data_provider.quality.checks import require_finite
 from evaluation.backtest import BacktestResult
 from utils.log_util import logger
 
@@ -37,7 +40,7 @@ class TrainStageResult:
     二者仅在后端支持拟合值时产出（P8），否则训练阶段显式 RAISE。
     """
 
-    model: object
+    model: BaseStatModel
     fitted_df: pd.DataFrame | None = None
     residual_stats: dict = field(default_factory=dict)
 
@@ -79,6 +82,13 @@ class PrepareResult:
     raw_history_df: pd.DataFrame
     model_input_feature_columns: list[str] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)
+    feature_context: FutureFeatures | None = None
+
+
+def model_feature_spec(cfg: AppConfig) -> ModelFeatureSpec | None:
+    if cfg.feature_mode != "model_input" or not (cfg.enable_datetime_features or cfg.lags):
+        return None
+    return ModelFeatureSpec(cfg.enable_datetime_features, tuple(cfg.lags))
 
 
 def new_processor_from_config(cfg: AppConfig) -> TargetTransformer:
@@ -109,7 +119,7 @@ def run_train_stage(
     P8：train 产物附带拟合值诊断——门禁要求模型 registry 声明
     supports_fitted_values 且模型实现 fitted_values()；不支持的组合
     显式 RAISE（不静默跳过诊断）。可逆预处理启用时拟合值经
-    inverse_forecast 回到原始尺度，残差与业务尺度一致。
+    inverse_transform 回到原始尺度，残差与业务尺度一致。
     """
     trainer = Trainer(
         model_name=cfg.model_name,
@@ -119,7 +129,8 @@ def run_train_stage(
     model = trainer.train(
         prepared.history_y,
         X_hist=prepared.history_model_input_df,
-        X_future=prepared.future_exog_df,
+        X_future=(prepared.feature_context.row(prepared.future_exog_df, 0, [])
+                  if prepared.feature_context else prepared.future_exog_df),
     )
     if not getattr(cfg, "train_fitted_values", False):
         # 默认关闭：训练不附带诊断，行为与 P8 之前完全一致。
@@ -223,6 +234,7 @@ def run_test_stage(
         levels=cfg.interval_levels or None,
         refit_every=cfg.backtest_refit_every,
         ignore_unsupported_inputs=cfg.ignore_unsupported_inputs,
+        feature_spec=model_feature_spec(cfg),
     )
     return tester.evaluate(df[[cfg.time_col, *model_history_input_cols]].copy())
 
@@ -258,25 +270,26 @@ def run_forecast_stage(
             levels=cfg.interval_levels or None,
             processor_builder=processor_builder,
         )
-        return ForecastStageResult(
+        result = ForecastStageResult(
             forecast_df=interval_df.reset_index(drop=True),
             interval_metadata=dict(interval_df.attrs),
             last_nan_filled=forecaster.last_nan_filled,
         )
-    pred = forecaster.forecast(
-        history=prepared.history_y,
-        horizon=cfg.predict_horizon,
-        X_hist=prepared.history_model_input_df,
-        X_future=prepared.future_exog_df,
-    )
-    # 可逆预处理在模型输出后重组趋势/季节项，保持最终 yhat 回到原始业务尺度。
-    if prepared.processor.enabled:
-        pred = prepared.processor.inverse_forecast(pred)
-    result = ForecastStageResult(
-        forecast_df=pred.to_frame(name="yhat"),
-        interval_metadata={},
-        last_nan_filled=forecaster.last_nan_filled,
-    )
+    else:
+        pred = forecaster.forecast(
+            history=prepared.history_y,
+            horizon=cfg.predict_horizon,
+            X_hist=prepared.history_model_input_df,
+            X_future=prepared.future_exog_df,
+            feature_context=prepared.feature_context,
+        )
+        # 还原点预测；区间分支在 predict_frame 内已经还原。
+        if prepared.processor.enabled:
+            pred = prepared.processor.inverse_forecast(pred)
+        result = ForecastStageResult(
+            forecast_df=pred.to_frame(name="yhat"),
+            last_nan_filled=forecaster.last_nan_filled,
+        )
     if getattr(cfg, "simulate_enabled", False):
         # P9：误差驱动路径模拟（与区间互不影响；产物独立落盘，不与区间列混排）。
         sim = simulate_frame(
@@ -294,6 +307,9 @@ def run_forecast_stage(
             X_hist=prepared.raw_history_df[model_history_input_cols],
             X_future=prepared.future_exog_df,
             processor_builder=processor_builder,
+            feature_spec=model_feature_spec(cfg),
+            history_time=prepared.raw_history_df[cfg.time_col],
+            future_time=prepared.feature_context.future_time if prepared.feature_context else None,
         )
         result.simulate_paths_df = sim.paths_df
         result.simulate_quantile_df = sim.quantile_df

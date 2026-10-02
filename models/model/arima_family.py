@@ -8,25 +8,18 @@ from __future__ import annotations
 
 import warnings
 from itertools import product
-from typing import Any, Iterable, Protocol, TYPE_CHECKING, cast
+from typing import Any, Iterable, TYPE_CHECKING, cast
 
 import numpy as np
+import pandas as pd
 
 if TYPE_CHECKING:
     from statsmodels.tsa.statespace.sarimax import SARIMAXResults
 
-
-class _StatsForecastPredict(Protocol):
-    # StatsForecast 2.0.1 文档/实现支持 float level，但签名错误地写为 List[int]。
-    def __call__(self, h: int, X: np.ndarray | None = None,
-                 level: list[float] | None = None) -> dict[str, np.ndarray]: ...
-
-import pandas as pd
-
 from models.contracts.inputs import to_univariate_series
 from models.contracts.validation import validate_horizon
 from models.base import BaseStatModel
-from models.exogenous import ExogenousMixin
+from models.contracts.exogenous import ExogenousMixin
 from .fallbacks import (
     FallbackMixin,
     NaiveModel,
@@ -134,6 +127,7 @@ class ARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
     支持外生变量、原生多步、预测区间与固定参数 update；拟合失败回退
     NaiveModel/TrendFallbackModel 并在 model_info 记录原因。
     """
+    _runtime_backend_fields = ("_result",)
     def __init__(
         self,
         order: tuple[int, int, int] | list[int] = (1, 1, 1),
@@ -178,7 +172,7 @@ class ARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
         except Exception as exc:
             self._result = None
             warn_and_use_fallback(
-                model_name=type(self).__name__,
+                model=self, model_name=type(self).__name__,
                 fallback_name=type(self._fallback).__name__,
                 exc=exc,
             )
@@ -202,7 +196,6 @@ class ARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
         return pd.Series(self._result.fittedvalues, name="fitted").reset_index(drop=True)
 
     def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
-        import pandas as pd, numpy as np
         self._predict_exog(horizon, X_future)
         if self._result is None:
             return super().predict_with_intervals(horizon, X_future, alpha)
@@ -249,6 +242,7 @@ class ARMAModel(ARIMAModel):
 
 class SARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
     """SARIMA：在 ARIMA 之上叠加季节项 (P,D,Q,m) 的主线实现。"""
+    _runtime_backend_fields = ("_result",)
     def __init__(
         self,
         order: tuple[int, int, int] | list[int] = (1, 1, 1),
@@ -301,7 +295,7 @@ class SARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
         except Exception as exc:
             self._result = None
             warn_and_use_fallback(
-                model_name="SARIMAModel",
+                model=self, model_name="SARIMAModel",
                 fallback_name=type(self._fallback).__name__,
                 exc=exc,
             )
@@ -322,7 +316,6 @@ class SARIMAModel(FixedParameterUpdateMixin, FallbackMixin, BaseStatModel):
         return pd.Series(self._result.fittedvalues, name="fitted").reset_index(drop=True)
 
     def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
-        import pandas as pd, numpy as np
         self._predict_exog(horizon, X_future)
         if self._result is None:
             return super().predict_with_intervals(horizon, X_future, alpha)
@@ -345,6 +338,7 @@ class AutoARIMAModel(ExogenousMixin, BaseStatModel):
     与 sf_auto_arima（StatsForecast 后端）是两条独立实现，比较时必须
     固定数据、窗口、策略和搜索范围。
     """
+    _runtime_backend_fields = ("_result",)
     def __init__(
         self,
         seasonal: bool = False,
@@ -418,7 +412,7 @@ class AutoARIMAModel(ExogenousMixin, BaseStatModel):
             self._result = None
             self._ensure_fallback_fitted(series, X_hist=X_hist)
             warn_and_use_fallback(
-                model_name="AutoARIMAModel",
+                model=self, model_name="AutoARIMAModel",
                 fallback_name=type(self._fallback).__name__ if self._fallback is not None else "ARIMAModel",
                 exc=exc,
             )
@@ -454,80 +448,3 @@ class AutoARIMAModel(ExogenousMixin, BaseStatModel):
         if self._fallback is None:
             self._fallback = ARIMAModel(auto_order=True)
         self._fallback.fit(series, X_hist=X_hist)
-
-
-class StatsForecastAutoARIMAModel(ExogenousMixin, BaseStatModel):
-    """显式 StatsForecast 后端，不改变 auto_arima 的 pmdarima 默认语义。"""
-    def __init__(self, season_length=1, seasonal=False, d=None, D=None,
-                 max_p=5, max_q=5, max_P=2, max_Q=2, max_order=5,
-                 stepwise=True, ic="aic", approximation=False):
-        self.params: dict[str, Any] = dict(season_length=season_length, seasonal=seasonal, d=d, D=D,
-                           max_p=max_p, max_q=max_q, max_P=max_P, max_Q=max_Q,
-                           max_order=max_order, stepwise=stepwise, ic=ic,
-                           approximation=approximation, start_p=min(2, max_p), start_q=min(2, max_q))
-        self._result = None
-        self._train_y: pd.Series | None = None
-
-    def fit(self, y, X_hist=None, X_future=None):
-        from statsforecast.models import AutoARIMA
-        exog = self._fit_exog(y, X_hist, X_future)
-        self._train_y = to_univariate_series(y).astype(float)
-        self._result = AutoARIMA(**self.params).fit(self._train_y.to_numpy(dtype=float), X=exog)
-        return self
-
-    def fitted_values(self) -> pd.Series:
-        # SF 2.0.1 forecast(fitted=True) 需重传训练序列。
-        if self._result is None or self._train_y is None:
-            raise ValueError(
-                f"{type(self).__name__} has no fitted result; fitted values unavailable"
-            )
-        fc = self._result.forecast(self._train_y.to_numpy(dtype=float), 1, fitted=True)
-        return pd.Series(np.asarray(fc["fitted"], dtype=float), name="fitted").reset_index(drop=True)
-
-    def predict(self, horizon, X_future=None):
-        validate_horizon(horizon)
-        if self._result is None:
-            raise RuntimeError("Model is not fitted")
-        pred = self._result.predict(horizon, X=self._predict_exog(horizon, X_future))
-        return pd.Series(pred["mean"], name="yhat")
-
-    def predict_with_intervals(self, horizon, X_future=None, alpha=0.05):
-        validate_horizon(horizon)
-        if not 0 < alpha < 1:
-            raise ValueError("alpha must be in (0, 1)")
-        if self._result is None:
-            raise RuntimeError("Model is not fitted")
-        level = round(100 * (1 - alpha), 10)
-        predict = cast(_StatsForecastPredict, self._result.predict)
-        pred = predict(horizon, X=self._predict_exog(horizon, X_future), level=[level])
-        return pd.DataFrame({"yhat": pred["mean"], "yhat_lower": pred[f"lo-{level}"], "yhat_upper": pred[f"hi-{level}"]})
-
-    def predict_with_levels(self, horizon, X_future=None, levels=None, alpha=0.05):
-        """SF 后端原生多水平：一次 predict(level=[...]) 返回全部水平列。"""
-        from forecasting.intervals import resolve_interval_levels
-
-        validate_horizon(horizon)
-        if self._result is None:
-            raise RuntimeError("Model is not fitted")
-        resolved = resolve_interval_levels(levels, alpha)
-        predict = cast(_StatsForecastPredict, self._result.predict)
-        sf_levels = [round(level * 100, 10) for level in resolved]
-        pred = predict(horizon, X=self._predict_exog(horizon, X_future), level=sf_levels)
-        return statsforecast_levels_frame(pred, resolved, len(resolved) > 1)
-
-
-def statsforecast_levels_frame(pred: dict, levels: list[float], multi: bool) -> pd.DataFrame:
-    """StatsForecast 后端 predict(level=[...]) 结果 → 统一多水平列名 DataFrame。
-
-    SF 列键为 lo-{level}/hi-{level}（level 为百分数 float，如 lo-80.0）；
-    本项目统一为 yhat_lower[_{label}]/yhat_upper[_{label}]。
-    """
-    from forecasting.intervals import interval_bound_columns
-
-    data: dict[str, np.ndarray] = {"yhat": pred["mean"]}
-    for level in levels:
-        sf_level = round(level * 100, 10)
-        lower_col, upper_col = interval_bound_columns(level, multi=multi)
-        data[lower_col] = pred[f"lo-{sf_level}"]
-        data[upper_col] = pred[f"hi-{sf_level}"]
-    return pd.DataFrame(data)

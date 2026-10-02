@@ -9,21 +9,27 @@ import copy
 import uuid
 from pathlib import Path
 import json
-import pickle
+
 from datetime import datetime
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 import numpy as np
 import pandas as pd
+from pipeline.stages import model_feature_spec
 
 from config import AppConfig
 from data_provider.loading.loader import DataLoader
 from data_provider.resampling.service import AggregationResult
 from data_provider.cleaning.imputation import repair_history_frame
+from data_provider.quality.checks import require_regular_time
 from pipeline.windows import split_history, align_future_exog
+from pipeline.multi_model import run_multi_model
 from features.feature_engineering import FeatureEngineer, build_history_features
-from models.persistence import save_model
+from artifacts.checkpoints import save_checkpoint
+from artifacts.identity import file_fingerprint, frame_fingerprint
+from artifacts.manifest import RunManifest
 from eda import run_eda
+from evaluation.comparison import build_comparison_frame, select_best_model
 from evaluation.visualization import (
     plot_backtest_predictions,
     plot_backtest_residuals,
@@ -32,8 +38,11 @@ from evaluation.visualization import (
 )
 from monitoring.monitor import ModelMonitor
 from models.registry import MODEL_REGISTRY
-from artifacts.paths import build_experiment_path, prepare_run_artifacts, resolve_model_params
-from artifacts.writers import dataframe_to_csv, forecast_timestamps, model_info_payload, write_json
+from config.model_params import resolve_model_params
+from artifacts.paths import build_experiment_path, prepare_run_artifacts
+from artifacts.writers import dataframe_to_csv, write_json
+from artifacts.metadata import model_info_payload, interval_metadata_payload
+from pipeline.windows import forecast_timestamps
 from pipeline.stages import PrepareResult, new_processor_from_config, run_train_stage, run_test_stage, run_forecast_stage
 
 from utils.log_util import logger, configure_logging, set_run_id, timed_stage
@@ -66,6 +75,19 @@ def _test_summary_payload(model_name: str, payload: dict) -> dict:
     return result
 
 
+# EDA-only 运行不产出模型实验目录，run 结果中移除指向这些未创建目录的路径键。
+_EDA_ONLY_DROP_KEYS = (
+    "setting",
+    "experiment_path",
+    "checkpoints_dir",
+    "train_results_dir",
+    "test_results_dir",
+    "forecast_results_dir",
+    "monitor_dir",
+    "custom_monitor_dir",
+)
+
+
 class ModelApp:
     """完整应用编排层。
 
@@ -74,7 +96,8 @@ class ModelApp:
     """
 
     def __init__(self, cfg: AppConfig, aggregation_result: AggregationResult | None = None,
-                 data_frame: pd.DataFrame | None = None, future_exog_frame: pd.DataFrame | None = None):
+                 data_frame: pd.DataFrame | None = None, future_exog_frame: pd.DataFrame | None = None,
+                 source_identity: dict | None = None):
         """
         Args:
             cfg: 完整运行配置（须已通过 validate()）。
@@ -83,13 +106,17 @@ class ModelApp:
         """
         self.cfg = cfg
         self.aggregation_result = aggregation_result
+        self.source_identity = source_identity
+        self.input_fingerprints: dict = {}
+        self._manifests: list[RunManifest] = []
         self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
         configure_logging(log_format=cfg.log_format, run_id=self.run_id)
         # model_names 优先于 model_name：单元素列表也同步覆盖 model_name，
         # 保证 artifacts/loader 与实际运行模型一致（多模型循环内另行逐模型重建）。
         if self.cfg.model_names:
             self.cfg.model_name = self.cfg.resolved_model_names()[0]
-        self.artifacts = prepare_run_artifacts(cfg)
+        self.artifacts = prepare_run_artifacts(cfg, self.run_id, source=self.source_identity)
+        self._shared_directories = [self.artifacts.train_results_dir, self.artifacts.forecast_results_dir, self.artifacts.eda_dir]
         self.loader = DataLoader(
             data_path=self.cfg.data_path,
             time_col=self.cfg.time_col,
@@ -138,7 +165,43 @@ class ModelApp:
         """
         return resolve_model_params(self.cfg)
 
+    def _start_manifest(self, directory: Path | None = None) -> RunManifest:
+        directory = directory or (self.artifacts.eda_dir if self.cfg.is_eda_only() else self.artifacts.forecast_results_dir)
+        for existing in self._manifests:
+            if existing.path == directory / "run_manifest.json":
+                return existing
+        manifest = RunManifest(directory / "run_manifest.json", self.cfg, self.run_id, source=self.source_identity)
+        manifest.inputs(self.input_fingerprints)
+        self._manifests.append(manifest)
+        return manifest
+
+    def _run_directories(self) -> list[Path]:
+        if self.cfg.is_eda_only():
+            return [self.artifacts.eda_dir]
+        return [*self._shared_directories, self.artifacts.checkpoints_dir, self.artifacts.train_results_dir,
+                self.artifacts.test_results_dir, self.artifacts.forecast_results_dir,
+                self.artifacts.eda_dir]
+
     def run(self) -> dict[str, str | dict[str, float]]:
+        multi = self.cfg.is_multi_model()
+        top_dir = (Path(self.cfg.results_dir) / self.artifacts.data_name / "results_test"
+                   / "comparison" / "runs" / self.run_id) if multi else None
+        top = self._start_manifest(top_dir)
+        try:
+            result = self._run_impl()
+            if multi:
+                result["run_id"] = self.run_id
+                result["manifest_path"] = top.finish(result, [top.path.parent])
+                if top.payload["status"] == "failed":
+                    result["run_error"] = "one or more model stages failed; see manifest"
+            return result
+        except Exception as exc:
+            for manifest in self._manifests:
+                if manifest.payload["status"] == "running":
+                    manifest.finish({}, [], fatal=str(exc))
+            raise
+
+    def _run_impl(self) -> dict[str, str | dict[str, float]]:
         """按 EDA → 数据准备 → train → test → forecast 顺序执行主流程。
 
         返回产物路径与汇总指标的字典；阶段失败以 *_error 键记录（由 run.py
@@ -149,27 +212,18 @@ class ModelApp:
         # ------------------------------
         np.random.seed(self.cfg.seed)
         # ------------------------------
-        # 加载数据
+        # 加载数据与输入指纹
         # ------------------------------
         logger.info(f"{'=' * 100}")
         logger.info(f"Loading data from {self.cfg.data_path}")
         logger.info(f"{'=' * 100}")
         df = self._load_dataset()
+        self.input_fingerprints = {**self._file_fingerprints(), "history_view": frame_fingerprint(df)}
+        for manifest in self._manifests:
+            manifest.inputs(self.input_fingerprints)
 
         # out
-        out: dict[str, str | dict[str, float]] = {
-            "setting": self.artifacts.setting,
-            "experiment_path": str(self.artifacts.experiment_path),
-            "eda_path": str(self.artifacts.eda_path),
-            "data_name": self.artifacts.data_name,
-            "checkpoints_dir": str(self.artifacts.checkpoints_dir),
-            "train_results_dir": str(self.artifacts.train_results_dir),
-            "test_results_dir": str(self.artifacts.test_results_dir),
-            "forecast_results_dir": str(self.artifacts.forecast_results_dir),
-            "eda_dir": str(self.artifacts.eda_dir),
-            "monitor_dir": str(self.artifacts.monitor_dir),
-            "custom_monitor_dir": str(self.artifacts.custom_monitor_dir),
-        }
+        out: dict[str, str | dict[str, float]] = dict(self._directory_payload())
         if self.aggregation_result is not None:
             out.update(
                 {
@@ -181,9 +235,7 @@ class ModelApp:
         # ------------------------------
         # EDA（失败不阻断后续阶段）
         # ------------------------------
-        logger.info(f"{'=' * 100}")
-        logger.info(f"Running EDA...")
-        logger.info(f"{'=' * 100}")
+        self._log_stage_banner("Running EDA...")
         try:
             with timed_stage("eda"):
                 eda_info = self.eda(df)
@@ -199,9 +251,7 @@ class ModelApp:
         eda_only = self.cfg.is_eda_only()
         prepared: PrepareResult | None = None
         if (not eda_only) or self.cfg.eda_run_preprocessed:
-            logger.info(f"{'=' * 100}")
-            logger.info(f"Running _prepare_target_series...")
-            logger.info(f"{'=' * 100}")
+            self._log_stage_banner("Running _prepare_target_series...")
             prepared = self._prepare_target_series(df)
             logger.info(f"Prepare info:\n {prepared.metadata}")
             out.update(prepared.metadata)
@@ -217,6 +267,10 @@ class ModelApp:
                         period=self.cfg.eda_period,
                         nlags=self.cfg.eda_nlags,
                         recommendation_enabled=self.cfg.eda_recommendation_enabled,
+                        covariate_cols=[
+                            c for c in [*(self.cfg.endog_cols or []), *(self.cfg.exog_cols or [])]
+                            if c not in (self.cfg.time_col, self.cfg.target_col)
+                        ] or None,
                     )
                     out.update({f"postprocessed_{key}": value for key, value in post_info.items()})
                 except Exception as exc:
@@ -225,16 +279,7 @@ class ModelApp:
         if eda_only:
             logger.info("EDA-only run: skipping auto_select/train/test/forecast/feature stages.")
             # EDA-only 不产出模型实验目录，从结果中移除指向这些未创建目录的路径键。
-            for key in (
-                "setting",
-                "experiment_path",
-                "checkpoints_dir",
-                "train_results_dir",
-                "test_results_dir",
-                "forecast_results_dir",
-                "monitor_dir",
-                "custom_monitor_dir",
-            ):
+            for key in _EDA_ONLY_DROP_KEYS:
                 out.pop(key, None)
             out["eda_only"] = "true"
             return self._write_run_summary(out, summary_dir=self.artifacts.eda_dir)
@@ -244,106 +289,118 @@ class ModelApp:
         # 多模型单 run：数据准备/EDA 已完成，模型阶段逐模型循环
         # ------------------------------
         if self.cfg.is_multi_model():
-            return self._run_multi_model(df, prepared, out)
+            return run_multi_model(self, self.cfg, df, prepared, out)
         # ------------------------------
         # 自动模型选择（可选，失败不阻断后续）
         # ------------------------------
-        if self.cfg.auto_select:
+        self._run_auto_select(df, out)
+        # ------------------------------
+        # train / test / forecast 三阶段（各自失败不阻断后续）与特征快照
+        # ------------------------------
+        return self._run_single_model_stages(df, prepared, out)
+
+    def _file_fingerprints(self) -> dict:
+        """按配置收集文件输入指纹（历史/未来外生/EDA 对比文件）。"""
+        fingerprints: dict = {}
+        for key, value in [("history_file", self.cfg.data_path), ("future_exog_file", self.cfg.future_exog_path),
+                           *((f"eda_comparison_{i}", p) for i, p in enumerate(self.cfg.eda_comparison_paths))]:
+            if value:
+                fingerprints[key] = {"path": str(Path(value).resolve()), **file_fingerprint(Path(value))}
+        return fingerprints
+
+    def _directory_payload(self) -> dict[str, str]:
+        """当前 artifacts 的目录索引键（初始化与 auto_select 重建后共用）。"""
+        return {
+            "setting": self.artifacts.setting,
+            "experiment_path": str(self.artifacts.experiment_path),
+            "eda_path": str(self.artifacts.eda_path),
+            "data_name": self.artifacts.data_name,
+            "checkpoints_dir": str(self.artifacts.checkpoints_dir),
+            "train_results_dir": str(self.artifacts.train_results_dir),
+            "test_results_dir": str(self.artifacts.test_results_dir),
+            "forecast_results_dir": str(self.artifacts.forecast_results_dir),
+            "eda_dir": str(self.artifacts.eda_dir),
+            "monitor_dir": str(self.artifacts.monitor_dir),
+            "custom_monitor_dir": str(self.artifacts.custom_monitor_dir),
+        }
+
+    def _log_stage_banner(self, message: str) -> None:
+        """阶段分割线日志（'=' * 100 三行式，收口自 7 处重复）。"""
+        logger.info(f"{'=' * 100}")
+        logger.info(message)
+        logger.info(f"{'=' * 100}")
+
+    def _run_auto_select(self, df: pd.DataFrame, out: dict[str, str | dict[str, float]]) -> None:
+        """自动模型选择（可选，失败不阻断后续阶段）。
+
+        选型用原始完整历史做窗口评估 + per-window processor，
+        与 test 链路同口径，避免在预处理后的 history_y 上评估导致选错模型；
+        改选后按最终模型名重建产物目录（P12），否则结果会写入原始模型名的 experiment_path。
+        """
+        if not self.cfg.auto_select:
+            return
+        try:
+            from evaluation.selector import AutoSelector
+            logger.info(f"[AutoSelect] running with candidates: {self.cfg.auto_select_candidates or 'registry-stable'}")
+            candidates = self.cfg.auto_select_candidates or [name for name, spec in MODEL_REGISTRY.items() if spec.stability == "stable"]
+            params_map = {name: resolve_model_params(replace(
+                self.cfg, model_name=name,
+                model_params=self.cfg.batch_models.get(name, self.cfg.model_params),
+            )) for name in candidates}
+            selector = AutoSelector(
+                candidates=candidates,
+                metric=self.cfg.auto_select_metric,
+                n_windows=self.cfg.auto_select_n_windows,
+                initial_train_size=self.cfg.resolved_backtest_train_size(),
+                horizon=self.cfg.backtest_horizon,
+                forecast_strategy=self.cfg.resolved_forecast_strategy(),
+                model_params_map=params_map,
+                window_mode=self.cfg.resolved_backtest_window_mode(),
+            )
+            best_model = selector.select(
+                y=df[self.cfg.target_col].astype(float).reset_index(drop=True),
+                X_hist=df[[self.cfg.time_col, *self.model_history_input_cols]].reset_index(drop=True),
+                target_col=self.cfg.target_col,
+                time_col=self.cfg.time_col,
+                processor_builder=self._new_processor,
+                future_exog_cols=self.cfg.future_exog_cols,
+                feature_spec=model_feature_spec(self.cfg),
+            )
+            logger.info(f"[AutoSelect] overriding model_name: {self.cfg.model_name!r} → {best_model!r}")
+            self.cfg.model_name = best_model
+            self.cfg.model_params = params_map[best_model]
+            self.artifacts = prepare_run_artifacts(self.cfg, self.run_id, source=self.source_identity)
+            self._start_manifest()
+            out.update(self._directory_payload())
+            out["auto_selected_model"] = best_model
+            out["auto_select_scores"] = selector.scores
+        except Exception as exc:
+            logger.error(f"[AutoSelect] failed: {exc}")
+            out["auto_select_error"] = str(exc)
+
+    def _run_single_model_stages(
+        self,
+        df: pd.DataFrame,
+        prepared: PrepareResult,
+        out: dict[str, str | dict[str, float]],
+    ) -> dict[str, str | dict[str, float]]:
+        """单模型 train → test → forecast 三阶段与特征快照导出；失败各记 *_error 不互相阻断。"""
+        stages = (
+            ("train", lambda: self.train(prepared)),
+            ("test", lambda: self.test(df, self._new_processor)),
+            ("forecast", lambda: self.forecast(prepared)),
+        )
+        for key, run_stage in stages:
+            self._log_stage_banner(f"Running {key}...")
             try:
-                from evaluation.selector import AutoSelector
-                logger.info(f"[AutoSelect] running with candidates: {self.cfg.auto_select_candidates}")
-                selector = AutoSelector(
-                    candidates=self.cfg.auto_select_candidates,
-                    metric=self.cfg.auto_select_metric,
-                    n_windows=self.cfg.auto_select_n_windows,
-                    initial_train_size=self.cfg.resolved_backtest_train_size(),
-                    horizon=self.cfg.backtest_horizon,
-                    forecast_strategy=self.cfg.resolved_forecast_strategy(),
-                )
-                # T15：选型用原始（未预处理/未缩放）history 窗口 + per-window processor，
-                # 与 test 链路同口径，避免在预处理后的 history_y 上评估导致选错模型。
-                raw_history_df = split_history(df, self.cfg.history_size)
-                best_model = selector.select(
-                    y=raw_history_df[self.cfg.target_col].astype(float).reset_index(drop=True),
-                    X_hist=raw_history_df[self.model_history_input_cols].astype(float).reset_index(drop=True),
-                    target_col=self.cfg.target_col,
-                    time_col=self.cfg.time_col,
-                    processor_builder=self._new_processor,
-                    future_exog_cols=self.cfg.future_exog_cols,
-                )
-                logger.info(f"[AutoSelect] overriding model_name: {self.cfg.model_name!r} → {best_model!r}")
-                self.cfg.model_name = best_model
-                # auto_select 改选后必须按最终模型名重建产物目录（P12），
-                # 否则结果会写入原始模型名的 experiment_path。
-                self.artifacts = prepare_run_artifacts(self.cfg)
-                out.update(
-                    {
-                        "setting": self.artifacts.setting,
-                        "experiment_path": str(self.artifacts.experiment_path),
-                        "eda_path": str(self.artifacts.eda_path),
-                        "data_name": self.artifacts.data_name,
-                        "checkpoints_dir": str(self.artifacts.checkpoints_dir),
-                        "train_results_dir": str(self.artifacts.train_results_dir),
-                        "test_results_dir": str(self.artifacts.test_results_dir),
-                        "forecast_results_dir": str(self.artifacts.forecast_results_dir),
-                        "eda_dir": str(self.artifacts.eda_dir),
-                        "monitor_dir": str(self.artifacts.monitor_dir),
-                        "custom_monitor_dir": str(self.artifacts.custom_monitor_dir),
-                    }
-                )
-                out["auto_selected_model"] = best_model
-                out["auto_select_scores"] = selector.scores
+                with timed_stage(key):
+                    stage_info = run_stage()
+                logger.info(f"{key}ing info:\n {stage_info}")
+                out.update(stage_info)
             except Exception as exc:
-                logger.error(f"[AutoSelect] failed: {exc}")
-                out["auto_select_error"] = str(exc)
-        # ------------------------------
-        # training（失败不阻断 test/forecast）
-        # ------------------------------
-        logger.info(f"{'=' * 100}")
-        logger.info(f"Running train...")
-        logger.info(f"{'=' * 100}")
-        try:
-            with timed_stage("train"):
-                training_info = self.train(prepared)
-            logger.info(f"training info:\n {training_info}")
-            out.update(training_info)
-        except Exception as exc:
-            logger.error(f"[Train] failed: {exc}")
-            out["train_error"] = str(exc)
-        # ------------------------------
-        # testing（失败不阻断 forecast）
-        # ------------------------------
-        logger.info(f"{'=' * 100}")
-        logger.info(f"Running test...")
-        logger.info(f"{'=' * 100}")
-        try:
-            with timed_stage("test"):
-                testing_info = self.test(df, self._new_processor)
-            logger.info(f"testing info:\n {testing_info}")
-            out.update(testing_info)
-        except Exception as exc:
-            logger.error(f"[Test] failed: {exc}")
-            out["test_error"] = str(exc)
-        # ------------------------------
-        # forecasting（失败不阻断特征导出）
-        # ------------------------------
-        logger.info(f"{'=' * 100}")
-        logger.info(f"Running forecast...")
-        logger.info(f"{'=' * 100}")
-        try:
-            with timed_stage("forecast"):
-                forecasting_info = self.forecast(prepared)
-            logger.info(f"forecasting info:\n {forecasting_info}")
-            out.update(forecasting_info)
-        except Exception as exc:
-            logger.error(f"[Forecast] failed: {exc}")
-            out["forecast_error"] = str(exc)
-        # ------------------------------
-        # 特征工程
-        # ------------------------------
-        logger.info(f"{'=' * 100}")
-        logger.info(f"Running feature_engineering...")
-        logger.info(f"{'=' * 100}")
+                logger.error(f"[{key.capitalize()}] failed: {exc}")
+                out[f"{key}_error"] = str(exc)
+        self._log_stage_banner("Running feature_engineering...")
         try:
             feature_snapshot = self._export_feature_snapshot(prepared.df)
             out["analysis_feature_snapshot_path"] = feature_snapshot.path
@@ -351,168 +408,16 @@ class ModelApp:
             out["analysis_target_shift_columns"] = ",".join(feature_snapshot.target_shift_columns)
         except Exception as exc:
             logger.error(f"[FeatureSnapshot] failed: {exc}")
-
+            out["feature_snapshot_error"] = str(exc)
         return self._write_run_summary(out)
-
-    def _run_multi_model(
-        self,
-        df: pd.DataFrame,
-        prepared: PrepareResult,
-        out: dict[str, str | dict[str, float]],
-    ) -> dict[str, str | dict[str, float]]:
-        """多模型单 run：数据准备一次，模型阶段逐模型循环。
-
-        每个模型独立重建 artifacts（各自 experiment_path）并复用现有
-        train/test/forecast 方法落盘；comparison 表按回测汇总指标横向对比。
-        auto_select 开启时消费同一批回测结果选优（P3：消除 AutoSelector
-        平行扫描——多模型模式下不再单独跑选型回测）。
-        """
-        model_names = self.cfg.resolved_model_names()
-        metric = self.cfg.auto_select_metric
-        # 多模型参数源：batch_models 提供每模型独立 params（如 {"arima": {"order": [1,1,1]}}）；
-        # 未覆盖的模型回退全局 model_params。P3 的 model_names 只共享单一参数，
-        # 场景级合并脚本（每模型不同超参）依赖本映射。
-        per_model_params = dict(self.cfg.batch_models) if self.cfg.batch_models else {}
-        # 每模型回测汇总指标在 test 成功后当场读入（experiment_path 随循环变化，
-        # 事后按路径重建会因 params 段不同而失配——P3 后续修复）。
-        test_summaries: dict[str, dict] = {}
-        final_out: dict[str, str | dict[str, float]] = {
-            "multi_model": "true",
-            "model_names": ",".join(model_names),
-            **{k: v for k, v in out.items() if not k.endswith("_dir")},
-        }
-        for name in model_names:
-            self.cfg.model_name = name
-            if name in per_model_params:
-                self.cfg.model_params = copy.deepcopy(per_model_params[name])
-            else:
-                self.cfg.model_params = {}
-            # 每模型独立 experiment_path：按当前模型名重建全部产物目录。
-            self.artifacts = prepare_run_artifacts(self.cfg)
-            logger.info(f"{'=' * 100}")
-            logger.info(f"[MultiModel] running model: {name}")
-            model_out: dict[str, str | dict[str, float]] = {}
-            stage_errors: list[str] = []
-            # ------------------------------
-            # train
-            # ------------------------------
-            try:
-                with timed_stage("train"):
-                    model_out.update(self.train(prepared))
-            except Exception as exc:
-                logger.error(f"[Train:{name}] failed: {exc}")
-                model_out["train_error"] = str(exc)
-                stage_errors.append("train")
-            # ------------------------------
-            # test（回测 summary 是 comparison 的数据源）
-            # ------------------------------
-            try:
-                with timed_stage("test"):
-                    model_out.update(self.test(df, self._new_processor))
-                summary_file = self.artifacts.test_results_dir / "test_summary.json"
-                if summary_file.exists():
-                    test_summaries[name] = json.loads(summary_file.read_text(encoding="utf-8"))
-            except Exception as exc:
-                logger.error(f"[Test:{name}] failed: {exc}")
-                model_out["test_error"] = str(exc)
-                stage_errors.append("test")
-            # ------------------------------
-            # forecast
-            # ------------------------------
-            try:
-                with timed_stage("forecast"):
-                    model_out.update(self.forecast(prepared))
-            except Exception as exc:
-                logger.error(f"[Forecast:{name}] failed: {exc}")
-                model_out["forecast_error"] = str(exc)
-                stage_errors.append("forecast")
-            # ------------------------------
-            # 逐模型 run_summary（写在各自 forecast_results_dir）
-            # ------------------------------
-            if not stage_errors:
-                summary_path = self.artifacts.forecast_results_dir / "run_summary.json"
-                payload: dict[str, object] = dict(model_out)
-                payload["config"] = asdict(self.cfg)
-                summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-                model_out["summary_path"] = str(summary_path)
-            final_out[f"model::{name}"] = model_out  # type: ignore[assignment]
-            for key in ("train_error", "test_error", "forecast_error"):
-                if key in model_out:
-                    final_out[f"{key}::{name}"] = model_out[key]
-        # ------------------------------
-        # comparison：按模型汇总回测指标
-        # ------------------------------
-        comparison_path = self._write_model_comparison(test_summaries, metric)
-        if comparison_path is not None:
-            final_out["model_comparison_path"] = comparison_path
-        # ------------------------------
-        # auto_select（多模型模式：消费 comparison 选优）
-        # ------------------------------
-        if self.cfg.auto_select and test_summaries:
-            try:
-                best = self._select_best_from_comparison(test_summaries, metric)
-                final_out["auto_selected_model"] = best
-                logger.info(f"[MultiModel:auto_select] selected {best!r} by {metric}")
-            except Exception as exc:
-                logger.error(f"[MultiModel:auto_select] failed: {exc}")
-                final_out["auto_select_error"] = str(exc)
-        return final_out
-
-    def _write_model_comparison(self, test_summaries: dict[str, dict], metric: str) -> str | None:
-        """把各模型回测汇总指标写成 model_comparison.csv，无可用数据时返回 None。"""
-        if not test_summaries:
-            logger.warning("[Comparison] no readable test_summary; skip model_comparison.csv")
-            return None
-        rows: list[dict] = []
-        for name, payload in test_summaries.items():
-            row = {"model_name": name}
-            for key in ("mae", "rmse", "mape", "smape", "mse", "r2", "bias",
-                        "max_error", "window_count", "failed_windows", "survivor_bias"):
-                if key in payload:
-                    row[key] = payload[key]
-            rows.append(row)
-        comparison_dir = (
-            Path(self.cfg.results_dir) / self.artifacts.data_name / "results_test" / "comparison"
-        )
-        comparison_dir.mkdir(parents=True, exist_ok=True)
-        path = comparison_dir / "model_comparison.csv"
-        df_cmp = pd.DataFrame(rows)
-        if metric in df_cmp.columns:
-            df_cmp = df_cmp.sort_values(by=metric, ascending=metric != "r2").reset_index(drop=True)
-        df_cmp.to_csv(path, index=False)
-        logger.info(f"[Comparison] wrote {len(rows)} models to {path}")
-        return str(path)
-
-    def _select_best_from_comparison(self, test_summaries: dict[str, dict], metric: str) -> str:
-        """按指标方向从各模型回测汇总选优（r2 越大越好，其余越小越好）。"""
-        best_name: str | None = None
-        best_value: float | None = None
-        for name, payload in test_summaries.items():
-            if metric not in payload:
-                continue
-            value = float(payload[metric])
-            if value != value:  # NaN guard
-                continue
-            if best_value is None or (value > best_value if metric == "r2" else value < best_value):
-                best_name, best_value = name, value
-        if best_name is None:
-            raise RuntimeError(f"no readable {metric} scores for auto_select")
-        return best_name
 
     def _load_dataset(self) -> pd.DataFrame:
         """加载历史数据，并将清洗后的质量报告写入训练结果目录。"""
         df = self.loader.load_data()
         if self.loader.quality_report is not None:
-            try:
-                quality_dir = (
-                    self.artifacts.eda_dir
-                    if self.cfg.is_eda_only()
-                    else self.artifacts.train_results_dir
-                )
-                qr_path = quality_dir / "data_quality.json"
-                write_json(qr_path, self.loader.quality_report.to_dict())
-            except Exception:
-                pass
+            quality_dir = (self.artifacts.eda_dir if self.cfg.is_eda_only() else
+                           self.artifacts.train_results_dir if self.cfg.do_train else self.artifacts.forecast_results_dir)
+            write_json(quality_dir / "data_quality.json", self.loader.quality_report.to_dict())
         return df
 
     def _prepare_target_series(self, df: pd.DataFrame) -> PrepareResult:
@@ -521,6 +426,7 @@ class ModelApp:
         该阶段会完成可逆预处理、历史/未来切分、目标序列缩放和未来外生变量读取。
         如果这里失败，说明后续 train/test/forecast 都缺少基本输入，应直接中断。
         """
+        require_regular_time(df[self.cfg.time_col], self.cfg.freq)
         local_df = df.copy()
         metadata: dict[str, str] = {}
 
@@ -556,6 +462,7 @@ class ModelApp:
             metadata["processor_denoise_method"] = processor.denoise_method
             metadata["processor_decomposition_method"] = self.cfg.decomposition_method
             metadata["processor_decomposition_target"] = self.cfg.decomposition_target
+            metadata["processor_resolution"] = json.dumps(processor.metadata, ensure_ascii=False)
             logger.info(f"After data processing, history_df shape={history_df.shape}, head:\n {history_df.head()}")
 
         history_y = history_df[self.cfg.target_col].astype(float).reset_index(drop=True)
@@ -566,27 +473,21 @@ class ModelApp:
             history_exog_df = history_df[self.cfg.exog_cols].astype(float).reset_index(drop=True)
         history_model_input_df = history_df[self.model_history_input_cols].astype(float).reset_index(drop=True)
         model_input_feature_columns: list[str] = []
-        if self.cfg.feature_mode == "model_input":
-            feature_frame, model_input_feature_columns = self._build_model_input_features(history_df)
-            if model_input_feature_columns:
-                # lag 特征头部 warmup 行为 NaN：整行丢弃（而非 bfill 未来值），
-                # 同步收缩所有 history 视图保持对齐。
-                warmup = max(self.cfg.lags) if self.cfg.lags else 0
-                if warmup > 0:
-                    history_df = history_df.iloc[warmup:].reset_index(drop=True)
-                    history_y = history_y.iloc[warmup:].reset_index(drop=True)
-                    history_endog_df = history_endog_df.iloc[warmup:].reset_index(drop=True)
-                    if history_exog_df is not None:
-                        history_exog_df = history_exog_df.iloc[warmup:].reset_index(drop=True)
-                    history_model_input_df = history_model_input_df.iloc[warmup:].reset_index(drop=True)
-                    feature_frame = feature_frame.iloc[warmup:].reset_index(drop=True)
-                    metadata["feature_warmup_dropped_rows"] = str(warmup)
-                history_model_input_df = pd.concat(
-                    [history_model_input_df, feature_frame[model_input_feature_columns].reset_index(drop=True)],
-                    axis=1,
-                )
-                metadata["feature_mode"] = self.cfg.feature_mode
-                metadata["model_input_feature_columns"] = ",".join(model_input_feature_columns)
+        feature_context = None
+        spec = model_feature_spec(self.cfg)
+        if spec is not None:
+            history_model_input_df, feature_context, warmup = spec.prepare(
+                history_model_input_df, history_df[self.cfg.time_col],
+                forecast_timestamps(history_df[self.cfg.time_col], self.cfg.predict_horizon, self.cfg.freq))
+            model_input_feature_columns = [str(c) for c in history_model_input_df if c not in self.model_history_input_cols]
+            history_df = history_df.iloc[warmup:].reset_index(drop=True)
+            history_y = history_y.iloc[warmup:].reset_index(drop=True)
+            history_endog_df = history_endog_df.iloc[warmup:].reset_index(drop=True)
+            if history_exog_df is not None:
+                history_exog_df = history_exog_df.iloc[warmup:].reset_index(drop=True)
+            metadata["feature_warmup_dropped_rows"] = str(warmup)
+            metadata["feature_mode"] = self.cfg.feature_mode
+            metadata["model_input_feature_columns"] = ",".join(model_input_feature_columns)
         history_time = pd.to_datetime(history_df[self.cfg.time_col]).reset_index(drop=True)
         logger.info(f"After data split history_df shape={history_df.shape}, head:\n {history_df.head()}")
         logger.info(f"history_y length={len(history_y)}, history_time range=[{history_time.iloc[0] if not history_time.empty else None}, {history_time.iloc[-1] if not history_time.empty else None}]")
@@ -598,6 +499,9 @@ class ModelApp:
         future_exog_df = None
         future_exog_raw = self.loader.load_future_exog(self.cfg.future_exog_cols)
         if future_exog_raw is not None:
+            self.input_fingerprints["future_exog_view"] = frame_fingerprint(future_exog_raw)
+            for manifest in self._manifests:
+                manifest.inputs(self.input_fingerprints)
             if self.cfg.future_exog_time_col is None:
                 raise ValueError("future_exog_time_col is required")
             future_exog_df = align_future_exog(
@@ -621,24 +525,25 @@ class ModelApp:
             raw_history_df=raw_history_df,
             model_input_feature_columns=model_input_feature_columns,
             metadata=metadata,
+            feature_context=feature_context,
         )
 
     def _new_processor(self):
         """返回与 _prepare_target_series 同配但未拟合的 TargetTransformer，供回测按窗口重建。"""
         return new_processor_from_config(self.cfg)
 
-    def _build_model_input_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-        frame, columns = build_history_features(
+    def _build_model_input_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], int]:
+        frame, columns, warmup = build_history_features(
             df, self.cfg.time_col, self.cfg.target_col,
             self.cfg.enable_datetime_features, self.cfg.lags,
         )
-        return frame.astype(float), columns
+        return frame.astype(float), columns, warmup
 
     def _export_feature_snapshot(self, df: pd.DataFrame) -> FeatureSnapshotResult:
         """导出分析型特征快照。
 
-        features/ 目前不参与统计模型训练；这里落盘是为了检查时间特征、
-        lag 特征和监督学习 target shift 的形态。
+        本出口仅导出分析快照，用于检查时间特征、lag 与 target shift；
+        显式 model_input 的模型输入由窗口内 ModelFeatureSpec 单独构造。
         """
         engineer = FeatureEngineer(time_col=self.cfg.time_col, target_col=self.cfg.target_col)
         featured_df, feature_cols, target_shift_cols = engineer.create_features(
@@ -648,7 +553,7 @@ class ModelApp:
             horizon=min(3, self.cfg.predict_horizon),
         )
         feature_path = self.artifacts.forecast_results_dir / "analysis_feature_snapshot.csv"
-        featured_df.to_csv(feature_path, index=False)
+        dataframe_to_csv(feature_path, featured_df)
         return FeatureSnapshotResult(
             path=str(feature_path),
             feature_columns=feature_cols,
@@ -663,9 +568,22 @@ class ModelApp:
         summary_path = (summary_dir or self.artifacts.forecast_results_dir) / "run_summary.json"
         payload: dict[str, object] = dict(out)
         payload["config"] = asdict(self.cfg)
-        summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload["run_id"] = self.run_id
+        payload["manifest_path"] = str(summary_path.parent / "run_manifest.json")
+        write_json(summary_path, payload)
         result = dict(out)
         result["summary_path"] = str(summary_path)
+        result["run_id"] = self.run_id
+        manifest = next((item for item in reversed(self._manifests) if item.path.parent == summary_path.parent), None)
+        if manifest is None:
+            manifest = self._start_manifest(summary_path.parent)
+        result["manifest_path"] = manifest.finish(result, self._run_directories())
+        result.update(manifest.payload["errors"])
+        # auto_select 之前的准备产物索引仍明确关联最终模型，不遗留伪 running。
+        if not self.cfg.is_multi_model():
+            for previous in self._manifests:
+                if previous is not manifest and previous.payload["status"] == "running":
+                    previous.finish(result, [])
         return result
     # ##############################
     # EDA, training, testing, forecasting
@@ -674,7 +592,13 @@ class ModelApp:
         """执行 EDA 子流程；上层 run() 会捕获异常，EDA 失败不阻断建模。"""
         if not self.cfg.do_eda:
             return {}
-        
+
+        # 配置了历史协变量时，EDA 附带 CCF/Granger 协变量诊断（缺失列结构化失败不中断）
+        covariate_cols = [
+            c for c in [*(self.cfg.endog_cols or []), *(self.cfg.exog_cols or [])]
+            if c not in (self.cfg.time_col, self.cfg.target_col)
+        ] or None
+
         result = run_eda(
             df=df,
             time_col=self.cfg.time_col,
@@ -687,6 +611,7 @@ class ModelApp:
             comparison_paths=self.cfg.eda_comparison_paths,
             comparison_labels=self.cfg.eda_comparison_labels,
             current_label=self.artifacts.data_name,
+            covariate_cols=covariate_cols,
         )
         if self.cfg.eda_generate_report:
             try:
@@ -706,6 +631,19 @@ class ModelApp:
                 result["eda_report_error"] = str(exc)
         return result
     
+    def _summary_base(self) -> dict:
+        """三阶段 summary（train/test/forecast）共用的公共字段。"""
+        return {
+            "model_name": self.cfg.model_name,
+            "data_name": self.artifacts.data_name,
+            "forecast_strategy": self.cfg.resolved_forecast_strategy(),
+            "time_col": self.cfg.time_col,
+            "target_col": self.cfg.target_col,
+            "endog_cols": self.effective_endog_cols,
+            "exog_cols": self.cfg.exog_cols,
+            "future_exog_cols": self.cfg.future_exog_cols,
+        }
+
     def train(self, prepared: PrepareResult) -> dict[str, str]:
         """训练模型并保存 checkpoint、训练序列和模型元信息。"""
         if not self.cfg.do_train:
@@ -723,9 +661,7 @@ class ModelApp:
         # model saving with metadata
         model_path = self.artifacts.checkpoints_dir / "model.pkl"
         transformer_path = self.artifacts.checkpoints_dir / "target_transformer.pkl"
-        with transformer_path.open("wb") as stream:
-            pickle.dump(prepared.processor, stream)
-        save_model(model, str(model_path), meta={
+        save_checkpoint(model, prepared.processor, self.artifacts.checkpoints_dir, meta={
             "model_output_scale": "transformed_target" if prepared.processor.enabled else "original_target",
             "target_transformer_path": str(transformer_path),
             "model_name": self.cfg.model_name,
@@ -753,14 +689,7 @@ class ModelApp:
         )
         # model training summary saving
         train_summary = {
-            "model_name": self.cfg.model_name,
-            "data_name": self.artifacts.data_name,
-            "forecast_strategy": self.cfg.resolved_forecast_strategy(),
-            "time_col": self.cfg.time_col,
-            "target_col": self.cfg.target_col,
-            "endog_cols": self.effective_endog_cols,
-            "exog_cols": self.cfg.exog_cols,
-            "future_exog_cols": self.cfg.future_exog_cols,
+            **self._summary_base(),
             "train_size": int(len(prepared.history_y)),
             "history_size": int(self.cfg.history_size),
             "predict_horizon": int(self.cfg.predict_horizon),
@@ -775,6 +704,7 @@ class ModelApp:
             "decomposition_target": self.cfg.decomposition_target,
             "decomposition_model": self.cfg.decomposition_model,
             "processor_applied": prepared.processor.enabled,
+            "processor_resolution": prepared.processor.metadata,
             "feature_mode": self.cfg.feature_mode,
             "model_input_feature_columns": prepared.model_input_feature_columns,
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -815,20 +745,17 @@ class ModelApp:
             effective_endog_cols=self.effective_endog_cols,
             processor_builder=processor_builder,
         )
-        # 回测产物分为窗口指标、逐点预测、汇总指标和图形，便于后续误差分析。
+        # 回测产物分为窗口指标、逐点预测、按步聚合指标、汇总指标和图形，便于后续误差分析。
         metrics_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics.csv", result.metrics_df)
         predictions_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_predictions.csv", result.predictions_df)
+        step_metrics_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_step_metrics.csv", result.step_metrics_df)
         summary_path_csv = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics_summary.csv", result.summary_df)
         test_summary_path = write_json(
             self.artifacts.test_results_dir / "test_summary.json",
             _test_summary_payload(
                 self.cfg.model_name,
                 {
-                "model_name": self.cfg.model_name,
-                "data_name": self.artifacts.data_name,
-                "forecast_strategy": self.cfg.resolved_forecast_strategy(),
-                "target_col": self.cfg.target_col,
-                "time_col": self.cfg.time_col,
+                **self._summary_base(),
                 "train_size": int(self.cfg.resolved_backtest_train_size()),
                 "horizon": int(self.cfg.backtest_horizon),
                 "step": int(self.cfg.backtest_step),
@@ -863,6 +790,7 @@ class ModelApp:
         return {
             "test_metrics_path": metrics_path,
             "backtest_predictions_path": predictions_path,
+            "backtest_step_metrics_path": step_metrics_path,
             "backtest_metrics_summary_path": summary_path_csv,
             "test_summary_path": test_summary_path,
             "backtest_prediction_plot_path": pred_plot_path,
@@ -926,15 +854,8 @@ class ModelApp:
         forecast_summary_path = write_json(
             self.artifacts.forecast_results_dir / "forecast_summary.json",
             {
-                "model_name": self.cfg.model_name,
-                "data_name": self.artifacts.data_name,
-                "forecast_strategy": self.cfg.resolved_forecast_strategy(),
+                **self._summary_base(),
                 "predict_horizon": int(self.cfg.predict_horizon),
-                "target_col": self.cfg.target_col,
-                "endog_cols": self.effective_endog_cols,
-                "exog_cols": self.cfg.exog_cols,
-                "future_exog_cols": self.cfg.future_exog_cols,
-                "time_col": self.cfg.time_col,
                 # forecast 原点显式定义为数据末尾：origin = history 窗口最后一个时间戳。
                 "forecast_origin": prepared.history_time.iloc[-1].isoformat()
                 if not prepared.history_time.empty
@@ -947,7 +868,8 @@ class ModelApp:
                 # NaN 填充打标：0 表示无填充；>0 仅在 forecast_allow_nan_fill=true 时可能出现。
                 "forecast_nan_filled": int(last_nan_filled),
                 "interval_method": self.cfg.interval_method if self.cfg.return_intervals else "none",
-                "interval_metadata": interval_metadata,
+                "interval_metadata": interval_metadata_payload(interval_metadata),
+                "processor_resolution": prepared.processor.metadata,
                 "simulate": stage.simulate_metadata if getattr(self.cfg, "simulate_enabled", False) else None,
             },
         )
@@ -963,6 +885,9 @@ class ModelApp:
                 setting=None,
                 window=self.cfg.monitor_window,
             )
+            # target_ts = 逐预测步目标时间戳（forecast.csv 的 timestamp 列）：
+            # 回填匹配从"发起时刻字符串"升级为 (forecast_ts, target_ts, horizon_step) 三键。
+            target_ts = forecast_df["timestamp"]
             bound_cols = [c for c in forecast_df.columns
                           if c.startswith(("yhat_lower", "yhat_upper"))]
             if len(bound_cols) > 2:
@@ -972,6 +897,7 @@ class ModelApp:
                     yhat=pd.Series(forecast_df["yhat"].values, name="yhat"),
                     levels=self.cfg.interval_levels,
                     bounds={col: pd.Series(forecast_df[col].values) for col in bound_cols},
+                    target_ts=target_ts,
                 )
             else:
                 monitor.log_forecast(
@@ -979,8 +905,9 @@ class ModelApp:
                     yhat=pd.Series(forecast_df["yhat"].values, name="yhat"),
                     yhat_lower=pd.Series(forecast_df["yhat_lower"].values) if "yhat_lower" in forecast_df.columns else None,
                     yhat_upper=pd.Series(forecast_df["yhat_upper"].values) if "yhat_upper" in forecast_df.columns else None,
+                    target_ts=target_ts,
                 )
-            result["monitor_predictions_path"] = str(monitor._pred_path)
-            result["monitor_actuals_path"] = str(monitor._act_path)
-            result["monitor_metrics_path"] = str(monitor._metrics_path)
+            result["monitor_predictions_path"] = str(monitor.paths["predictions"])
+            result["monitor_actuals_path"] = str(monitor.paths["actuals"])
+            result["monitor_metrics_path"] = str(monitor.paths["metrics"])
         return result

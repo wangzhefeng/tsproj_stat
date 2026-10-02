@@ -1,69 +1,85 @@
-"""落盘原语：JSON/CSV 写入、模型信息提取与结果序列化。"""
+"""本地原子落盘；只序列化，不解释模型和预测语义。"""
 from __future__ import annotations
 
 import json
-import re
+import math
+import os
+import pickle
+import tempfile
+from contextlib import contextmanager
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from collections.abc import Iterator, Mapping
 
+import numpy as np
 import pandas as pd
 
-from models.registry import MODEL_REGISTRY
+
+def json_value(value: object, *, strict: bool = False) -> object:
+    """摘要非有限值转 null；身份序列化 strict=True 拒绝非有限值。"""
+    if value is None or value is pd.NA or value is pd.NaT:
+        if strict and value is not None:
+            raise ValueError("identity contains a missing value")
+        return None
+    if isinstance(value, np.ndarray):
+        return json_value(value.tolist(), strict=strict)
+    if isinstance(value, np.generic):
+        return json_value(value.item(), strict=strict)
+    if isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            if strict:
+                raise ValueError("identity contains a non-finite number")
+            return None
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError("JSON object keys must be strings")
+        return {key: json_value(item, strict=strict) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_value(item, strict=strict) for item in value]
+    raise TypeError(f"Unsupported JSON value: {type(value).__name__}")
 
 
-# ##############################
-# 模型运行结果保存
-# ##############################
-def write_json(path: Path, payload: dict[str, Any]) -> str:
-    """写 JSON 并返回路径字符串，供 run_summary 汇总引用。"""
+@contextmanager
+def atomic_target(path: Path) -> Iterator[Path]:
+    """同目录唯一临时文件；异常只清理本调用创建的文件。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    fd, name = tempfile.mkstemp(prefix=".artifact-", suffix=".tmp", dir=path.parent)
+    os.close(fd)
+    temporary = Path(name)
+    try:
+        yield temporary
+        with temporary.open("rb") as stream:
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_json(path: Path, payload: object) -> str:
+    """先校验完整 payload，再原子替换目标。"""
+    text = json.dumps(json_value(payload), ensure_ascii=False, indent=2, allow_nan=False)
+    with atomic_target(path) as temporary:
+        temporary.write_text(text, encoding="utf-8")
     return str(path)
 
 
 def dataframe_to_csv(path: Path, df: pd.DataFrame) -> str:
-    """写 CSV 并返回路径字符串，统一各阶段落盘行为。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(path, index=False)
+    """保持列顺序和数值精度，写 CSV 并返回路径。"""
+    with atomic_target(path) as temporary:
+        df.to_csv(temporary, index=False)
     return str(path)
 
 
-def model_info_payload(model, model_params: dict[str, Any], model_name: str | None = None) -> dict[str, Any]:
-    """提取模型可追踪信息，包括 fallback 状态和常见阶数/评分字段。"""
-    fallback = getattr(model, "_fallback", None)
-    result = getattr(model, "_result", None)
-    spec = MODEL_REGISTRY.get(model_name or "")
-    payload: dict[str, Any] = {
-        "model_class": type(model).__name__,
-        "model_params": model_params,
-        "model_name": model_name,
-        "stability": spec.stability if spec is not None else None,
-        "is_optional": spec.stability == "optional" if spec is not None else False,
-        "is_experimental": spec.stability == "experimental" if spec is not None else False,
-        "uses_fallback_model": fallback is not None,
-        "fallback_model_class": type(fallback).__name__ if fallback is not None else None,
-        "using_fallback_prediction": fallback is not None and result is None,
-        "is_trainer_fallback": bool(getattr(model, "_is_fallback", False)),
-        "fallback_reason": getattr(model, "_fallback_reason", None),
-        "has_native_result": result is not None,
-    }
-    for attr in ("order", "seasonal_order", "selected_order", "selected_score", "ic", "seasonal", "m"):
-        if hasattr(model, attr):
-            value = getattr(model, attr)
-            if isinstance(value, tuple):
-                payload[attr] = list(value)
-            else:
-                payload[attr] = value
-    return payload
-
-
-def forecast_timestamps(history_time: pd.Series | None, horizon: int, freq: str) -> pd.Series:
-    """根据历史最后一个时间戳生成未来预测时间索引。"""
-    if history_time is None or history_time.empty:
-        return pd.Series([pd.NaT] * horizon, name="timestamp")
-
-    try:
-        future_index = pd.date_range(start=pd.to_datetime(history_time.iloc[-1]), periods=horizon + 1, freq=freq)[1:]
-    except Exception:
-        return pd.Series([pd.NaT] * horizon, name="timestamp")
-    return pd.Series(future_index, name="timestamp")
+def write_pickle(path: Path, value: object) -> str:
+    """可信本地对象归档；不提供对不可信 pickle 的安全保证。"""
+    with atomic_target(path) as temporary:
+        with temporary.open("wb") as stream:
+            pickle.dump(value, stream)
+    return str(path)

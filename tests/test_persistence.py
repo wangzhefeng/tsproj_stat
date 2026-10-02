@@ -4,7 +4,7 @@ from importlib.metadata import version
 import numpy as np
 
 from models.factory import ModelFactory
-from models.persistence import load_model, save_model
+from artifacts.checkpoints import load_model, save_model
 
 
 def test_save_and_load_model(tmp_path):

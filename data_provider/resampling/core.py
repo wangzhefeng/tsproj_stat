@@ -3,8 +3,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import numpy as np
 import pandas as pd
+from pandas.tseries.frequencies import to_offset
+from pandas.tseries import offsets
+
+from data_provider.cleaning.seasonal import seasonal_slot_fill
+from data_provider.quality.checks import require_finite
 
 AGGREGATION_METHODS = {"mean", "max", "min", "sum", "median"}
 FILL_METHODS = {"none", "linear", "seasonal_slot"}
@@ -31,34 +35,26 @@ def validate_aggregation_options(method: str, fill_method: str, fill_weeks: int)
         raise ValueError("aggregation_fill_weeks must be > 0")
 
 
-def _seasonal_slot_fill(series: pd.Series, weeks: int) -> pd.Series:
-    """用局部周窗口中相同星期和时刻的观测均值填充缺失点。"""
-    missing = series.isna().to_numpy()
-    if not missing.any():
-        return series
+def _require_downsampling(source_freq: str, target_freq: str) -> None:
+    """固定步长要求整倍数；日历桶仅接受完整日的细分或同频。
 
-    index = series.index
-    if not isinstance(index, pd.DatetimeIndex):
-        raise TypeError("seasonal_slot requires a DatetimeIndex")
-    day_of_week = index.dayofweek.to_numpy()
-    minute_of_day = (index.hour * 60 + index.minute).to_numpy()
-    values = series.to_numpy(dtype=float)
-    filled = series.copy()
-
-    for raw_position in np.flatnonzero(missing):
-        position = int(raw_position)
-        timestamp = index[position]
-        start = index.searchsorted(timestamp - pd.Timedelta(weeks=weeks), side="left")
-        end = index.searchsorted(timestamp + pd.Timedelta(weeks=weeks), side="right")
-        window = values[start:end]
-        candidates = (
-            (day_of_week[start:end] == day_of_week[position])
-            & (minute_of_day[start:end] == minute_of_day[position])
-            & ~np.isnan(window)
-        )
-        if candidates.any():
-            filled.iloc[position] = float(window[candidates].mean())
-    return filled
+    不用月/季度的近似纳秒长度推断方向；未定义的跨日历组合明确拒绝。
+    """
+    source, target = to_offset(source_freq), to_offset(target_freq)
+    if source is None or target is None or source.n <= 0 or target.n <= 0:
+        raise ValueError("aggregation frequencies must be positive")
+    if source == target:
+        return
+    fixed = (offsets.Tick, offsets.Day)  # pandas 3 的 Day 不再继承 Tick。
+    if isinstance(source, fixed) and isinstance(target, fixed):
+        if target.nanos >= source.nanos and target.nanos % source.nanos == 0:
+            return
+    calendar = (offsets.Week, offsets.MonthBegin, offsets.MonthEnd,
+                offsets.QuarterBegin, offsets.QuarterEnd, offsets.YearBegin, offsets.YearEnd)
+    if isinstance(source, fixed) and isinstance(target, calendar):
+        if pd.Timedelta(days=1).value % source.nanos == 0:
+            return
+    raise ValueError(f"aggregation requires verified downsampling or identical frequencies: {source_freq} -> {target_freq}")
 
 
 def aggregate_frame(
@@ -78,23 +74,31 @@ def aggregate_frame(
     原始目标中的缺失/非数值仍显式拒绝；填充只处理规则化产生的缺口。
     """
     validate_aggregation_options(method, fill_method, fill_weeks)
+    _require_downsampling(source_freq, target_freq)
+    if frame.empty:
+        raise ValueError("Aggregation input must not be empty")
     missing_columns = [column for column in (time_col, target_col) if column not in frame.columns]
     if missing_columns:
         raise ValueError(f"Aggregation columns not found: {missing_columns}")
     source_rows = len(frame)
     frame = frame.loc[:, [time_col, target_col]].copy()
     frame[time_col] = pd.to_datetime(frame[time_col], errors="raise")
+    if frame[time_col].isna().any():
+        raise ValueError("Aggregation timestamps must be valid and non-missing")
     frame[target_col] = pd.to_numeric(frame[target_col], errors="coerce")
     if frame[target_col].isna().any():
         raise ValueError(f"Aggregation target '{target_col}' contains non-numeric or missing values")
+    require_finite(frame[target_col], "Aggregation target")
 
     series = frame.sort_values(time_col).set_index(time_col).loc[:, target_col].resample(source_freq).mean()
+    if not pd.DatetimeIndex(frame[time_col]).isin(series.index).all():
+        raise ValueError("Aggregation timestamps must align with the source grid")
     inserted_count = int(series.isna().sum())
     before_fill = inserted_count
     if fill_method == "linear":
         series = series.interpolate(method="time", limit_direction="both")
     elif fill_method == "seasonal_slot":
-        series = _seasonal_slot_fill(series, fill_weeks)
+        series = seasonal_slot_fill(series, fill_weeks)
 
     remaining = int(series.isna().sum())
     if remaining:
@@ -103,8 +107,7 @@ def aggregate_frame(
         )
     filled_count = before_fill - remaining
     aggregated = getattr(series.resample(target_freq), method)().reset_index(name=target_col)
-    if aggregated[target_col].isna().any():
-        raise ValueError("Aggregation produced missing output values")
+    require_finite(aggregated[target_col], "Aggregation output")
 
     return FrameAggregationResult(
         frame=aggregated,

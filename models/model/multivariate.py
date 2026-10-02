@@ -39,6 +39,7 @@ def _require_multivariate_frame(
 
 class VARModel(FallbackMixin, BaseStatModel):
     """VAR 向量自回归（statsmodels 后端）：多变量输入，只输出目标列的 yhat。"""
+    _runtime_backend_fields = ("_result", "_frame", "_target_col")
     def __init__(self, maxlags: int | None = None, ic: str | None = None):
         self.maxlags = maxlags
         self.ic = ic
@@ -64,7 +65,7 @@ class VARModel(FallbackMixin, BaseStatModel):
         except Exception as exc:
             self._result = None
             warn_and_use_fallback(
-                model_name="VARModel",
+                model=self, model_name="VARModel",
                 fallback_name=type(self._fallback).__name__,
                 exc=RuntimeError(f"{exc}. VAR typically expects approximately stationary multivariate input."),
             )
@@ -100,6 +101,7 @@ class VARModel(FallbackMixin, BaseStatModel):
 
 class BayesianVARModel(FallbackMixin, BaseStatModel):
     """贝叶斯 VAR 近似（experimental）：滞后回归 + 解析后验的轻量实现。"""
+    _runtime_backend_fields = ("_A", "_frame", "_target_col")
     def __init__(
         self,
         time_lags: list[int] | tuple[int, ...] = (1, 2),
@@ -134,6 +136,7 @@ class BayesianVARModel(FallbackMixin, BaseStatModel):
         t_len, n_vars = x.shape
         if t_len <= hd + 1:
             self._A = None
+            self._fallback_reason = "insufficient history for Bayesian VAR"
             self._Sigma = None
             return self
 
@@ -161,7 +164,7 @@ class BayesianVARModel(FallbackMixin, BaseStatModel):
             self._A = None
             self._Sigma = None
             warn_and_use_fallback(
-                model_name="BayesianVARModel",
+                model=self, model_name="BayesianVARModel",
                 fallback_name=type(self._fallback).__name__,
                 exc=exc,
             )
@@ -198,6 +201,7 @@ class BayesianVARModel(FallbackMixin, BaseStatModel):
 
 class LinearVARModel(FallbackMixin, BaseStatModel):
     """线性多变量回归（experimental）：目标滞后 + 特征滞后 + 未来外生。"""
+    _runtime_backend_fields = ("_model", "_frame", "_target_col")
     def __init__(
         self,
         target_lags: list[int] | tuple[int, ...] = (1, 2, 3),
@@ -251,7 +255,7 @@ class LinearVARModel(FallbackMixin, BaseStatModel):
         except Exception as exc:
             self._model = None
             warn_and_use_fallback(
-                model_name="LinearVARModel",
+                model=self, model_name="LinearVARModel",
                 fallback_name=type(self._fallback).__name__,
                 exc=exc,
             )

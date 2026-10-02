@@ -1,8 +1,15 @@
-"""单序列季节周期推断。"""
+"""单序列季节周期推断（通用算法，无数据层依赖；models 与 data_provider 共用）。"""
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from utils.log_util import logger
+
+
+def _require_finite(values: pd.Series) -> None:
+    """有限值门禁（与 quality.checks.require_finite 语义一致，本地实现避免反向依赖）。"""
+    if values.empty or not np.isfinite(values.to_numpy(dtype=float)).all():
+        raise ValueError("seasonality input contains missing or non-finite observations (or is empty)")
 
 
 def infer_seasonal_period(
@@ -12,7 +19,12 @@ def infer_seasonal_period(
 ) -> int | None:
     """从 ACF 局部峰值和简单频域能量中推断候选季节周期。"""
     values = pd.Series(series).astype(float).reset_index(drop=True)
+    _require_finite(values)
+    if acf_max_lag <= 1 or not 0 <= seasonality_strength_threshold <= 1:
+        raise ValueError("invalid seasonality inference parameters")
     if len(values) < 4:
+        return None
+    if np.allclose(values - values.mean(), 0.0):
         return None
 
     max_lag = min(acf_max_lag, max(2, len(values) // 2))
@@ -35,8 +47,8 @@ def infer_seasonal_period(
                 best_lag = lag
         if best_lag is not None and best_score >= seasonality_strength_threshold:
             return int(best_lag)
-    except Exception:
-        pass
+    except (FloatingPointError, np.linalg.LinAlgError) as exc:
+        logger.warning(f"ACF numerical failure; falling back to FFT: {exc}")
 
     centered = values - values.mean()
     if np.allclose(centered.to_numpy(dtype=float), 0.0):

@@ -11,16 +11,19 @@ from dataclasses import dataclass
 from typing import Callable
 
 import pandas as pd
+from features.model_inputs import ModelFeatureSpec
 import numpy as np
 
 from forecasting.strategies import normalize_forecast_strategy, normalize_window_mode, run_point_inference
-from .metrics import bias, mae, mape, max_error, mse, r2, rmse, smape
+from forecasting.origins import prepare_origin_inputs
+from .metrics import POINT_METRICS, train_scales
 from .metrics import coverage, interval_width, winkler_score
 from forecasting.intervals import iter_bound_pairs, predict_frame
+from models.contracts.intervals import resolve_interval_levels, interval_bound_columns
 from forecasting.strategies import checked_model_builder
 from models.base import BaseStatModel
 from data_provider.target_transforms.transformer import TargetTransformer
-from data_provider.cleaning.imputation import repair_history_frame, require_finite
+from data_provider.quality.checks import require_finite, require_regular_time
 from utils.log_util import logger
 
 
@@ -29,13 +32,54 @@ class BacktestResult:
     """rolling backtest 的结构化返回。
 
     predictions_df 保存逐窗口逐步预测，metrics_df 保存窗口级指标，
+    step_metrics_df 保存按 horizon_step 跨窗聚合的指标（含逐窗缩放后的 mase/rmsse），
     summary_df/summary 保存跨窗口汇总，failed_windows 记录被跳过的失败窗口。
     """
     predictions_df: pd.DataFrame
     metrics_df: pd.DataFrame
+    step_metrics_df: pd.DataFrame
     summary_df: pd.DataFrame
     summary: dict[str, float | int | str]
     failed_windows: list[dict]
+
+
+def _build_step_metrics(
+    predictions_df: pd.DataFrame,
+    window_scales: dict[int, tuple[float, float]],
+) -> pd.DataFrame:
+    """按 horizon_step 跨窗口聚合点指标。
+
+    mase/rmsse 按逐窗训练缩放基准逐点缩放后聚合（pool 语义）：
+    mase = mean(|e|/scale_w)，rmsse = sqrt(mean(e²/scale_sq_w))；
+    缩放基准不可用的窗口跳过，全缺为 NaN。
+    """
+    scales_df = pd.DataFrame(
+        [(wid, scales[0], scales[1]) for wid, scales in window_scales.items()],
+        columns=["window_id", "_mase_scale", "_rmsse_scale"],
+    )
+    merged = predictions_df.merge(scales_df, on="window_id", how="left")
+    rows: list[dict] = []
+    for step in sorted(merged["horizon_step"].unique()):
+        grp = merged[merged["horizon_step"] == step]
+        y_true = grp["y_true"].to_numpy(dtype=float)
+        y_pred = grp["y_pred"].to_numpy(dtype=float)
+        row: dict[str, float | int] = {"horizon_step": int(step), "window_count": int(len(grp))}
+        for metric_name, metric_spec in POINT_METRICS.items():
+            if metric_spec.requires_train:
+                continue
+            row[metric_name] = metric_spec.func(y_true, y_pred)
+        err = y_true - y_pred
+        mase_scale = grp["_mase_scale"].to_numpy(dtype=float)
+        valid = np.isfinite(mase_scale) & (mase_scale > 0)
+        row["mase"] = float(np.mean(np.abs(err[valid]) / mase_scale[valid])) if valid.any() else float("nan")
+        rmsse_scale = grp["_rmsse_scale"].to_numpy(dtype=float)
+        valid_sq = np.isfinite(rmsse_scale) & (rmsse_scale > 0)
+        row["rmsse"] = (
+            float(np.sqrt(np.mean((err[valid_sq] ** 2) / rmsse_scale[valid_sq])))
+            if valid_sq.any() else float("nan")
+        )
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def rolling_backtest(
@@ -61,6 +105,7 @@ def rolling_backtest(
     conformal_n_windows: int = 20,
     levels: list[float] | None = None,
     refit_every: int = 1,
+    feature_spec: ModelFeatureSpec | None = None,
 ) -> BacktestResult:
     """执行滚动回测。
 
@@ -69,6 +114,8 @@ def rolling_backtest(
     默认 RAISE：任一窗口失败即中止（避免汇总指标带存活偏差）；
     显式 allow_failed_windows=True 时才跳过失败窗口，且 summary 打标 survivor_bias。
     """
+    if time_col is not None:
+        require_regular_time(df[time_col], role="backtest")
     n = len(df)
     if min(train_size, horizon, step) <= 0:
         raise ValueError("train_size, horizon and step must be positive")
@@ -96,6 +143,8 @@ def rolling_backtest(
     future_exog_policy = "perfect_foresight" if future_cols else "none"
     cached_model = None
     if refit_every != 1:
+        if feature_spec is not None:
+            raise ValueError("fixed-parameter update does not support derived future covariates")
         if strategy != "native" or n_jobs != 1 or interval_method != "none":
             raise ValueError("fixed-parameter update requires native, n_jobs=1, no intervals")
         if processor_builder is not None and processor_builder().enabled:
@@ -110,6 +159,7 @@ def rolling_backtest(
     metric_rows: list[dict] = []
     prediction_rows: list[dict] = []
     failed_windows: list[dict] = []
+    window_scales: dict[int, tuple[float, float]] = {}
 
     windows = []
     start = train_size
@@ -151,24 +201,28 @@ def rolling_backtest(
             require_finite(test_y, "evaluation target")
             if test_x_future is not None:
                 require_finite(test_x_future, "future exogenous data")
+            # interval_method=none：修复→预处理经 forecasting.origins 共享原语
+            # （与 conformal/simulate 的校准原点同一实现）；区间路径不在此处修复，
+            # 由 predict_frame 的每个内部校准原点独立修复。
+            prepared = None
             if interval_method == "none":
-                # 原点之后的观测不可见；区间路径由每个内部校准原点独立修复。
-                repaired, audit = repair_history_frame(train_slice, available_hist_cols)
-                repaired_count = audit.filled_value_count
-                train_y = repaired[target_col].astype(float).reset_index(drop=True)
-                if train_x_hist is not None:
-                    train_x_hist = repaired[available_hist_cols].astype(float).reset_index(drop=True)
-            if proc is not None and use_proc and interval_method == "none":
-                train_y_model = proc.fit_transform(train_y)
-                if train_x_hist is not None and target_col in train_x_hist.columns:
-                    train_x_hist = train_x_hist.copy()
-                    train_x_hist[target_col] = train_y_model.values
+                builder: Callable[[], TargetTransformer] | None = None
+                if use_proc:
+                    assert proc is not None
+                    builder = lambda: proc
+                prepared = prepare_origin_inputs(
+                    train_y, train_x_hist, builder, feature_spec,
+                    train_slice[time_col] if time_col else None, test_time)
+                repaired_count = prepared.audit.filled_value_count
+                train_y = prepared.y_raw.reset_index(drop=True)
+                train_y_model = prepared.y_model.reset_index(drop=True)
+                train_x_hist = prepared.X_hist_model
             else:
                 train_y_model = train_y
             # 每个回测窗口都通过统一推理入口运行，保证 test 与 forecast 策略一致。
             if refit_every != 1:
                 did_refit = cached_model is None or (refit_every > 0 and (window_id - 1) % refit_every == 0)
-                if cached_model is None or (refit_every > 0 and (window_id - 1) % refit_every == 0):
+                if did_refit:
                     cached_model = checked_model_builder(model_builder, strategy, test_x_future)()
                     cached_model.fit(train_y, X_hist=train_x_hist, X_future=test_x_future)
                 else:
@@ -176,7 +230,9 @@ def rolling_backtest(
                     if not callable(update):
                         raise ValueError("model does not support fixed-parameter update")
                     update(train_y, X_hist=train_x_hist)
-                pred = cached_model.predict(horizon, X_future=test_x_future).reset_index(drop=True)
+                # did_refit=False 蕴含 cached_model 非 None（首窗必 fit）。
+                assert cached_model is not None
+                pred = cached_model.predict(horizon, X_future=test_x_future)
             elif interval_method != "none":
                 interval_df = predict_frame(model_builder, train_y, horizon, strategy,
                                             train_x_hist, test_x_future, processor_builder,
@@ -191,7 +247,9 @@ def rolling_backtest(
                     forecast_strategy=strategy,
                     X_hist=train_x_hist,
                     X_future=test_x_future,
-                ).astype(float).reset_index(drop=True)
+                    feature_context=prepared.feature_context if prepared is not None else None,
+                )
+            # 三条推理分支的统一归一化出口：dtype=float、0..h-1 索引。
             pred = pd.Series(pred, dtype=float).reset_index(drop=True)
             if proc is not None and use_proc and interval_method == "none":
                 pred = proc.inverse_forecast(pred).astype(float).reset_index(drop=True)
@@ -211,26 +269,31 @@ def rolling_backtest(
             }
 
         residual = test_y - pred
-        metric_row = {
+        # 点指标由注册表驱动；mase/rmsse 的缩放基准取当前窗口原始尺度训练序列。
+        metric_row: dict[str, object] = {
             "window_id": int(window_id),
             "train_start": int(train_start),
             "train_end": int(start),
             "horizon": int(horizon),
-            "mae": mae(test_y.values, pred.values),
-            "rmse": rmse(test_y.values, pred.values),
-            "mape": mape(test_y.values, pred.values),
-            "smape": smape(test_y.values, pred.values),
-            "mse": mse(test_y.values, pred.values),
-            "r2": r2(test_y.values, pred.values),
-            "bias": bias(test_y.values, pred.values),
-            "max_error": max_error(test_y.values, pred.values),
-            "refitted": did_refit,
-            "history_filled_value_count": repaired_count if interval_method == "none" else None,
-            "history_repair_policy": "window_local_linear" if interval_method == "none" else "per_calibration_origin",
         }
+        for metric_name, metric_spec in POINT_METRICS.items():
+            if metric_spec.requires_train:
+                metric_row[metric_name] = metric_spec.func(test_y.values, pred.values, train_y.values)
+            else:
+                metric_row[metric_name] = metric_spec.func(test_y.values, pred.values)
+        metric_row["refitted"] = did_refit
+        metric_row["history_filled_value_count"] = repaired_count if interval_method == "none" else None
+        metric_row["history_repair_policy"] = (
+            "window_local_linear" if interval_method == "none" else "per_calibration_origin"
+        )
+        # 逐窗缩放基准随结果带出，供按 horizon_step 聚合 mase/rmsse 时逐点缩放。
+        naive_scale, sq_scale = train_scales(train_y.values)
         pred_rows = []
         if interval_df is not None:
             bound_pairs = [(c, u) for c, u in iter_bound_pairs(interval_df)]
+            resolved_levels = resolve_interval_levels(levels, interval_alpha)
+            alphas = {interval_bound_columns(level, multi=len(resolved_levels) > 1)[0]: 1 - level
+                      for level in resolved_levels}
             for lower_col, upper_col in bound_pairs:
                 suffix = lower_col[len("yhat_lower"):]
                 level_tag = suffix.strip("_") if suffix else None
@@ -238,7 +301,7 @@ def rolling_backtest(
                 width_key = f"interval_width_{level_tag}" if level_tag else "interval_width"
                 winkler_key = f"winkler_score_{level_tag}" if level_tag else "winkler_score"
                 lower, upper = interval_df[lower_col], interval_df[upper_col]
-                level_alpha = 1.0 - (float(level_tag) / 100.0) if level_tag else interval_alpha
+                level_alpha = alphas[lower_col]
                 metric_row.update(
                     {coverage_key: coverage(test_y, lower, upper),
                      width_key: interval_width(lower, upper),
@@ -261,7 +324,12 @@ def rolling_backtest(
                     row[lower_col] = float(interval_df[lower_col].iloc[idx])
                     row[upper_col] = float(interval_df[upper_col].iloc[idx])
             pred_rows.append(row)
-        return {"failed": False, "metric_row": metric_row, "prediction_rows": pred_rows}
+        return {
+            "failed": False,
+            "metric_row": metric_row,
+            "prediction_rows": pred_rows,
+            "train_scales": (naive_scale, sq_scale),
+        }
 
     if n_jobs == 1:
         results = [evaluate_window(window) for window in windows]
@@ -287,6 +355,7 @@ def rolling_backtest(
         else:
             metric_rows.append(result["metric_row"])
             prediction_rows.extend(result["prediction_rows"])
+            window_scales[window_id] = result["train_scales"]
 
         if verbose and window_id % progress_every == 0:
             # 这里显式 print 到 stdout，满足 CLI smoke/test 对终端进度可见性的要求。
@@ -305,6 +374,7 @@ def rolling_backtest(
 
     metrics_df = pd.DataFrame(metric_rows)
     predictions_df = pd.DataFrame(prediction_rows)
+    step_metrics_df = _build_step_metrics(predictions_df, window_scales)
     summary_values: dict[str, float | int | str] = {
         # 汇总指标采用窗口级指标均值，窗口级明细仍保留在 metrics_df 中。
         # survivor_bias 打标：存在被跳过的失败窗口时，汇总指标只在成功窗口上平均。
@@ -317,15 +387,12 @@ def rolling_backtest(
         "window_mode": resolved_window_mode,
         "forecast_strategy": strategy,
         "future_exog_policy": future_exog_policy,
-        "mae": float(metrics_df["mae"].mean()),
-        "rmse": float(metrics_df["rmse"].mean()),
-        "mape": float(metrics_df["mape"].mean()),
-        "smape": float(metrics_df["smape"].mean()),
-        "mse": float(metrics_df["mse"].mean()),
-        "r2": float(metrics_df["r2"].mean()),
-        "bias": float(metrics_df["bias"].mean()),
-        "max_error": float(metrics_df["max_error"].mean()),
     }
+    # 点指标均值由注册表驱动；NaN 窗口（如常数训练窗的 mase/rmsse）跳过，全缺为 NaN。
+    for metric_name in POINT_METRICS:
+        values = metrics_df[metric_name].to_numpy(dtype=float)
+        available = values[~np.isnan(values)]
+        summary_values[metric_name] = float(available.mean()) if available.size else float("nan")
     summary_values["interval_method"] = interval_method
     summary_values["refit_every"] = refit_every
     summary_values["refit_count"] = int(metrics_df["refitted"].to_numpy(dtype=bool).sum())
@@ -342,6 +409,7 @@ def rolling_backtest(
     return BacktestResult(
         predictions_df=predictions_df,
         metrics_df=metrics_df,
+        step_metrics_df=step_metrics_df,
         summary_df=summary_df,
         summary=summary_values,
         failed_windows=failed_windows,

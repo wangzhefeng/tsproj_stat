@@ -89,14 +89,14 @@ def test_aidc_entry_runs_from_other_cwd_and_reuses_audited_outputs(tmp_path):
     for route, offset in [("A", 0), ("B", 100)]:
         for label, values in [("15min", [1.0, 4.0, 7.0, 10.0]), ("1hour", [5.5]), ("1day", [5.5])]:
             name = f"{route}_Loads_{label}_mean_{date_range}.csv"
-            expected_files.update([name, name + ".aggregate.json"])
+            expected_files.update([name, name + ".aggregate.json", f".{name}.lock"])
             assert pd.read_csv(output_dir / name)["value"].tolist() == [v + offset for v in values]
             audit = json.loads((output_dir / (name + ".aggregate.json")).read_text())
             assert audit["fill_uses_future"] is True
             assert audit["config"]["fill_method"] == "seasonal_slot"
     assert {p.name for p in output_dir.iterdir()} == expected_files
     before = {p.name: p.read_bytes() for p in output_dir.iterdir()}
-    # 旧独立脚本的缓存没有填充方向披露；复用 CSV 时也应补齐审计。
+    # 缺字段审计不再可信：重建而非直接补字段，数值结果保持不变。
     for audit_path in output_dir.glob("*.aggregate.json"):
         audit = json.loads(audit_path.read_text())
         del audit["fill_uses_future"]
@@ -104,7 +104,7 @@ def test_aidc_entry_runs_from_other_cwd_and_reuses_audited_outputs(tmp_path):
         audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2))
     second = subprocess.run(command, cwd=tmp_path, env=env, text=True, capture_output=True)
     assert second.returncode == 0, second.stderr
-    assert second.stdout.count("复用缓存") == 6
+    assert second.stdout.count("重新生成") == 6
     for path in output_dir.iterdir():
         if path.suffix == ".json":
             assert json.loads(path.read_bytes()) == json.loads(before[path.name])

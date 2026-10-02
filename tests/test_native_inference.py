@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from forecasting.strategies import run_point_inference, run_interval_inference
-from models.model.baseline_models import AutoETSModel
+from models.model.statsforecast_backend import AutoETSModel
 
 
 @pytest.mark.parametrize("strategy,expected_fits", [("native", 1), ("direct", 4), ("single_step", 1)])

@@ -353,17 +353,17 @@ def _exec_summary(ctx: dict) -> list[str]:
             + f"，建议普通差分 `d={d}`、季节差分 `D={big_d}`。"
         )
 
-    lb_p = _sget(s, "white_noise", "ljung_box_pvalue")
-    if _as_float(lb_p) is not None:
+    lb_p = _as_float(_sget(s, "white_noise", "ljung_box_pvalue"))
+    if lb_p is not None:
         bullets.append(
             "- " + ("原序列存在很强的序列相关性，不是白噪声，历史信息具有预测价值；模型必须处理趋势与自相关。"
-                    if _as_float(lb_p) < 0.05 else "序列接近白噪声，时间依赖结构较弱。")
+                    if lb_p < 0.05 else "序列接近白噪声，时间依赖结构较弱。")
         )
 
-    arch_p = _sget(s, "heteroskedasticity", "arch_lm_pvalue")
-    if _as_float(arch_p) is not None:
+    arch_p = _as_float(_sget(s, "heteroskedasticity", "arch_lm_pvalue"))
+    if arch_p is not None:
         bullets.append(
-            "- ARCH-LM 检验" + ("显著，残差波动可能具有条件异方差（波动聚集）。" if _as_float(arch_p) < 0.05 else "不显著，未提示明显条件异方差。")
+            "- ARCH-LM 检验" + ("显著，残差波动可能具有条件异方差（波动聚集）。" if arch_p < 0.05 else "不显著，未提示明显条件异方差。")
         )
 
     rec_period = _sget(rec, "seasonal_period", "recommended_period")
@@ -412,7 +412,7 @@ def build_section_1(ctx: dict) -> list[str]:
         add("补齐并填充的时间点", _fmt_int(agg["inserted"]))
     if agg and agg.get("dup") is not None:
         add("重复时间戳", _fmt_int(agg["dup"]))
-    add("建模序列缺失率", _fmt_pct(_sget(s, "missing_rate", default=_sget(dq, "missing_ratio"))))
+    add("建模序列缺失率", _fmt_pct(_sget(dq, "missing_ratio")))
 
     lines = ["## 1. 数据口径与质量", ""]
     if rows:
@@ -503,6 +503,9 @@ def build_section_3(ctx: dict, output_dir: Path) -> list[str]:
     ref = _plot_ref(output_dir, "seasonal", "季节分量")
     if ref:
         lines += [ref, ""]
+    ref = _plot_ref(output_dir, "seasonal_subseries", "季节子序列")
+    if ref:
+        lines += [ref, "季节子序列图按周期内槽位分组展示取值分布；槽位间箱体高度差异大，说明该周期下的季节结构稳定且可用。", ""]
     acf_peaks = _sget(s, "cycle", "acf_peak_lags") or []
     rec_period = _sget(rec, "seasonal_period", "recommended_period")
     conf = _sget(rec, "seasonal_period", "confidence")
@@ -519,6 +522,13 @@ def build_section_3(ctx: dict, output_dir: Path) -> list[str]:
         lines.append("；".join(parts) + "。")
     if _is_fft_artifact(fft, ctx.get("n_samples")):
         lines.append("FFT 主周期接近完整样本长度，通常是强趋势与有限观察窗口造成的低频能量集中，不能视为稳定业务周期。")
+    ms = _sget(s, "multi_seasonal")
+    if isinstance(ms, dict) and ms.get("ok") and ms.get("seasonal_strengths"):
+        parts_ms = [
+            f"周期 {p} 强度 {_fmt_num(v, 3)}"
+            for p, v in sorted(ms["seasonal_strengths"].items(), key=lambda kv: int(kv[0]))
+        ]
+        lines.append("MSTL 多周期分解：" + "；".join(parts_ms) + "；强度显著的周期都可作为建模候选，而非只保留单一周期。")
     lines.append("上述周期候选都需要在去趋势或一阶差分后的序列上重新验证，并通过样本外回测确认。")
     lines.append("")
     ref = _plot_ref(output_dir, "periodogram", "周期图")
@@ -629,6 +639,19 @@ def build_section_6(ctx: dict) -> list[str]:
         steps.append(f"**季节性**：把配置周期与 {int(rec_period)} 候选都作为实验变量，当前证据不支持直接季节差分。")
     steps.append("**波动**：若业务关心预测区间或峰值风险，可在均值模型残差仍存 ARCH 效应时叠加 ARCH/GARCH；不以 GARCH 替代负荷均值预测。")
     steps.append("**异常值**：默认 `denoise_method=none`，仅在核验异常日期后针对性处理。")
+    cov_useful = _sget(rec, "covariates", "useful") or []
+    if cov_useful:
+        details = _sget(rec, "covariates", "per_covariate") or {}
+        lag_notes = [
+            f"{col}（Granger 最优滞后 {details[col]['granger_best_lag']}）"
+            if isinstance(details.get(col), dict) and details[col].get("granger_best_lag") is not None
+            else col
+            for col in cov_useful
+        ]
+        steps.append(
+            f"**协变量**：{'; '.join(lag_notes)} 对目标有预测价值；"
+            "作为外生变量建模前需确认其未来值可获得（预报或计划值），并用 rolling 回测验证增益。"
+        )
     lines += ["建议按以下顺序构建和比较模型：", ""]
     for i, st in enumerate(steps, 1):
         lines.append(f"{i}. {st}")

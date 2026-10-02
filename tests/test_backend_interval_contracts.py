@@ -5,7 +5,7 @@ import pytest
 
 from models.model.exponential_family import ThetaModel
 from models.model.multivariate import VARModel
-from models.model.arima_family import StatsForecastAutoARIMAModel
+from models.model.statsforecast_backend import StatsForecastAutoARIMAModel
 
 
 def test_theta_intervals_match_statsmodels():

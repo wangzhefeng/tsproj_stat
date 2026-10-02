@@ -93,7 +93,7 @@ def test_eda_requires_explicit_frequency_alignment(tmp_path):
 
     from data_provider.resampling.core import aggregate_frame
 
-    with pytest.raises(ValueError, match="EDA input is not regular"):
+    with pytest.raises(ValueError, match="EDA input timestamps are not regular"):
         run_eda(df, "ds", "y", "D", str(tmp_path))
     assert not list(tmp_path.iterdir())
     aligned = aggregate_frame(df, time_col="ds", target_col="y", source_freq="D",

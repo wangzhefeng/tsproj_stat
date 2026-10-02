@@ -1,4 +1,4 @@
-"""回归型统计模型的外生输入契约，独立于具体后端。"""
+"""回归型统计模型的外生输入契约，独立于具体后端（模型输入适配归 contracts）。"""
 from __future__ import annotations
 
 import numpy as np

@@ -4,6 +4,31 @@ import pandas as pd
 import pytest
 
 from data_provider.resampling.service import aggregate_csv
+from data_provider.resampling.core import aggregate_frame
+
+
+@pytest.mark.parametrize("times,values,source,target,match", [
+    ([], [], "h", "D", "empty"),
+    (["2026-01-01", None], [1., 2.], "D", "D", "timestamps"),
+    (["2026-01-01"], [float("inf")], "D", "D", "non-finite"),
+    (["2026-01-01"], [-float("inf")], "D", "D", "non-finite"),
+    (pd.date_range("2026-01-01", periods=2, freq="h"), [10., 20.], "h", "30min", "downsampling"),
+    (pd.date_range("2026-01-01 00:15", periods=2, freq="h"), [1., 2.], "h", "D", "source grid"),
+    (pd.date_range("2026-01-31", periods=2, freq="ME"), [1., 2.], "ME", "D", "downsampling"),
+])
+def test_aggregate_rejects_undefined_inputs(times, values, source, target, match):
+    with pytest.raises(ValueError, match=match):
+        aggregate_frame(pd.DataFrame({"ds": times, "y": values}), time_col="ds", target_col="y",
+                        source_freq=source, target_freq=target, method="sum")
+
+
+def test_calendar_aggregation_and_duplicate_mean_contract():
+    dates = pd.date_range("2026-01-01", "2026-02-28", freq="D")
+    frame = pd.DataFrame({"ds": dates, "y": 2.})
+    frame = pd.concat([frame, pd.DataFrame({"ds": [dates[0]], "y": [4.]})], ignore_index=True)
+    result = aggregate_frame(frame, time_col="ds", target_col="y", source_freq="D", target_freq="ME", method="sum")
+    assert result.frame["y"].tolist() == [63., 56.]
+    assert result.duplicate_timestamp_count == 1
 
 
 def _write_source(tmp_path, days=3, freq="h"):

@@ -8,8 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from forecasting.strategies import normalize_forecast_strategy, normalize_window_mode, validate_single_step_horizon
-
+from config.strategy import normalize_forecast_strategy, normalize_window_mode, validate_single_step_horizon
 
 def _ensure_positive(value: int, field_name: str) -> None:
     if value <= 0:
@@ -37,6 +36,10 @@ class AppConfig:
     series_id_col: str | None = None
     batch_models: dict = field(default_factory=dict)
     batch_allow_failed: bool = False
+    # 面板断点续跑：指向上一次运行的 batch_manifest.json；按 (series_id, model_name)
+    # 跳过上次已成功任务并把其产物并入本次汇总。要求与上次配置一致（除
+    # batch_allow_failed / batch_resume_from 自身），不一致即 RAISE。默认 None 关闭。
+    batch_resume_from: str | None = None
     time_col: str = "ds"
     target_col: str = "y"
     endog_cols: list[str] = field(default_factory=list)
@@ -125,7 +128,9 @@ class AppConfig:
 
     # 自动模型选择：用小规模 rolling backtest 在候选模型中选默认指标最优者。
     auto_select: bool = False
-    auto_select_candidates: list[str] = field(default_factory=lambda: ["naive", "seasonal_naive", "historic_average", "arima", "auto_arima", "ets", "theta"])
+    # 空表 = registry 中全部 stable 模型（AutoSelector 缺省语义，随 registry 稳定性分层自动更新）；
+    # 显式列表则按给定候选评估。
+    auto_select_candidates: list[str] = field(default_factory=list)
     auto_select_metric: str = "mae"
     auto_select_n_windows: int = 5
 
@@ -213,7 +218,7 @@ class AppConfig:
         """仅执行 EDA：do_eda 开启且模型三阶段（train/test/forecast）全部关闭。"""
         return self.do_eda and not (self.do_train or self.do_test or self.do_forecast)
 
-    def validate(self) -> None:
+    def validate(self, *, future_exog_available: bool = False) -> None:
         """在运行前集中校验配置，避免错误下沉到模型拟合阶段才暴露。"""
         _ensure_positive(self.history_size, "history_size")
         _ensure_positive(self.predict_horizon, "predict_horizon")
@@ -244,6 +249,8 @@ class AppConfig:
                 raise ValueError("series_id_col requires data_path")
             if self.aggregation_enabled or self.auto_select or self.monitor_actuals_path:
                 raise ValueError("batch requires preaggregated data, explicit models and no monitor backfill")
+        elif self.batch_resume_from:
+            raise ValueError("batch_resume_from requires series_id_col (panel batch)")
 
         if self.scaler_type not in {"standard", "minmax"}:
             raise ValueError("scaler_type must be one of {'standard', 'minmax'}")
@@ -277,8 +284,8 @@ class AppConfig:
         for level in self.interval_levels:
             if not 0 < level < 1:
                 raise ValueError(f"interval_levels must be in (0, 1), got {level}")
-        if self.simulate_error_distribution not in {"bootstrap", "normal"}:
-            raise ValueError("simulate_error_distribution must be bootstrap or normal")
+        if self.simulate_error_distribution not in {"bootstrap", "normal", "t", "laplace"}:
+            raise ValueError("simulate_error_distribution must be one of bootstrap, normal, t, laplace")
         if self.simulate_n_paths < 2:
             raise ValueError("simulate_n_paths must be >= 2")
         if self.simulate_n_windows < 2:
@@ -302,6 +309,8 @@ class AppConfig:
         
         if self.decomposition_model not in {"additive", "multiplicative"}:
             raise ValueError("decomposition_model must be one of {'additive', 'multiplicative'}")
+        if self.decomposition_method == "stl" and self.decomposition_model != "additive":
+            raise ValueError("STL requires additive decomposition")
         
         if self.acf_max_lag <= 1:
             raise ValueError("acf_max_lag must be > 1")
@@ -324,10 +333,10 @@ class AppConfig:
         if self.ets_validation_size is not None and self.ets_validation_size <= 0:
             raise ValueError("ets_validation_size must be > 0 when provided")
 
-        if self.future_exog_path is None and self.future_exog_cols:
-            raise ValueError("future_exog_cols requires future_exog_path")
+        if self.future_exog_path is None and self.future_exog_cols and not future_exog_available:
+            raise ValueError("future_exog_cols requires future_exog_path or an in-memory future frame")
 
-        if self.future_exog_path is not None and self.future_exog_cols and self.future_exog_time_col is None:
+        if (self.future_exog_path is not None or future_exog_available) and self.future_exog_cols and self.future_exog_time_col is None:
             raise ValueError("future_exog_time_col is required when future_exog_path and future_exog_cols are set")
 
         if self.aggregation_enabled and self.data_path is None:
@@ -343,11 +352,3 @@ class AppConfig:
             raise ValueError("eda_comparison_labels must be empty or match eda_comparison_paths length")
         if not _is_allowed_output_dir(self.results_dir):
             raise ValueError("results_dir must be 'results', a child of 'results/', or an absolute path")
-
-
-DEFAULT_CONFIG = AppConfig()
-
-
-def ensure_output_dirs(cfg: AppConfig) -> None:
-    """创建统一结果根；data_name 与实验子目录由 artifacts.paths 负责。"""
-    Path(cfg.results_dir).mkdir(parents=True, exist_ok=True)

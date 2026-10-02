@@ -84,10 +84,7 @@ def _create_from_spec(spec: ModelSpec) -> BaseStatModel:
 
 
 def _is_using_fallback(model: BaseStatModel) -> bool:
-    fallback = getattr(model, "_fallback", None)
-    if fallback is None:
-        return False
-    return getattr(model, "_result", None) is None and getattr(model, "_model", None) is None
+    return model.runtime_info().using_fallback_prediction
 
 
 def _looks_like_dependency_error(exc: Exception) -> bool:

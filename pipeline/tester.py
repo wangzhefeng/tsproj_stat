@@ -7,6 +7,7 @@ from data_provider.target_transforms.transformer import TargetTransformer
 
 from evaluation.backtest import BacktestResult, rolling_backtest
 from models.factory import ModelFactory
+from features.model_inputs import ModelFeatureSpec
 from forecasting.strategies import normalize_forecast_strategy, normalize_window_mode
 
 
@@ -42,6 +43,7 @@ class Tester:
         levels: list[float] | None = None,
         refit_every: int = 1,
         ignore_unsupported_inputs: bool = False,
+        feature_spec: ModelFeatureSpec | None = None,
     ):
         """参数与 rolling_backtest 一一对应；本类只做配置装配，不做窗口逻辑。"""
         self.model_name = model_name
@@ -67,6 +69,7 @@ class Tester:
         self.levels = levels
         self.refit_every = refit_every
         self.ignore_unsupported_inputs = ignore_unsupported_inputs
+        self.feature_spec = feature_spec
         self.factory = ModelFactory()
 
     def evaluate(self, df: pd.DataFrame) -> BacktestResult:
@@ -94,4 +97,5 @@ class Tester:
             conformal_n_windows=self.conformal_n_windows,
             levels=self.levels,
             refit_every=self.refit_every,
+            feature_spec=self.feature_spec,
         )

@@ -91,5 +91,5 @@ def test_results_data_name_overrides_data_name_resolution(tmp_path):
     ok = prepare_run_artifacts(
         AppConfig(data_path="dataset/x/y.csv", results_data_name="aidc_power_month/route_A", results_dir=str(tmp_path))
     )
-    assert ok.train_results_dir == tmp_path / "aidc_power_month" / "route_A" / "results_train" / ok.experiment_path
+    assert ok.train_results_dir == tmp_path / "aidc_power_month" / "route_A" / "results_train" / ok.experiment_path / "runs" / ok.run_id
     assert ok.train_results_dir.is_dir()

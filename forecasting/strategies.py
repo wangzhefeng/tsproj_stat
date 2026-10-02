@@ -16,34 +16,14 @@ import pandas as pd
 from models.contracts.inputs import combine_history_frame, to_dataframe, to_univariate_series
 from models.contracts.validation import validate_horizon
 from models.base import BaseStatModel
-
-
-FORECAST_STRATEGIES = {"native", "single_step", "direct", "recursive", "dirrec"}
-WINDOW_MODES = {"expanding", "sliding"}
-
-
-def normalize_forecast_strategy(
-    forecast_strategy: str | None,
-) -> str:
-    """标准化多步预测策略名称。"""
-    candidate = str(forecast_strategy or "direct").strip().lower()
-    if candidate not in FORECAST_STRATEGIES:
-        raise ValueError(f"forecast_strategy must be one of {sorted(FORECAST_STRATEGIES)}")
-    return candidate
-
-
-def normalize_window_mode(window_mode: str | None) -> str:
-    """标准化 rolling backtest 的窗口模式。"""
-    candidate = (window_mode or "expanding").strip().lower()
-    if candidate not in WINDOW_MODES:
-        raise ValueError(f"backtest_window_mode must be one of {sorted(WINDOW_MODES)}")
-    return candidate
-
-
-def validate_single_step_horizon(strategy: str, horizon: int) -> None:
-    """single_step 策略只允许 horizon=1（语义上就是单步预测）。"""
-    if strategy == "single_step" and horizon != 1:
-        raise ValueError("single_step forecast_strategy requires predict_horizon/backtest_horizon == 1")
+from features.model_inputs import FutureFeatures
+from config.strategy import (  # noqa: F401  — 兼容旧导入路径的 re-export
+    FORECAST_STRATEGIES,
+    WINDOW_MODES,
+    normalize_forecast_strategy,
+    normalize_window_mode,
+    validate_single_step_horizon,
+)
 
 
 def _coerce_single_value(value: pd.Series | float | np.floating | int) -> float:
@@ -175,6 +155,7 @@ def run_point_inference(
     X_hist: pd.DataFrame | None = None,
     X_future: pd.DataFrame | None = None,
     use_update: bool = False,
+    feature_context: FutureFeatures | None = None,
 ) -> pd.Series:
     """执行点预测的统一多步推理编排。
 
@@ -190,6 +171,11 @@ def run_point_inference(
     validate_single_step_horizon(strategy, horizon)
     if use_update:
         _validate_update_path(strategy, model_builder, X_future)
+
+    if feature_context is not None:
+        if use_update:
+            raise ValueError("use_update does not support derived future covariates")
+        return _run_feature_inference(model_builder, history, horizon, strategy, X_hist, X_future, feature_context)
 
     model_builder = checked_model_builder(model_builder, strategy, X_future, history=history, X_hist=X_hist)
     history_series = to_univariate_series(history).astype(float).reset_index(drop=True)
@@ -237,6 +223,45 @@ def run_point_inference(
         hist = pd.concat([hist, pd.Series([next_val])], ignore_index=True)
         hist.name = history_series.name
         hist_frame = _append_history_frame(hist_frame, next_val, next_future)
+    return pd.Series(preds, name="yhat")
+
+
+def _run_feature_inference(model_builder, history, horizon, strategy, X_hist, X_future,
+                           context: FutureFeatures) -> pd.Series:
+    """按预测推进派生协变量；native 只 fit 一次，direct 保持逐步重拟合。
+
+    目标 lag 未知部分使用已生成的点预测；原生后端逐增前缀 predict，不冻结
+    未知目标。原生 predict 调用次数增加，但不重复 fit。
+    """
+    frame = combine_history_frame(history, X_hist)
+    first = context.row(X_future, 0, [])
+    build = checked_model_builder(model_builder, strategy, first, history=history, X_hist=X_hist)
+    if strategy in {"recursive", "dirrec", "single_step"}:
+        preds: list[float] = []
+        for step in range(horizon):
+            future = context.row(X_future, step, preds)
+            model = build()
+            model.fit(frame.iloc[:, 0], X_hist=frame, X_future=future)
+            preds.append(_predict_one(model, future))
+            frame = _append_history_frame(frame, preds[-1], future)
+        return pd.Series(preds, name="yhat")
+
+    def predict_prefix(model, length):
+        preds, rows = [], []
+        for step in range(length):
+            rows.append(context.row(X_future, step, preds))
+            preds.append(_predict_direct_step(model, step + 1, pd.concat(rows, ignore_index=True)))
+        return preds
+
+    if strategy == "native":
+        model = build()
+        model.fit(frame.iloc[:, 0], X_hist=frame, X_future=first)
+        return pd.Series(predict_prefix(model, horizon), name="yhat")
+    preds = []
+    for length in range(1, horizon + 1):
+        model = build()
+        model.fit(frame.iloc[:, 0], X_hist=frame, X_future=first)
+        preds.append(predict_prefix(model, length)[-1])
     return pd.Series(preds, name="yhat")
 
 

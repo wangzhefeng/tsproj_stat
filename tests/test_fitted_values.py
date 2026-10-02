@@ -2,6 +2,22 @@
 import numpy as np
 import pandas as pd
 import pytest
+from data_provider.target_transforms.transformer import TargetTransformer
+from pipeline.stages import PrepareResult
+
+
+def _prepared_history(y, processor=None):
+    """使用生产阶段契约，避免手写空桩遗漏新增的可选字段。"""
+    processor = processor or TargetTransformer()
+    time = pd.Series(pd.date_range("2026-01-01", periods=len(y)))
+    raw = pd.DataFrame({"ds": time, "y": y})
+    model_y = processor.fit_transform(y) if processor.enabled else y
+    modeled = pd.DataFrame({"ds": time, "y": model_y})
+    inputs = modeled[["y"]]
+    return PrepareResult(df=modeled, history_df=modeled, history_y=model_y,
+                         history_endog_df=inputs, history_exog_df=None,
+                         history_model_input_df=inputs, future_exog_df=None,
+                         history_time=time, processor=processor, raw_history_df=raw)
 
 
 # ##############################
@@ -66,17 +82,8 @@ def test_run_train_stage_fitted_diagnosis():
     from data_provider.target_transforms.transformer import TargetTransformer
     from pipeline.stages import run_train_stage
 
-    class Prepared:
-        pass
-
-    prepared = Prepared()
     y = pd.Series(np.arange(40., 70.), name="y")
-    prepared.history_y = y
-    prepared.history_time = pd.Series([f"2026-01-{i+1:02d}" for i in range(30)])
-    prepared.history_model_input_df = pd.DataFrame({"y": y})
-    prepared.raw_history_df = pd.DataFrame({"y": y})
-    prepared.future_exog_df = None
-    prepared.processor = TargetTransformer()  # 默认 disabled
+    prepared = _prepared_history(y)
 
     cfg = AppConfig()
     cfg.model_name = "arima"
@@ -95,25 +102,15 @@ def test_run_train_stage_fitted_inverse_transformed():
     """processor enabled：fitted 逆变换回原始尺度（残差与业务尺度一致）。
 
     语义与 prepare 一致：history_y 是建模尺度（processor.fit_transform 后），
-    拟合值在建模尺度产出，经 inverse_forecast 回原始尺度后与原始 y 对齐。
+    拟合值在建模尺度产出，经 inverse_transform 回原始尺度后与原始 y 对齐。
     """
     from config import AppConfig
     from data_provider.target_transforms.transformer import TargetTransformer
     from pipeline.stages import run_train_stage
 
-    class Prepared:
-        pass
-
-    prepared = Prepared()
     y_raw = pd.Series(2.0 * np.arange(1., 31.), name="y")  # 线性趋势
     processor = TargetTransformer(detrend_method="linear")
-    y_model = processor.fit_transform(y_raw)  # prepare 阶段语义：窗口内拟合
-    prepared.history_y = y_model.reset_index(drop=True)
-    prepared.history_time = pd.Series(range(30))
-    prepared.history_model_input_df = pd.DataFrame({"y": prepared.history_y})
-    prepared.raw_history_df = pd.DataFrame({"y": y_raw.reset_index(drop=True)})
-    prepared.future_exog_df = None
-    prepared.processor = processor
+    prepared = _prepared_history(y_raw, processor)
 
     cfg = AppConfig()
     cfg.model_name = "arima"
@@ -137,17 +134,8 @@ def test_run_train_stage_disabled_by_default():
     from config import AppConfig
     from pipeline.stages import run_train_stage
 
-    class Prepared:
-        pass
-
-    prepared = Prepared()
     y = pd.Series(np.arange(20.), name="y")
-    prepared.history_y = y
-    prepared.history_time = pd.Series(range(20))
-    prepared.history_model_input_df = pd.DataFrame({"y": y})
-    prepared.raw_history_df = pd.DataFrame({"y": y})
-    prepared.future_exog_df = None
-    prepared.processor = type("P", (), {"enabled": False})()
+    prepared = _prepared_history(y)
 
     cfg = AppConfig()
     cfg.model_name = "naive"  # 不支持 fitted 且未开启开关：不 RAISE
@@ -160,17 +148,8 @@ def test_run_train_stage_unsupported_model_raises():
     from config import AppConfig
     from pipeline.stages import run_train_stage
 
-    class Prepared:
-        pass
-
-    prepared = Prepared()
     y = pd.Series(np.arange(20.), name="y")
-    prepared.history_y = y
-    prepared.history_time = pd.Series(range(20))
-    prepared.history_model_input_df = pd.DataFrame({"y": y})
-    prepared.raw_history_df = pd.DataFrame({"y": y})
-    prepared.future_exog_df = None
-    prepared.processor = type("P", (), {"enabled": False})()
+    prepared = _prepared_history(y)
 
     cfg = AppConfig()
     cfg.model_name = "naive"  # 显式开启后未声明能力：RAISE

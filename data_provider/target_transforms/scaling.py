@@ -12,8 +12,8 @@ class TargetScaler:
 
     def fit_transform(self, values: pd.Series) -> pd.Series:
         result = self.scaler.fit_transform(values.to_numpy(dtype=float).reshape(-1, 1))
-        return pd.Series(result[:, 0], name=values.name)
+        return pd.Series(result[:, 0], index=values.index, name=values.name)
 
     def inverse_transform(self, values: pd.Series) -> pd.Series:
         result = self.scaler.inverse_transform(values.to_numpy(dtype=float).reshape(-1, 1))
-        return pd.Series(result[:, 0], name=values.name)
+        return pd.Series(result[:, 0], index=values.index, name=values.name)

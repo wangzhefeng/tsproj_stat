@@ -5,7 +5,7 @@ import pandas as pd
 
 from pipeline import ModelApp
 from config import AppConfig
-from models.persistence import load_model
+from artifacts.checkpoints import load_model
 
 
 def test_pipeline_multisource_linear_var_forecast_contract(tmp_path):

@@ -35,7 +35,7 @@ def test_ets_model_tuning_uses_best_grid_candidate(monkeypatch):
             return [base] * steps
 
     class DummyETS:
-        def __init__(self, series, trend=None, seasonal=None, seasonal_periods=None):
+        def __init__(self, series, trend=None, damped_trend=False, seasonal=None, seasonal_periods=None):
             self.series = series
 
         def fit(

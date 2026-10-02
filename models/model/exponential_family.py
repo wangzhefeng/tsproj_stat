@@ -10,7 +10,7 @@ import itertools
 
 import pandas as pd
 
-from data_provider.target_transforms.transformer import infer_seasonal_period
+from utils.seasonality import infer_seasonal_period
 from models.base import BaseStatModel
 from models.contracts.inputs import to_univariate_series
 from models.contracts.validation import validate_horizon
@@ -25,9 +25,11 @@ class ETSModel(FallbackMixin, BaseStatModel):
     支持可选 smoothing grid 调参；启用季节项但未显式给周期时先统一推断，
     推断失败直接报错。不得再平行拆出 ses/des/tes 脚本式入口。
     """
+    _runtime_backend_fields = ("_result",)
     def __init__(
         self,
         trend: str | None = "add",
+        damped_trend: bool = False,
         seasonal: str | None = None,
         seasonal_periods: int | None = None,
         tune_smoothing_params: bool = False,
@@ -37,6 +39,7 @@ class ETSModel(FallbackMixin, BaseStatModel):
         validation_size: int | None = None,
     ):
         self.trend = trend
+        self.damped_trend = damped_trend
         self.seasonal = seasonal
         self.seasonal_periods = seasonal_periods
         self.tune_smoothing_params = tune_smoothing_params
@@ -61,7 +64,7 @@ class ETSModel(FallbackMixin, BaseStatModel):
         except Exception as exc:
             self._result = None
             warn_and_use_fallback(
-                model_name="ETSModel",
+                model=self, model_name="ETSModel",
                 fallback_name=type(self._fallback).__name__,
                 exc=exc,
             )
@@ -82,7 +85,6 @@ class ETSModel(FallbackMixin, BaseStatModel):
         return pd.Series(self._result.fittedvalues, name="fitted").reset_index(drop=True)
 
     def predict_with_intervals(self, horizon: int, X_future=None, alpha: float = 0.05):
-        import pandas as pd, numpy as np
         if self._result is None:
             return super().predict_with_intervals(horizon, X_future, alpha)
         try:
@@ -104,6 +106,8 @@ class ETSModel(FallbackMixin, BaseStatModel):
             raise ValueError("trend must be one of {None, 'add', 'mul'}")
         if self.seasonal not in valid_component:
             raise ValueError("seasonal must be one of {None, 'add', 'mul'}")
+        if self.damped_trend and self.trend is None:
+            raise ValueError("damped_trend requires a trend component")
         for field_name, values in {
             "smoothing_grid_level": self.smoothing_grid_level,
             "smoothing_grid_trend": self.smoothing_grid_trend,
@@ -141,6 +145,7 @@ class ETSModel(FallbackMixin, BaseStatModel):
         return ExponentialSmoothing(
             series,
             trend=self.trend,
+            damped_trend=self.damped_trend,
             seasonal=self.seasonal,
             seasonal_periods=self._resolved_seasonal_periods,
         ).fit(
@@ -218,6 +223,7 @@ class ETSModel(FallbackMixin, BaseStatModel):
 
 class ThetaModel(FallbackMixin, BaseStatModel):
     """Theta 方法（statsmodels 后端）；注意该后端不提供 fittedvalues。"""
+    _runtime_backend_fields = ("_result",)
 
     def __init__(self, period: int = 1):
         self.period = period
@@ -234,7 +240,7 @@ class ThetaModel(FallbackMixin, BaseStatModel):
         except Exception as exc:
             self._result = None
             warn_and_use_fallback(
-                model_name="ThetaModel",
+                model=self, model_name="ThetaModel",
                 fallback_name=type(self._fallback).__name__,
                 exc=exc,
             )

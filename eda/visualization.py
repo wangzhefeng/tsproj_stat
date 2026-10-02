@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import matplotlib
+import numpy as np
 import pandas as pd
 from scipy.signal import periodogram
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
@@ -59,6 +60,19 @@ def save_series_plots(series: pd.Series, plots_dir: Path, period: int, acf_nlags
             values.plot(ax=ax, title=name.title())
             out[f"eda_{name}_plot_path"] = _save(fig, plots_dir / f"{name}.png")
 
+        # 季节子序列图：按周期内槽位分组的分布剖面，直观暴露槽位间水平差异
+        slots = np.arange(len(series)) % period
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.boxplot(
+            [series.values[slots == p] for p in range(period)],
+            tick_labels=[str(p + 1) for p in range(period)],
+            showfliers=False,
+        )
+        ax.set_xlabel(f"Seasonal slot (period={period})")
+        ax.set_ylabel("Value")
+        ax.set_title("Seasonal Subseries")
+        out["eda_seasonal_subseries_plot_path"] = _save(fig, plots_dir / "seasonal_subseries.png")
+
     fig = plt.figure(figsize=(12, 4))
     ax1 = fig.add_subplot(1, 2, 1)
     ax2 = fig.add_subplot(1, 2, 2)
@@ -66,19 +80,6 @@ def save_series_plots(series: pd.Series, plots_dir: Path, period: int, acf_nlags
     plot_pacf(series, ax=ax2, lags=min(acf_nlags, len(series) // 2 - 1))
     out["eda_acf_pacf_plot_path"] = _save(fig, plots_dir / "acf_pacf.png")
     return out
-
-
-def load_comparison_series(path: str | Path, time_col: str, target_col: str) -> pd.Series:
-    """严格读取比较序列，不做补频或插值。"""
-    frame = pd.read_csv(path)
-    missing = [column for column in (time_col, target_col) if column not in frame.columns]
-    if missing:
-        raise ValueError(f"EDA comparison columns not found in {path}: {missing}")
-    frame[time_col] = pd.to_datetime(frame[time_col], errors="raise")
-    frame[target_col] = pd.to_numeric(frame[target_col], errors="raise")
-    if frame[time_col].isna().any() or frame[target_col].isna().any():
-        raise ValueError(f"EDA comparison data contains missing values: {path}")
-    return frame.sort_values(time_col).set_index(time_col)[target_col]
 
 
 def save_series_comparison(

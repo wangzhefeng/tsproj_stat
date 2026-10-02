@@ -96,6 +96,7 @@ def _extract_future_regressors(
 
 class TBATSModel(FallbackMixin, BaseStatModel):
     """TBATS（多季节 + Box-Cox + ARMA 误差）；依赖缺失或失败时显式 fallback。"""
+    _runtime_backend_fields = ("_result",)
     def __init__(
         self,
         seasonal_periods: list[int] | tuple[int, ...] | None = None,
@@ -141,7 +142,7 @@ class TBATSModel(FallbackMixin, BaseStatModel):
         except Exception as exc:
             self._result = None
             warn_and_use_fallback(
-                model_name="TBATSModel",
+                model=self, model_name="TBATSModel",
                 fallback_name=type(self._fallback).__name__,
                 exc=exc,
             )
@@ -157,6 +158,7 @@ class TBATSModel(FallbackMixin, BaseStatModel):
 
 class ProphetModel(FallbackMixin, BaseStatModel):
     """Prophet 接入：支持未来外生；依赖缺失或运行不兼容时显式 fallback。"""
+    _runtime_backend_fields = ("_model", "_last_ds")
     def __init__(
         self,
         growth: str = "linear",
@@ -216,7 +218,7 @@ class ProphetModel(FallbackMixin, BaseStatModel):
             self._model = None
             self._regressor_names = []
             warn_and_use_fallback(
-                model_name="ProphetModel",
+                model=self, model_name="ProphetModel",
                 fallback_name=type(self._fallback).__name__,
                 exc=exc,
             )
@@ -256,6 +258,7 @@ class ProphetModel(FallbackMixin, BaseStatModel):
 
 class NeuralProphetModel(FallbackMixin, BaseStatModel):
     """NeuralProphet 接入（experimental）；环境损坏常见，失败必须可读地 fallback。"""
+    _runtime_backend_fields = ("_model", "_train_frame")
     def __init__(
         self,
         freq: str | None = None,
@@ -307,7 +310,7 @@ class NeuralProphetModel(FallbackMixin, BaseStatModel):
             self._train_frame = None
             self._regressor_names = []
             warn_and_use_fallback(
-                model_name="NeuralProphetModel",
+                model=self, model_name="NeuralProphetModel",
                 fallback_name=type(self._fallback).__name__,
                 exc=exc,
             )
@@ -342,6 +345,7 @@ class BayesianTMTModel(FallbackMixin, TrendFallbackModel):
     factorization, imputation, and multivariate forecasting, which does not match the
     current single-target `fit/predict` contract.
     """
+    _runtime_backend_fields = ("_model",)
 
     def __init__(self, lags: list[int] | None = None):
         super().__init__()
@@ -360,6 +364,7 @@ class BayesianTMTModel(FallbackMixin, TrendFallbackModel):
         max_lag = max(self.lags)
         if len(series) <= max_lag + 2:
             self._model = None
+            self._fallback_reason = "insufficient history for Bayesian lag regression"
             return self
 
         x_rows = []
@@ -377,7 +382,7 @@ class BayesianTMTModel(FallbackMixin, TrendFallbackModel):
         except Exception as exc:
             self._model = None
             warn_and_use_fallback(
-                model_name="BayesianTMTModel",
+                model=self, model_name="BayesianTMTModel",
                 fallback_name=type(self._fallback).__name__,
                 exc=exc,
             )
@@ -405,6 +410,8 @@ class RARModel(TrendFallbackModel):
     """
     残差自回归模型(RAR)
     """
+    _runtime_backend_fields = ("_resid_result",)
+    _runtime_fallback_name = "TrendFallbackModel"
 
     def __init__(self, alpha: float = 0.2):
         if not 0 < alpha <= 1:
@@ -426,6 +433,7 @@ class RARModel(TrendFallbackModel):
         lag = max(1, int(round(self.alpha * 10)))
         if len(resid) <= lag + 2:
             self._resid_result = None
+            self._fallback_reason = "insufficient history for residual autoregression"
             return self
 
         try:
@@ -435,7 +443,7 @@ class RARModel(TrendFallbackModel):
         except Exception as exc:
             self._resid_result = None
             warn_and_use_fallback(
-                model_name="RARModel",
+                model=self, model_name="RARModel",
                 fallback_name="TrendFallbackModel",
                 exc=exc,
             )
@@ -451,5 +459,7 @@ class RARModel(TrendFallbackModel):
         try:
             resid_fc = self._resid_result.forecast(steps=horizon)
             return pd.Series(baseline + np.asarray(resid_fc, dtype=float), name="yhat")
-        except Exception:
+        except Exception as exc:
+            self._resid_result = None
+            self._fallback_reason = str(exc)
             return pd.Series(baseline, name="yhat")

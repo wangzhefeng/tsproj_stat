@@ -16,7 +16,7 @@ def _history(n=40):
 
 def test_simulate_bootstrap_paths_shape_and_point_alignment():
     """bootstrap：n_paths 条路径，长度=horizon，中位数≈点预测（对称误差）。"""
-    from forecasting.intervals import simulate_frame
+    from forecasting.simulation import simulate_frame
 
     result = simulate_frame(
         model_builder=lambda: ModelFactory().create_model("naive"),
@@ -32,7 +32,7 @@ def test_simulate_bootstrap_paths_shape_and_point_alignment():
 
 
 def test_simulate_normal_paths_finite():
-    from forecasting.intervals import simulate_frame
+    from forecasting.simulation import simulate_frame
 
     result = simulate_frame(
         model_builder=lambda: ModelFactory().create_model("naive"),
@@ -45,7 +45,7 @@ def test_simulate_normal_paths_finite():
 
 def test_simulate_quantile_band_nested_and_unbiased():
     """分位带嵌套单调 + 中心无偏：q50 与点预测一致（bootstrap 对称误差下）。"""
-    from forecasting.intervals import simulate_frame
+    from forecasting.simulation import simulate_frame
 
     result = simulate_frame(
         model_builder=lambda: ModelFactory().create_model("naive"),
@@ -65,7 +65,7 @@ def test_simulate_quantile_band_nested_and_unbiased():
 
 def test_simulate_seed_determinism():
     """同 seed 两次模拟路径完全一致。"""
-    from forecasting.intervals import simulate_frame
+    from forecasting.simulation import simulate_frame
 
     kw = dict(
         model_builder=lambda: ModelFactory().create_model("naive"),
@@ -78,7 +78,7 @@ def test_simulate_seed_determinism():
 
 
 def test_simulate_rejects_bad_inputs():
-    from forecasting.intervals import simulate_frame
+    from forecasting.simulation import simulate_frame
 
     with pytest.raises(ValueError, match="n_paths"):
         simulate_frame(lambda: ModelFactory().create_model("naive"), _history(40), 3,
@@ -94,8 +94,71 @@ def test_simulate_rejects_bad_inputs():
 
 def test_simulate_history_requirement():
     """校准历史不足（n_windows*horizon+3）显式失败。"""
-    from forecasting.intervals import simulate_frame
+    from forecasting.simulation import simulate_frame
 
     with pytest.raises(ValueError, match="insufficient"):
         simulate_frame(lambda: ModelFactory().create_model("naive"), _history(12), 3,
                        "recursive", n_paths=10, error_distribution="bootstrap", n_windows=8)
+
+
+# ##############################
+# 误差分布族扩展：t / laplace（逐 step 残差 MLE 拟合）
+# ##############################
+
+def _random_history(n=60, seed=0):
+    """随机游走历史：参数分布拟合需要跨窗变化的误差（arange 误差恒定会退化）。"""
+    rng = np.random.default_rng(seed)
+    steps = rng.normal(0.0, 1.0, size=n)
+    return pd.Series(np.cumsum(steps) + 50.0, name="y")
+
+
+def test_simulate_t_distribution_paths_finite():
+    """t 分布：>=10 校准窗可拟合，路径有限且元数据记录分布名。"""
+    from forecasting.simulation import simulate_frame
+
+    result = simulate_frame(
+        model_builder=lambda: ModelFactory().create_model("naive"),
+        history=_random_history(60), horizon=3, forecast_strategy="recursive",
+        n_paths=40, error_distribution="t", n_windows=12, seed=3,
+    )
+    assert np.isfinite(result.paths_df["value"].to_numpy()).all()
+    assert result.metadata["error_distribution"] == "t"
+    assert result.metadata["n_windows"] == 12
+
+
+def test_simulate_laplace_distribution_paths_finite():
+    from forecasting.simulation import simulate_frame
+
+    result = simulate_frame(
+        model_builder=lambda: ModelFactory().create_model("naive"),
+        history=_random_history(60), horizon=3, forecast_strategy="recursive",
+        n_paths=40, error_distribution="laplace", n_windows=12, seed=5,
+    )
+    assert np.isfinite(result.paths_df["value"].to_numpy()).all()
+    assert result.metadata["error_distribution"] == "laplace"
+
+
+def test_simulate_t_requires_ten_windows():
+    """t 拟合需 >=10 校准窗，不足显式失败。"""
+    from forecasting.simulation import simulate_frame
+
+    with pytest.raises(ValueError, match="10"):
+        simulate_frame(lambda: ModelFactory().create_model("naive"), _history(40), 3,
+                       "recursive", n_paths=10, error_distribution="t", n_windows=8)
+
+
+def test_simulate_parametric_seed_determinism():
+    """t/laplace 同 seed 两次路径完全一致。"""
+    from forecasting.simulation import simulate_frame
+
+    kw = dict(
+        model_builder=lambda: ModelFactory().create_model("naive"),
+        history=_random_history(60), horizon=3, forecast_strategy="recursive",
+        n_paths=15, n_windows=12, seed=9,
+    )
+    a = simulate_frame(error_distribution="t", **kw)
+    b = simulate_frame(error_distribution="t", **kw)
+    pd.testing.assert_frame_equal(a.paths_df, b.paths_df)
+    c = simulate_frame(error_distribution="laplace", **kw)
+    d = simulate_frame(error_distribution="laplace", **kw)
+    pd.testing.assert_frame_equal(c.paths_df, d.paths_df)

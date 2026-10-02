@@ -5,7 +5,7 @@ import pytest
 
 from config import AppConfig
 from data_provider.loading.loader import DataLoader
-from eda.analyzer import prepare_series
+from eda.input_view import prepare_series
 from pipeline.runner import ModelApp
 from pipeline.stages import run_forecast_stage, run_test_stage
 
@@ -94,7 +94,7 @@ def test_training_archive_preserves_target_transform_state(tmp_path):
     import json
     import pickle
     from pathlib import Path
-    from models.persistence import load_model
+    from artifacts.checkpoints import load_model
 
     cfg = AppConfig(model_name="naive", history_size=12, predict_horizon=3,
                     scale=True, detrend_method="linear", results_dir=str(tmp_path), do_eda=False)

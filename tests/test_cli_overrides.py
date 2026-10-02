@@ -6,7 +6,8 @@ from dataclasses import fields
 import pytest
 
 from config import AppConfig
-from run import _apply_overrides, _parse_model_params, parse_args
+from config.loader import cast_field_value
+from run import _apply_overrides, parse_args
 
 
 def _namespace(**overrides):
@@ -292,14 +293,25 @@ def test_parse_args_rejects_hyphenated_cli_names(monkeypatch):
         parse_args()
 
 
+def test_register_config_arguments_covers_all_app_config_fields():
+    # CLI 参数由 AppConfig 字段自动生成：任何已登记字段都必须有对应 CLI 参数
+    from run import _register_config_arguments
+
+    parser = argparse.ArgumentParser()
+    _register_config_arguments(parser)
+    registered = {action.dest for action in parser._actions}
+    missing = [f.name for f in fields(AppConfig) if f.name not in registered]
+    assert not missing, f"AppConfig fields missing CLI args: {missing}"
+
+
 def test_parse_model_params_invalid_json_message():
     with pytest.raises(ValueError, match="model_params must be valid JSON object text"):
-        _parse_model_params("{bad json")
+        cast_field_value("model_params", "{bad json")
 
 
 def test_parse_model_params_non_object_message():
     with pytest.raises(ValueError, match="model_params must be a JSON object"):
-        _parse_model_params(json.dumps([1, 2, 3]))
+        cast_field_value("model_params", json.dumps([1, 2, 3]))
 
 
 def test_cli_override_arima_decomposition_fields():
@@ -363,3 +375,23 @@ def test_cli_override_arima_decomposition_fields():
     assert updated.decomposition_model == "additive"
     assert updated.acf_max_lag == 48
     assert updated.seasonality_strength_threshold == 0.35
+
+
+@pytest.mark.parametrize("yaml_enabled", [False, True])
+def test_cli_sources_share_defaults_env_and_explicit_overrides(tmp_path, monkeypatch, yaml_enabled):
+    import run
+    monkeypatch.setattr(run, "_load_default_config", lambda *args: AppConfig(project_name="custom-default"))
+    monkeypatch.setenv("TSPROJ_HISTORY_SIZE", "17")
+    monkeypatch.setenv("TSPROJ_LAGS", "1,3")
+    argv = ["run.py", "--results_dir", str(tmp_path)]
+    if yaml_enabled:
+        path = tmp_path / "cfg.yaml"
+        path.write_text("history_size: 12\nlags: [2]\n")
+        argv += ["--config", str(path)]
+    monkeypatch.setattr(sys, "argv", argv)
+    cfg = parse_args()
+    assert cfg.history_size == 17
+    assert cfg.lags == [1, 3]
+    assert cfg.project_name == "custom-default"
+    monkeypatch.setattr(sys, "argv", argv + ["--history_size", "23"])
+    assert parse_args().history_size == 23

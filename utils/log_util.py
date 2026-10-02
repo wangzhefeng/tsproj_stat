@@ -49,9 +49,9 @@ class JsonFormatter(logging.Formatter):
             "msg": record.getMessage(),
         }
         if hasattr(record, "stage"):
-            payload["stage"] = record.stage
+            payload["stage"] = getattr(record, "stage")
         if hasattr(record, "duration_ms"):
-            payload["duration_ms"] = record.duration_ms
+            payload["duration_ms"] = getattr(record, "duration_ms")
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False)

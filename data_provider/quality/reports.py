@@ -1,5 +1,5 @@
 """规范化数据质量报告；操作计数与缺口统计分别命名。"""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -19,6 +19,10 @@ class DataQualityReport:
     inserted_timestamp_count: int = 0
     dropped_row_count: int = 0
     missing_timestamp_count: int = 0
+    missing_by_column: dict[str, int] = field(default_factory=dict)
+    raw_missing_by_column: dict[str, int] = field(default_factory=dict)
+    coercion_failed_by_column: dict[str, int] = field(default_factory=dict)
+    nonfinite_by_column: dict[str, int] = field(default_factory=dict)
 
     def __str__(self) -> str:
         """一行式摘要，供日志直接打印。"""
@@ -48,4 +52,8 @@ class DataQualityReport:
             "inserted_timestamp_count": self.inserted_timestamp_count,
             "dropped_row_count": self.dropped_row_count,
             "missing_timestamp_count": self.missing_timestamp_count,
+            "missing_by_column": self.missing_by_column,
+            "raw_missing_by_column": self.raw_missing_by_column,
+            "coercion_failed_by_column": self.coercion_failed_by_column,
+            "nonfinite_by_column": self.nonfinite_by_column,
         }

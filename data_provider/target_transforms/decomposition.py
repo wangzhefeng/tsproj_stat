@@ -11,6 +11,16 @@ def decompose(series: pd.Series, period: int, method: str, model: str) -> tuple[
     method 支持 stl（robust）与 seasonal_decompose（model=additive/multiplicative）；
     两端边界通过 interpolate 补齐，保证分量与输入等长。
     """
+    if method not in {"stl", "seasonal_decompose"}:
+        raise ValueError("decomposition method must be stl or seasonal_decompose")
+    if model not in {"additive", "multiplicative"}:
+        raise ValueError("decomposition model must be additive or multiplicative")
+    if method == "stl" and model != "additive":
+        raise ValueError("STL requires additive decomposition")
+    if isinstance(period, bool) or not isinstance(period, int) or period < 2:
+        raise ValueError("seasonal period must be an integer > 1")
+    if len(series) < period * 2:
+        raise ValueError("decomposition requires two complete seasonal cycles")
     values = series.reset_index(drop=True)
     if method == "stl":
         from statsmodels.tsa.seasonal import STL

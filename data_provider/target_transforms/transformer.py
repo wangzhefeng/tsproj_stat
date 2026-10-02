@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .seasonality import infer_seasonal_period
+from utils.seasonality import infer_seasonal_period
 from .denoising import remove_noise
 from .decomposition import decompose, decompose_mstl
 from .scaling import TargetScaler
@@ -59,6 +59,8 @@ class TargetTransformer:
             raise ValueError(f"decomposition_target must be one of {sorted(valid_targets)}")
         if decomposition_model not in valid_models:
             raise ValueError(f"decomposition_model must be one of {sorted(valid_models)}")
+        if decomposition_method == "stl" and decomposition_model != "additive":
+            raise ValueError("STL requires additive decomposition")
         if acf_max_lag <= 1:
             raise ValueError("acf_max_lag must be > 1")
         if not 0.0 <= seasonality_strength_threshold <= 1.0:
@@ -98,6 +100,7 @@ class TargetTransformer:
         self._intercept = 0.0
         self._last_trend = 0.0
         self._mode = "simple"
+        self.metadata: dict[str, str | int | None] = {}
 
     @property
     def enabled(self) -> bool:
@@ -113,6 +116,9 @@ class TargetTransformer:
         """拟合预处理参数并返回建模用序列。"""
         self._fitted = False
         self._seasonal_templates = []
+        self.metadata = {"requested_method": self.decomposition_method,
+                         "resolved_method": "simple", "resolved_period": None,
+                         "fallback_reason": None}
         values = pd.Series(series).astype(float).reset_index(drop=True)
         if values.empty or not np.isfinite(values.to_numpy()).all():
             raise ValueError("target transform requires finite non-empty history")
@@ -181,11 +187,17 @@ class TargetTransformer:
             seasonality_strength_threshold=self.seasonality_strength_threshold,
         )
         if period is None or period < 2 or len(series) < max(period * 2, period + 2):
+            if self.seasonal_period is not None:
+                raise ValueError("explicit decomposition requires two complete seasonal cycles")
+            self.metadata["fallback_reason"] = (
+                "seasonal_period_not_inferred" if period is None else "insufficient_history_for_inferred_period"
+            )
             return self._fit_simple_transform(series)
 
         trend, seasonal = decompose(series, period, self.decomposition_method, self.decomposition_model)
         self._mode = "decomposition"
         self._resolved_period = period
+        self.metadata.update(resolved_method=self.decomposition_method, resolved_period=period)
         self._trend_train = trend.reset_index(drop=True)
         self._seasonal_train = seasonal.reset_index(drop=True)
         self._last_trend = float(self._trend_train.iloc[-1]) if len(self._trend_train) else 0.0
@@ -207,6 +219,7 @@ class TargetTransformer:
         self._seasonal_templates = [components[-period:, i].copy() for i, period in enumerate(self.seasonal_periods)]
         self._mode = "decomposition"
         self._resolved_period = max(self.seasonal_periods)
+        self.metadata.update(resolved_method="mstl", resolved_period=self._resolved_period)
         self._seasonal_train = pd.Series(components.sum(axis=1))
         self._trend_train = trend
         self._last_trend = float(self._trend_train.iloc[-1])

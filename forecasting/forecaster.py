@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from models.factory import ModelFactory
+from features.model_inputs import FutureFeatures
 from forecasting.strategies import normalize_forecast_strategy, run_interval_inference, run_point_inference
 
 from utils.log_util import logger
@@ -81,6 +82,7 @@ class Forecaster:
         horizon: int,
         X_hist: pd.DataFrame | None = None,
         X_future: pd.DataFrame | None = None,
+        feature_context: FutureFeatures | None = None,
     ) -> pd.Series:
         """执行点预测并返回长度等于 horizon 的 yhat 序列。"""
         yhat = run_point_inference(
@@ -91,9 +93,11 @@ class Forecaster:
             X_hist=X_hist,
             X_future=X_future,
             use_update=self.use_update,
+            feature_context=feature_context,
         )
+        validated = _validate_forecast(yhat, horizon, self.model_name, allow_nan_fill=self.allow_nan_fill)
         self.last_nan_filled = int(yhat.isna().sum()) if self.allow_nan_fill else 0
-        return _validate_forecast(yhat, horizon, self.model_name, allow_nan_fill=self.allow_nan_fill)
+        return validated
 
     def forecast_with_intervals(
         self,
@@ -113,13 +117,14 @@ class Forecaster:
             X_future=X_future,
             alpha=alpha,
         )
+        raw_yhat = pd.Series(result["yhat"].values, name="yhat")
         yhat = _validate_forecast(
-            pd.Series(result["yhat"].values, name="yhat"),
+            raw_yhat,
             horizon,
             self.model_name,
             allow_nan_fill=self.allow_nan_fill,
         )
-        self.last_nan_filled = int(pd.Series(result["yhat"].values).isna().sum()) if self.allow_nan_fill else 0
+        self.last_nan_filled = int(raw_yhat.isna().sum()) if self.allow_nan_fill else 0
         result = result.copy()
         result["yhat"] = yhat.values
         return result.reset_index(drop=True)

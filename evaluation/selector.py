@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import pandas as pd
+import math
 
 from evaluation.backtest import rolling_backtest
+from evaluation.metrics import POINT_METRICS
+from evaluation.comparison import select_best_model
 from models.factory import ModelFactory
-from forecasting.strategies import normalize_forecast_strategy
+from features.model_inputs import ModelFeatureSpec
+from forecasting.strategies import normalize_forecast_strategy, normalize_window_mode
 from models.registry import MODEL_REGISTRY
 
 from utils.log_util import logger
@@ -14,7 +18,7 @@ from utils.log_util import logger
 class AutoSelector:
     """用小规模 rolling backtest 对候选模型排序，并返回最优模型名。
 
-    通过 n_windows 控制评估成本；除 r2 以外，当前按 metric 越小越优选择模型。
+    通过 n_windows 控制评估成本；指标方向与 bias 绝对值语义由注册表声明。
     """
 
     def __init__(
@@ -26,11 +30,12 @@ class AutoSelector:
         horizon: int = 7,
         model_params_map: dict[str, dict] | None = None,
         forecast_strategy: str = "direct",
+        window_mode: str = "expanding",
     ):
         """
         Args:
             candidates: 候选模型名；None 时取 registry 中全部 stable 模型。
-            metric: 选优指标（mae/rmse/mape/smape/mse/r2/bias/max_error）；r2 越大越好，其余越小越好。
+            metric: 注册表中的点指标；r2 最大、bias 绝对值最小，其余误差最小。
             n_windows: 最多评估的回测窗口数（控制选型成本）。
             initial_train_size: 选型回测的训练窗口长度。
             horizon: 选型回测的预测步长。
@@ -41,7 +46,7 @@ class AutoSelector:
             candidates = [name for name, spec in MODEL_REGISTRY.items() if spec.stability == "stable"]
         if not candidates:
             raise ValueError("candidates must not be empty")
-        if metric not in {"mae", "rmse", "mape", "smape", "mse", "r2", "bias", "max_error"}:
+        if metric not in POINT_METRICS:
             raise ValueError(f"metric must be a valid backtest metric, got: {metric!r}")
         if n_windows <= 0:
             raise ValueError("n_windows must be > 0")
@@ -52,6 +57,7 @@ class AutoSelector:
         self.horizon = horizon
         self.model_params_map = model_params_map or {}
         self.forecast_strategy = normalize_forecast_strategy(forecast_strategy)
+        self.window_mode = normalize_window_mode(window_mode)
         self._scores: dict[str, float] = {}
 
     def select(
@@ -62,6 +68,7 @@ class AutoSelector:
         time_col: str = "ds",
         processor_builder=None,
         future_exog_cols: list[str] | None = None,
+        feature_spec: ModelFeatureSpec | None = None,
     ) -> str:
         """评估全部候选模型，并返回有效得分最优的模型名。
 
@@ -77,7 +84,8 @@ class AutoSelector:
 
         # 计算窗口步长，使自动选择最多评估 n_windows 个窗口，避免 CLI 默认运行过慢。
         available = n - total_needed
-        step = max(1, available // self.n_windows)
+        step = (available + 1 if self.n_windows == 1 else
+                max(1, math.ceil(available / (self.n_windows - 1))))
 
         df = y.to_frame(name=target_col) if isinstance(y, pd.Series) else y.copy()
         if X_hist is not None:
@@ -92,7 +100,7 @@ class AutoSelector:
         for model_name in self.candidates:
             spec = MODEL_REGISTRY.get(model_name)
             if spec is not None and (
-                (future_exog_cols and not spec.supports_future_exog)
+                ((future_exog_cols or feature_spec is not None) and not spec.supports_future_exog)
                 or (features and not (spec.supports_multivariate or spec.supports_future_exog))
                 or (self.forecast_strategy == "native" and not spec.supports_native_multistep)
             ):
@@ -111,11 +119,13 @@ class AutoSelector:
                     horizon=self.horizon,
                     step=step,
                     forecast_strategy=self.forecast_strategy,
+                    window_mode=self.window_mode,
                     verbose=False,
                     # 选型需要对候选保持稳健：单个窗口失败不应拖垮整个候选评估；
                     # 失败窗口由 summary 的 survivor_bias/failed_windows 披露。
                     allow_failed_windows=True,
                     processor_builder=processor_builder,
+                    feature_spec=feature_spec,
                 )
                 score = result.summary.get(self.metric, float("inf"))
                 self._scores[model_name] = float(score)
@@ -127,11 +137,11 @@ class AutoSelector:
                 logger.warning(f"[AutoSelect] {model_name} failed: {exc}")
                 self._scores[model_name] = float("inf")
 
-        valid = {k: v for k, v in self._scores.items() if v < float("inf")}
+        valid = {k: v for k, v in self._scores.items() if math.isfinite(v)}
         if not valid:
             raise RuntimeError("AutoSelector: all candidate models failed evaluation")
 
-        best = max(valid, key=valid.__getitem__) if self.metric == "r2" else min(valid, key=valid.__getitem__)
+        best = select_best_model({name: {self.metric: score} for name, score in valid.items()}, self.metric)
         logger.info(
             f"[AutoSelect] selected: {best!r} ({self.metric}={valid[best]:.4f}) "
             f"from {list(valid.keys())}"
