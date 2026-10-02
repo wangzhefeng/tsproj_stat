@@ -18,9 +18,10 @@ set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"        # scripts/aidc_power_month
 ROOT="$(cd "$DIR/../.." && pwd)"            # 项目根
 
-# 子脚本统一使用 .venv/bin/python 直调；此处仅做存在性预检。
+# 子脚本统一使用 .venv/bin/python；缺少环境直接失败，不自动安装依赖。
 if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
-  echo "⚠️  未找到 $ROOT/.venv/bin/python —— 请先 `uv sync --extra dev`。" >&2
+  printf '未找到 %s/.venv/bin/python —— 请先执行 uv sync --extra dev。\n' "$ROOT" >&2
+  exit 1
 fi
 
 TS="$(date +%Y%m%d_%H%M%S)"
@@ -81,7 +82,7 @@ for route in "${ROUTES[@]}"; do
   echo "########## 路线 $route ##########"
   for s in "${SCRIPTS[@]}"; do
     idx=$((idx + 1))
-    script="$DIR/$route/$s.sh"
+    script="$DIR/route_${route}/$s.sh"
     log="$LOGDIR/${route}_${s}.log"
 
     if [[ ! -f "$script" ]]; then
@@ -107,7 +108,7 @@ for route in "${ROUTES[@]}"; do
 
     # 失败时即时回显日志尾部，方便定位
     if [[ "$status" != ok ]]; then
-      echo "      └─ 末尾日志（完整见 $log）："
+      echo "      └─ 末尾日志（完整见 ${log}）："
       tail -n 12 "$log" | sed 's/^/        /'
     fi
   done
@@ -124,5 +125,6 @@ echo " 汇总 CSV: $SUMMARY"
 echo " 日志目录: $LOGDIR/<路线>_<脚本>.log"
 echo "========================================================"
 
-(( fail_count == 0 )) || exit 1
+# 缺失任务同样意味着批次未完成，不能把全部跳过当成功。
+(( grand_total > 0 && fail_count == 0 && skip_count == 0 )) || exit 1
 exit 0

@@ -17,6 +17,7 @@
 - wind 合并脚本当前 `do_test=false`，不生成横向 comparison；需要比较须显式启用回测。
 - `arima_110/210`、`ets_trend`、`sarima_D0`、`theta_p1`、`ar_detrend_*` 等参数轴对照保留独立脚本，不并入同名模型的一套全局参数。
 - neuralprophet 当前未纳入合并脚本，原单模型脚本仍在；历史环境失败不代表所有后续环境都不可用，启用前重新验证后端及 fallback。
+- `run_all.sh` 串行访问 route_A/route_B 的指定配置；缺少解释器立即失败，子任务失败或缺失均使最终退出非零，其他任务仍按原有策略继续并汇总。
 
 ## EDA 与副作用
 

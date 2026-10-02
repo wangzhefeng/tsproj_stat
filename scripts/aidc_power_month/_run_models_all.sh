@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # 场景级多模型合并共用体：一次 run 完成 21 个基座模型对比（替代逐模型单 shell）。
-# 每模型超参见 --batch_models；neuralprophet 因环境损坏未纳入（原脚本保留）；
+# 每模型超参见 --batch_models；本清单未选择 neuralprophet，其独立入口保留。
 # 参数变体对照（arima_110/210、ets_trend、sarima_D0、theta_p1、ar_detrend_*）参数轴不同，保留独立脚本。
-# 数据加载/聚合/预处理/EDA 只做一次；各模型独立 experiment_path；对比表 results_{data_name}/results_test/comparison/model_comparison.csv。
+# 数据加载/聚合/预处理共用，EDA 关闭；各模型产物隔离。
+# 对比表：results/<data_name>/results_test/comparison/runs/<run_id>/model_comparison.csv。
 # 由 route_A/route_B/run_models_all.sh 设置 ROUTE 后 exec。
 set -euo pipefail
 : "${ROUTE:?ROUTE must be A or B}"
