@@ -31,4 +31,4 @@ uv sync --extra dev       # 环境同步
 
 ## 依赖锁定
 
-- StatsForecast 锁定 2.0.1、pandas 锁定 3.0.1；上游新版本声明 pandas<3，不直接升级。详见 [statsforecast-extension.md](statsforecast-extension.md)
+- StatsForecast 锁定 2.0.1、pandas 锁定 3.0.1；上游新版本声明 pandas<3，不直接升级。实际解析版本以项目 `uv.lock` 为准。

@@ -6,6 +6,8 @@
 
 启用频率聚合时，先生成派生输入及审计，再进入读取流程。EDA 独立消费显式准备好的有限、等频视图，不使用建模变换器状态。
 
+`DataLoader(data_frame=...)` 与 data_path 互斥；CSV/内存输入共用规范化，面板计算不读回审计 CSV。
+
 ## 职责分界
 
 | 位置 | 负责 | 不负责 |
@@ -13,7 +15,9 @@
 | `data_provider/loading/` | CSV、内存、demo 来源及加载编排 | 缺失修复、窗口切分 |
 | `data_provider/cleaning/normalization.py` | 字段检查、时间与数值规范化、排序 | 插值、补时间、删缺失行 |
 | `data_provider/cleaning/imputation.py` | 已切历史窗口内修复、实际操作审计 | 评估真值修复、全量预填充 |
-| `data_provider/quality/` | 修复前目标缺失率、时间缺口和质量报告 | 改写数据 |
+| `data_provider/quality/` | 有限值/规则时间门禁、逐列缺失及质量报告 | 改写数据 |
+| `data_provider/cleaning/seasonal.py` | 离线双向季节槽补缺 | 默认训练窗口修复 |
+| `data_provider/panel.py` | SeriesPanel：ID 转字符串，拒空及转换碰撞，切片隔离不承诺零拷贝 | 任务配置、并行调度、落盘 |
 | `data_provider/resampling/` | 通用内存聚合、文件缓存与审计 | AIDC 路由、AppConfig 解释 |
 | `data_provider/target_transforms/` | 目标去噪、趋势、分解、缩放及逆变换状态 | 表格接入、协变量构造 |
 | `pipeline/windows.py` | 历史窗口选择、未来外生时间对齐 | 数值修复算法 |
@@ -39,6 +43,8 @@
 | `DataLoader.split_history*` | `pipeline.windows.split_history*` |
 | `resolve_config_aggregation` | `pipeline.data_preparation.resolve_config_aggregation` |
 | `features.feature_scaling.FeatureScaler` | 目标用途由 `TargetTransformer(scale=True)` 接管 |
+| `cleaning.imputation.require_finite` | `quality.checks.require_finite` |
+| `pipeline.panel.SeriesPanel` | `data_provider.panel.SeriesPanel`（pipeline 仅导入消费） |
 
 ## 必须区分的行为变化
 
@@ -46,5 +52,6 @@
 - EDA 不再补轴/插值；聚合仍可能双向使用未来观测，不能把离线派生数据称为 as-of 安全。
 - `scale=true` 的预测、回测、模拟、拟合诊断恢复业务尺度；训练模型与变换器共同归档，归档不作为推理入口。
 - 历史特征构造保留 lag warmup；窗口层显式对齐，不用未来标签筛选历史。
+- 建模严格时间门禁、聚合 v2 缓存和分解显式失败契约分别见 [数据](data.md) 与 [预处理](preprocessing.md)。EDA 主分析输入已复用 quality 有限值/时间原语，专属最小样本门禁留在 EDA。
 
-实现与验收证据见 [重构记录](data-provider-refactor.md)；参数见 [数据](data.md)、[预处理](preprocessing.md)和[外生输入](exogenous.md)。
+参数见 [数据](data.md)、[预处理](preprocessing.md)和[外生输入](../pipeline/exogenous.md)；回归约定见 [tests](../tests/README.md)。

@@ -1,10 +1,11 @@
 # 监控闭环
 
 本地文件版监控，不依赖数据库或服务端组件。
+监控保持实验级累计，不加 `runs/`；v2 实验身份与输入内容指纹分离（见 [artifacts.md](../artifacts/artifacts.md)）。旧实验仍可按显式原路径回填。
 
 ## 预测日志
 
-`monitor_enabled=true` 时，forecast 阶段把每个未来步的 `yhat` 写入：
+`monitor_enabled=true` 时，forecast 阶段把每个未来步的 `yhat` 与目标时间戳 `target_ts` 写入：
 
 ```text
 results/{data_name}/monitor/{experiment_path}/predictions_log.csv
@@ -48,4 +49,8 @@ results/{data_name}/monitor/{experiment_path}/predictions_log.csv
 ```
 
 - 回填入口已收口到 `monitoring.monitor.run_monitor_actuals_backfill()`；`run.py` 只负责解析配置并调用统一入口
-- 面板入口不与监控回填混用（见 [exogenous.md](exogenous.md#面板多序列多模型)）
+- 回填批内、批间统一判重；重复或旧双键与新三键歧义重叠均 RAISE，拒绝前不追加任何行。时间键规范化比较（Z 后缀/空格书写差异不影响判重）。
+- 按记录匹配：双方 target_ts 非空须三键相同；一方为空才尝试双键。一个记录对应多个候选时 RAISE，不重复计权；新旧日志混用不丢失先前已匹配样本。
+- 当前为单写者本地 CSV 接口；判重与追加未加跨进程事务锁，不承诺并发回填安全。
+- 滚动点指标由 `evaluation.metrics.POINT_METRICS` 注册表派生（mae/rmse/mape/smape/mse/r2/bias/max_error），非有限值在快照表写空串
+- 面板入口不与监控回填混用（见 [exogenous.md](../pipeline/exogenous.md#面板多序列多模型)）
