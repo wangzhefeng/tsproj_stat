@@ -1,6 +1,6 @@
 # 运行与 CLI
 
-统一入口为 `run.py`，CLI 参数名与 `AppConfig` 字段一致（如 `--model_name`、`--predict_horizon`、`--do_eda`）。完整参数见 `config/default.py`。
+建模入口 `run.py`；独立 EDA 入口 `run_eda.py` 调用 `eda/runner.py`，读取 scripts 下的场景 YAML。两者复用 `AppConfig` 字段与配置加载器，完整参数见 `config/default.py`。
 
 ## 配置来源
 
@@ -27,8 +27,10 @@ CLI 参数按 AppConfig 字段自动注册（int/float 标量直转、`list[floa
 
 仅 EDA：
 
+BDS 默认全量；`--eda_bds_mode tail --eda_bds_max_samples 2000` 显式检验末段，`off` 关闭；full 配正数上限时超限明确标记不执行，不静默截取。详见 [EDA 契约](../eda/evidence.md)。
+
 ```bash
-.venv/bin/python run.py --do_eda true --do_train false --do_test false --do_forecast false
+.venv/bin/python run_eda.py --config scripts/aidc_power_month/route_A/eda/15min.yaml
 ```
 
 train 阶段拟合值诊断（模型须声明 `supports_fitted_values`；产物与数值契约见 [拟合值诊断](../models/fitted-values.md)）：
@@ -37,7 +39,7 @@ train 阶段拟合值诊断（模型须声明 `supports_fitted_values`；产物�
 .venv/bin/python run.py --model_name arima --train_fitted_values true --do_train true
 ```
 
-已接入数据项目优先用独立 EDA 脚本（见 [data.md](../data_provider/data.md#数据项目脚本)）。
+EDA 场景归属、路径规则和入口门禁见 [scenarios.md](../eda/scenarios.md)；原 run.py --do_eda 接口保留兼容，新增场景使用专用入口。
 
 预处理示例（去噪 + 去趋势）、ETS 调参、分解预处理组合等场景命令见 [preprocessing.md](../data_provider/preprocessing.md)；策略与区间命令见 [strategies.md](../forecasting/strategies.md)；多源输入命令见 [exogenous.md](../pipeline/exogenous.md)；监控回填命令见 [monitoring.md](../monitoring/monitoring.md)。
 

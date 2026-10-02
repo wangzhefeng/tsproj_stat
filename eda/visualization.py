@@ -6,9 +6,7 @@ from pathlib import Path
 import matplotlib
 import numpy as np
 import pandas as pd
-from scipy.signal import periodogram
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-from statsmodels.tsa.seasonal import STL
+from .diagnostics import DiagnosticResult
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -24,7 +22,7 @@ def _save(fig, path: Path) -> str:
     return str(path)
 
 
-def save_series_plots(series: pd.Series, plots_dir: Path, period: int, acf_nlags: int) -> dict[str, str]:
+def save_series_plots(series: pd.Series, plots_dir: Path, period: int, analysis: DiagnosticResult) -> dict[str, str]:
     """保存单序列 EDA 图，并返回结构化产物路径。"""
     plots_dir.mkdir(parents=True, exist_ok=True)
     out: dict[str, str] = {"eda_plots_dir": str(plots_dir)}
@@ -39,23 +37,29 @@ def save_series_plots(series: pd.Series, plots_dir: Path, period: int, acf_nlags
 
     fig, ax = plt.subplots(figsize=(8, 4))
     series.plot.hist(ax=ax, bins=30, density=True, alpha=0.6, label="Histogram")
-    series.plot.kde(ax=ax, label="KDE")
+    if series.nunique() > 1:
+        series.plot.kde(ax=ax, label="KDE")
+    else:
+        ax.text(0.05, 0.9, "Constant input: KDE undefined", transform=ax.transAxes)
     ax.set_title("Distribution")
     ax.legend()
     out["eda_distribution_plot_path"] = _save(fig, plots_dir / "distribution.png")
 
-    frequency, power = periodogram(series.values)
-    if len(frequency) > 1:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(1.0 / frequency[1:], power[1:])
-        ax.set_xlabel("Period")
-        ax.set_ylabel("Power")
-        ax.set_title("FFT Periodogram")
+    spectra = analysis.spectra
+    if not spectra.empty:
+        fig, axes = plt.subplots(3, 1, figsize=(10, 9))
+        for ax, view in zip(axes, ("raw", "linear_detrended", "difference")):
+            data = spectra[spectra.view == view]
+            ax.plot(data.period_points, data.power, label=view)
+            ax.set_xscale("log")
+            ax.set_xlabel("Period (samples)")
+            ax.set_ylabel("Power")
+            ax.set_title(f"Periodogram: {view}")
         out["eda_periodogram_plot_path"] = _save(fig, plots_dir / "periodogram.png")
 
-    if len(series) >= period * 2:
-        stl = STL(series, period=period, robust=True).fit()
-        for name, values in (("trend", stl.trend), ("seasonal", stl.seasonal), ("residual", stl.resid)):
+    if not analysis.components.empty:
+        for name in ("trend", "seasonal", "residual"):
+            values = pd.Series(analysis.components[name].to_numpy(), index=series.index)
             fig, ax = plt.subplots(figsize=(10, 4))
             values.plot(ax=ax, title=name.title())
             out[f"eda_{name}_plot_path"] = _save(fig, plots_dir / f"{name}.png")
@@ -73,11 +77,18 @@ def save_series_plots(series: pd.Series, plots_dir: Path, period: int, acf_nlags
         ax.set_title("Seasonal Subseries")
         out["eda_seasonal_subseries_plot_path"] = _save(fig, plots_dir / "seasonal_subseries.png")
 
-    fig = plt.figure(figsize=(12, 4))
-    ax1 = fig.add_subplot(1, 2, 1)
-    ax2 = fig.add_subplot(1, 2, 2)
-    plot_acf(series, ax=ax1, lags=min(acf_nlags, len(series) - 1))
-    plot_pacf(series, ax=ax2, lags=min(acf_nlags, len(series) // 2 - 1))
+    fig, axes = plt.subplots(3, 2, figsize=(12, 9))
+    for i, view in enumerate(("raw", "linear_detrended", "difference")):
+        data = analysis.correlations[analysis.correlations.view == view]
+        for j, name in enumerate(("acf", "pacf")):
+            ax = axes[i, j]
+            plotted = data.dropna(subset=[name])
+            ax.axhline(0, color="grey", linewidth=0.5)
+            ax.vlines(plotted.lag, 0, plotted[name])
+            ax.fill_between(plotted.lag, plotted[f"{name}_lower"] - plotted[name],
+                            plotted[f"{name}_upper"] - plotted[name], alpha=0.2)
+            ax.set_title(f"{view}: {name.upper()}")
+            ax.set_xlabel("Lag (samples)")
     out["eda_acf_pacf_plot_path"] = _save(fig, plots_dir / "acf_pacf.png")
     return out
 

@@ -17,7 +17,7 @@ from artifacts.writers import json_value
 DATA_FIELDS = set("data_path time_col target_col endog_cols exog_cols freq future_exog_path future_exog_time_col future_exog_cols exog_future_known aggregation_enabled aggregation_source_freq aggregation_method aggregation_fill_method aggregation_fill_weeks max_missing_ratio validate_freq".split())
 PROCESS_FIELDS = set("scale scaler_type denoise_enabled denoise_method denoise_window detrend_method seasonal_period seasonal_periods decomposition_method decomposition_target decomposition_model acf_max_lag seasonality_strength_threshold".split())
 MODEL_FIELDS = set("seed model_name model_params forecast_strategy ignore_unsupported_inputs history_size predict_horizon backtest_train_size backtest_initial_train_size backtest_horizon backtest_step backtest_window_mode backtest_refit_every backtest_allow_failed_windows feature_mode enable_datetime_features lags ets_tune_smoothing_params ets_smoothing_grid_level ets_smoothing_grid_trend ets_smoothing_grid_seasonal ets_validation_size return_intervals interval_alpha interval_method interval_levels conformal_n_windows forecast_allow_nan_fill train_fitted_values simulate_enabled simulate_n_paths simulate_error_distribution simulate_n_windows simulate_quantiles forecast_use_update".split())
-EDA_FIELDS = set("eda_period eda_nlags eda_run_preprocessed eda_recommendation_enabled eda_comparison_paths eda_comparison_labels eda_generate_report".split())
+EDA_FIELDS = set("eda_period eda_nlags eda_run_preprocessed eda_recommendation_enabled eda_comparison_paths eda_comparison_labels eda_generate_report eda_bds_mode eda_bds_max_samples eda_task_confirmed eda_window_size eda_window_step eda_local_outlier_window eda_acf_nlags".split())
 CONTROL_FIELDS = set("project_name series_id_col batch_models batch_allow_failed batch_resume_from model_names do_train do_test do_forecast do_eda eda_report_overwrite backtest_verbose backtest_progress_every backtest_n_jobs batch_n_jobs auto_select auto_select_candidates auto_select_metric auto_select_n_windows monitor_enabled monitor_window monitor_actuals_path monitor_actuals_experiment_path monitor_actuals_forecast_ts monitor_actuals_value_col monitor_actuals_snapshot monitor_actuals_run_id log_format results_dir results_data_name aggregation_output_path".split())
 
 
@@ -88,6 +88,8 @@ def build_identity(cfg: AppConfig, *, eda: bool = False,
     selected = DATA_FIELDS | (EDA_FIELDS if eda else MODEL_FIELDS | PROCESS_FIELDS)
     if eda:
         selected = selected | {"seed"}
+        if cfg.eda_task_confirmed:
+            selected = selected | {"history_size", "predict_horizon"}
         if cfg.eda_run_preprocessed:
             selected = selected | PROCESS_FIELDS | {"history_size", "feature_mode", "lags", "enable_datetime_features"}
     payload = {key: values[key] for key in sorted(selected)}

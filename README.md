@@ -1,6 +1,6 @@
 # 统计模型时间序列预测框架
 
-统一支持统计模型训练、滚动回测、预测与 EDA；以 `run.py` 为唯一建模 CLI 入口。
+支持统计模型训练、滚动回测、预测与 EDA；建模入口为 `run.py`，独立 EDA 入口为 `run_eda.py`。
 
 本页是项目主目录：概要在这里，具体说明统一放在 `docs/`，通过链接逐层阅读。
 
@@ -21,7 +21,7 @@
 | `evaluation` | [回测与指标](docs/evaluation/testing.md) | 窗口评估、评分、模型选优 |
 | `artifacts` | [产物协议](docs/artifacts/artifacts.md) | 身份、目录、序列化、归档、manifest |
 | `monitoring` | [监控闭环](docs/monitoring/monitoring.md) | 预测记录、实际回填、滚动指标 |
-| `eda` | [EDA](docs/eda/eda.md)、[报告指南](docs/eda/eda_report_guide.md) | 诊断、图表、建议及报告章节目录 |
+| `eda` | [EDA](docs/eda/eda.md)、[场景与入口](docs/eda/scenarios.md)、[报告指南](docs/eda/eda_report_guide.md) | 独立入口、诊断、图表、建议及报告 |
 | `utils` | [公共工具](docs/utils/README.md)、[运行环境](docs/utils/setup.md) | 日志、种子、缓存、演示数据、周期推断 |
 | `tests` | [验证约定](docs/tests/README.md) | 测试命令、覆盖边界与副作用 |
 

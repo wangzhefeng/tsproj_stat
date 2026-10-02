@@ -80,6 +80,14 @@ class AppConfig:
     eda_comparison_labels: list[str] = field(default_factory=list)
     eda_generate_report: bool = True
     eda_report_overwrite: bool = False
+    # BDS 默认保持全量；0 不设规模上限。tail 必须显式指定 >=10 的窗口。
+    eda_bds_mode: str = "full"
+    eda_bds_max_samples: int = 0
+    eda_task_confirmed: bool = False
+    eda_window_size: int = 0
+    eda_window_step: int = 0
+    eda_local_outlier_window: int = 0
+    eda_acf_nlags: int | None = None
     
     # 模型训练
     history_size: int = 90
@@ -233,6 +241,17 @@ class AppConfig:
         _ensure_positive(self.eda_period, "eda_period")
         _ensure_positive(self.eda_nlags, "eda_nlags")
         _ensure_positive(self.monitor_window, "monitor_window")
+        if (self.eda_window_size or self.eda_window_step) and not (
+                self.eda_window_size >= 10 and 1 <= self.eda_window_step <= self.eda_window_size):
+            raise ValueError("EDA rolling requires window >= 10 and 1 <= step <= window")
+        if self.eda_local_outlier_window != 0 and (
+                self.eda_local_outlier_window < 3 or self.eda_local_outlier_window % 2 == 0):
+            raise ValueError("EDA local outlier window must be zero or odd >= 3")
+        if self.eda_acf_nlags is not None and self.eda_acf_nlags < self.eda_nlags:
+            raise ValueError("eda_acf_nlags must be >= eda_nlags")
+        if (self.eda_bds_mode not in {"full", "tail", "off"} or self.eda_bds_max_samples < 0
+                or (self.eda_bds_mode == "tail" and self.eda_bds_max_samples < 10)):
+            raise ValueError("BDS requires full/tail/off, nonnegative limit, tail limit >= 10")
         normalize_forecast_strategy(self.forecast_strategy)
         normalize_window_mode(self.backtest_window_mode)
         validate_single_step_horizon(self.resolved_forecast_strategy(), self.predict_horizon)

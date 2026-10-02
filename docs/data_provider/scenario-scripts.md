@@ -1,13 +1,13 @@
 # 数据项目脚本组织
 
-数据集路径、日期、路由及任务表放 `scripts/<数据集>/`，脚本调用通用模块，不复制聚合算法或另建模型参数体系。
+数据集路径、日期、路由及任务表放 `scripts/<数据集>/`；EDA 参数集中于场景内 `eda/*.yaml`，复用 AppConfig，不复制算法或另建参数体系。
 
 ## AIDC 共用体
 
 - `scripts/aidc_power_month/prepare_data.py` 负责独立准备数据；聚合与审计规则见 [数据与聚合](data.md)。
-- `route_A/route_B` 脚本为薄包装，设置 `ROUTE=A|B` 后 exec 共用体，不各维护一份主流程。
+- `route_A/route_B` 的模型脚本设置 `ROUTE=A|B` 后 exec 共用体；EDA 入口直接调用根 run_eda.py，不经过额外 shell 共用层。
 - 单模型变体在 `scripts/aidc_power_month/variants/<name>.sh` 设置模型、超参、去趋势、回测日志选项，再调用 `_common.sh` 的 `run_single_model`。
-- `run_eda.sh` 与 `run_models_all.sh` 分别委托 `_run_eda.sh` 与 `_run_models_all.sh`；路径、派生文件及 results_data_name 由 ROUTE 推导。
+- EDA shell 选择场景 YAML 后调用根 `run_eda.py`，通用运行器是 `eda/runner.py`；`run_models_all.sh` 仍委托 `_run_models_all.sh`。
 - 新增变体只维护 `variants/` 中的差异参数，复用既有配置消费路径。
 
 ## 场景级多模型执行
@@ -21,7 +21,7 @@
 ## EDA 与副作用
 
 - 已接入数据用独立 `run_eda.sh` 执行 EDA；模型 shell 显式 `--do_eda false`，不携带其他 `--eda_*` 参数。
-- 场景脚本会写正式结果；删除聚合审计后再运行还会重建派生 CSV。验证前核对范围，文档检查不启动这些入口。
+- EDA 专用入口只读既有派生 CSV，不重建审计或聚合；模型/数据准备脚本仍可能重聚合。两类入口都会写结果，验证须隔离输出。
 - 模型数与脚本数以当前脚本和 registry 为准，不在协作入口维护快照数字。
 
 返回 [数据与聚合](data.md)；EDA 输出见 [EDA](../eda/eda.md)。

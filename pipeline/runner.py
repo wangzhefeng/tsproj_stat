@@ -271,6 +271,12 @@ class ModelApp:
                             c for c in [*(self.cfg.endog_cols or []), *(self.cfg.exog_cols or [])]
                             if c not in (self.cfg.time_col, self.cfg.target_col)
                         ] or None,
+                        bds_mode=self.cfg.eda_bds_mode,
+                        bds_max_samples=self.cfg.eda_bds_max_samples,
+                        acf_nlags=self.cfg.eda_acf_nlags,
+                        window_size=self.cfg.eda_window_size,
+                        window_step=self.cfg.eda_window_step,
+                        local_outlier_window=self.cfg.eda_local_outlier_window,
                     )
                     out.update({f"postprocessed_{key}": value for key, value in post_info.items()})
                 except Exception as exc:
@@ -609,7 +615,14 @@ class ModelApp:
             nlags=self.cfg.eda_nlags,
             recommendation_enabled=self.cfg.eda_recommendation_enabled,
             comparison_paths=self.cfg.eda_comparison_paths,
+            bds_mode=self.cfg.eda_bds_mode,
+            bds_max_samples=self.cfg.eda_bds_max_samples,
             comparison_labels=self.cfg.eda_comparison_labels,
+            acf_nlags=self.cfg.eda_acf_nlags,
+            window_size=self.cfg.eda_window_size,
+            window_step=self.cfg.eda_window_step,
+            local_outlier_window=self.cfg.eda_local_outlier_window,
+            source_path=self.cfg.data_path,
             current_label=self.artifacts.data_name,
             covariate_cols=covariate_cols,
         )

@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from .visualization import save_series_plots
+from .diagnostics import DiagnosticResult
 from artifacts.writers import write_json, dataframe_to_csv
 
 
@@ -17,8 +18,9 @@ def save_eda_outputs(
     recommendations: dict | None = None,
     recommendations_df: pd.DataFrame | None = None,
     period: int = 7,
-    acf_nlags: int = 24,
     save_plots: bool = True,
+    *,
+    analysis: DiagnosticResult,
 ) -> dict[str, str]:
     """保存 EDA 结构化结果和可选图表。
 
@@ -37,6 +39,13 @@ def save_eda_outputs(
         "eda_summary_path": str(summary_path),
         "eda_diagnostics_path": str(diagnostics_path),
     }
+    for name in ("components", "correlations", "spectra", "outliers", "monthly", "rolling", "rolling_periods", "events"):
+        path = out_dir / f"eda_{name}.csv"
+        dataframe_to_csv(path, getattr(analysis, name))
+        out[f"eda_{name}_path"] = str(path)
+    provenance_path = out_dir / "eda_source_provenance.json"
+    write_json(provenance_path, summary["source_provenance"])
+    out["eda_source_provenance_path"] = str(provenance_path)
 
     if recommendations is not None:
         recommendations_path = out_dir / "eda_recommendations.json"
@@ -49,6 +58,6 @@ def save_eda_outputs(
 
     if save_plots:
         plots_dir = out_dir / "plots"
-        out.update(save_series_plots(series, plots_dir, period=period, acf_nlags=acf_nlags))
+        out.update(save_series_plots(series, plots_dir, period=period, analysis=analysis))
 
     return out

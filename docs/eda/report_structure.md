@@ -1,6 +1,6 @@
 # EDA 报告结构与字段
 
-## 3. 八段结构
+## 3. 报告结构
 
 1. **标题** + **技术摘要**（6–8 条结论）
 2. **§1 数据口径与质量** — 频率、记录数、补齐点数、重复、缺失率 + 填充策略说明
@@ -10,6 +10,9 @@
 6. **§5 波动与异常** — ARCH/White/BP、BDS、异常点
 7. **§6 建模建议** — 来自 recommendations.json
 8. **§7 限制** / **§8 后续验证** / 数据来源页脚
+9. **§9 预测模型配置建议** — 默认给参数约束；eda_task_confirmed=true 才生成共用窗口的 YAML（待回测）
+10. **§10 对照证据、执行范围与耗时** — 三视图、周期半段验证、BDS 口径、失败/跳过与分项耗时
+11. **§11 数据来源与时段差异** — 来源核验、月度画像、滚动周期筛选与局部异常事件；详见 [场景契约](scenarios.md)
 
 ---
 
@@ -31,6 +34,11 @@
 | `summary.forecastability` | §2/§7 |
 | `recommendations.{seasonal_period,differencing,preprocessing,model_family}` | §6 |
 | `data_quality.*` / 审计 `{source_rows,output_rows,inserted_timestamp_count,duplicate_timestamp_count,time_range_*}` | §1 |
+| `summary.views/period_evidence/local_outliers/timings_seconds` | §10 |
+| `summary.stochasticity.{mode,status,n_samples,start,end,max_samples}` | §10 |
+| `eda_diagnostics.csv` 的 object/status/error | §10 未完成诊断 |
+
+`eda_components/correlations/spectra/outliers.csv` 供数值复核，字段与统计口径见 [证据契约](evidence.md)。
 
 ---
 

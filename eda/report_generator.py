@@ -16,10 +16,15 @@ from __future__ import annotations
 
 import json
 import math
+import csv
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from utils.log_util import logger
+from .evidence import period_label
+from .config_advice import model_config_section
+from .evidence_report import evidence_section
+from .scenario_report import scenario_section
 
 if TYPE_CHECKING:
     from config.default import AppConfig
@@ -137,7 +142,7 @@ def _plot_ref(output_dir: Path, name: str, alt: str) -> str:
 
 def _confidence_zh(conf: Any) -> str:
     c = str(conf).lower() if conf is not None else ""
-    return {"high": "置信度高", "medium": "置信度中", "low": "置信度低"}.get(c, "")
+    return {"high": "规则评级高", "medium": "规则评级中", "low": "规则评级低"}.get(c, "证据不足")
 
 
 def _stationarity_by_name(summary: dict | None) -> dict[str, dict]:
@@ -184,7 +189,7 @@ def _arch_vs_white(arch_p: Any, white_p: Any, bp_p: Any) -> str:
     b = _as_float(bp_p)
     fixed = (w is not None and w < 0.05) or (b is not None and b < 0.05)
     if fixed:
-        return "存在异方差，其中部分可由时间趋势解释"
+        return "差分序列与线性趋势 OLS 残差均提示异方差；不能据此认定时间趋势解释了波动"
     return "更接近随时间聚集的波动（条件异方差），而非由某个简单解释变量驱动的固定形式异方差"
 
 
@@ -203,7 +208,7 @@ def _harmonic_note(acf_peak: Any, configured_period: Any) -> str:
         return ""
     k = peak / period
     if abs(k - round(k)) < 1e-6 and round(k) > 1:
-        return f"该滞后恰为 {int(round(k))} 个整周期，更可能是周季节性的倍频/谐波，而非独立周期"
+        return f"该滞后恰为 {int(round(k))} 个配置周期，可能是其倍周期，而非独立周期"
     return ""
 
 
@@ -265,6 +270,11 @@ def _load_inputs(
     summary = _read_json(output_dir / "eda_summary.json")
     recommendations = _read_json(output_dir / "eda_recommendations.json")
     data_quality = _read_json(output_dir / "data_quality.json")
+    diagnostic_path = output_dir / "eda_diagnostics.csv"
+    diagnostics = []
+    if diagnostic_path.is_file():
+        with diagnostic_path.open(encoding="utf-8", newline="") as stream:
+            diagnostics = list(csv.DictReader(stream))
 
     audit: dict | None = None
     if aggregation_result is not None:
@@ -298,7 +308,7 @@ def _load_inputs(
     name = data_name or _sget(data_quality, "target_col") or "时间序列"
     return {
         "data_name": name,
-        "freq": cfg_get("freq"),
+        "freq": cfg_get("freq") or _sget(summary, "freq"),
         "time_col": cfg_get("time_col"),
         "target_col": cfg_get("target_col"),
         "summary": summary,
@@ -306,6 +316,7 @@ def _load_inputs(
         "data_quality": data_quality,
         "aggregation": aggregation,
         "n_samples": n_samples,
+        "diagnostics": diagnostics,
     }
 
 
@@ -337,10 +348,10 @@ def _exec_summary(ctx: dict) -> list[str]:
     ss = _as_float(_sget(s, "decomposition", "seasonal_strength"))
     period = _sget(s, "decomposition", "period")
     if ts is not None:
-        dominate = "由显著上升趋势主导" if ts >= 0.6 else "趋势成分明显" if ts >= 0.35 else "趋势成分较弱"
+        dominate = "由趋势成分主导" if ts >= 0.6 else "趋势成分明显" if ts >= 0.35 else "趋势成分较弱"
         head = f"- 序列{dominate}，趋势强度 **{_fmt_num(ts, 3)}**；"
         if ss is not None and period is not None:
-            head += f"以配置周期 {int(period)} 的季节强度仅为 **{_fmt_num(ss, 3)}**，季节性较弱。"
+            head += f"配置周期 {period_label(period, ctx.get('freq'))} 的季节强度为 **{_fmt_num(ss, 3)}**；强度不是预测准确率。"
         bullets.append(head)
 
     d = _sget(rec, "differencing", "recommended_d")
@@ -348,9 +359,8 @@ def _exec_summary(ctx: dict) -> list[str]:
     stat = _stationarity_by_name(s)
     if stat:
         bullets.append(
-            "- 平稳性检验（ADF/PP/KPSS）一致指向"
-            + ("非平稳" if d else "近似平稳")
-            + f"，建议普通差分 `d={d}`、季节差分 `D={big_d}`。"
+            "- 平稳性检验逐项判读见 §4；"
+            + (f"普通差分候选 `d={d}`，季节差分候选 `D={big_d}`。" if d is not None else "证据不足，不能确定差分阶数。")
         )
 
     lb_p = _as_float(_sget(s, "white_noise", "ljung_box_pvalue"))
@@ -363,19 +373,19 @@ def _exec_summary(ctx: dict) -> list[str]:
     arch_p = _as_float(_sget(s, "heteroskedasticity", "arch_lm_pvalue"))
     if arch_p is not None:
         bullets.append(
-            "- ARCH-LM 检验" + ("显著，残差波动可能具有条件异方差（波动聚集）。" if arch_p < 0.05 else "不显著，未提示明显条件异方差。")
+            "- 一阶差分序列的 ARCH-LM 检验" + ("显著，可能存在波动聚集；尚非预测模型残差。" if arch_p < 0.05 else "不显著，未提示明显条件异方差。")
         )
 
     rec_period = _sget(rec, "seasonal_period", "recommended_period")
     fft = _sget(s, "cycle", "dominant_period_fft")
     if rec_period is not None or _is_fft_artifact(fft, ctx.get("n_samples")):
-        part = f"自动周期建议给出 {int(rec_period)} 天候选（置信度低）。" if rec_period is not None else ""
+        part = f"自动周期建议给出 {period_label(rec_period, ctx.get('freq'))} 候选（待回测）。" if rec_period is not None else ""
         fft_part = "FFT 主周期接近样本长度，主要反映趋势或有限样本边界，不应直接解释为业务周期。" if _is_fft_artifact(fft, ctx.get("n_samples")) else ""
         bullets.append("- " + " ".join(p for p in (part, fft_part) if p))
 
     n_iqr = _sget(s, "outliers", "n_outliers_iqr")
     if n_iqr is not None:
-        bullets.append(f"- 仅检测到 **{_fmt_int(n_iqr)}** 个异常点（异常率约 **{_fmt_pct(_sget(s, 'outliers', 'outlier_rate_iqr'), 2)}**），不支持大范围异常值替换。")
+        bullets.append(f"- 全局 IQR 标记 **{_fmt_int(n_iqr)}** 个离群点（约 **{_fmt_pct(_sget(s, 'outliers', 'outlier_rate_iqr'), 2)}**）；不等于全部局部异常，不自动替换。")
 
     cands = _sget(rec, "model_family", "candidates") or []
     if cands:
@@ -400,7 +410,7 @@ def build_section_1(ctx: dict) -> list[str]:
     if target_freq:
         add("建模频率", (_freq_zh(target_freq) or target_freq) + "频")
     if agg and agg.get("method_zh"):
-        add("日值定义", f"当日{agg['method_zh']}")
+        add("聚合值定义", f"每个目标频率区间的{agg['method_zh']}")
     tr_start = (agg.get("time_range_start") if agg else None) or _sget(dq, "time_range_start")
     tr_end = (agg.get("time_range_end") if agg else None) or _sget(dq, "time_range_end")
     if tr_start and tr_end:
@@ -434,7 +444,7 @@ def build_section_1(ctx: dict) -> list[str]:
             "",
         ]
     elif agg is None:
-        lines += ["本数据未启用频率聚合（直接以建模频率输入）。", ""]
+        lines += ["本次未启用频率聚合或补值；不代表上游从未聚合或修复。", ""]
     return lines
 
 
@@ -460,7 +470,7 @@ def build_section_2(ctx: dict, output_dir: Path) -> list[str]:
     ts = _as_float(_sget(s, "decomposition", "trend_strength"))
     rstd = _sget(s, "decomposition", "residual_std")
     if ts is not None:
-        lines.append(f"STL 分解的趋势强度为 **{_fmt_num(ts, 3)}**，绝大部分可解释变化来自长期水平变化。")
+        lines.append(f"STL 分解的趋势强度为 **{_fmt_num(ts, 3)}**；该指标不包含趋势方向，也不保证未来趋势延续。")
     if _as_float(rstd) is not None:
         mean_v = _as_float(_sget(s, "mean")) or 0.0
         pct = (rstd / mean_v * 100) if mean_v else None
@@ -498,26 +508,26 @@ def build_section_3(ctx: dict, output_dir: Path) -> list[str]:
     d_ch = _sget(s, "seasonal_diff", "D_ch")
     d_ocsb = _sget(s, "seasonal_diff", "D_ocsb")
     if d_ch is not None or d_ocsb is not None:
-        lines.append(f"CH 与 OCSB 季节差分检验分别建议 `D={_fmt_int(d_ch)}` / `{_fmt_int(d_ocsb)}`，当前不支持直接进行季节差分。")
+        lines.append(f"CH 与 OCSB 季节差分检验分别建议 `D={_fmt_int(d_ch)}` / `{_fmt_int(d_ocsb)}`；缺失或失败项不参与建议。")
     lines.append("")
     ref = _plot_ref(output_dir, "seasonal", "季节分量")
     if ref:
         lines += [ref, ""]
     ref = _plot_ref(output_dir, "seasonal_subseries", "季节子序列")
     if ref:
-        lines += [ref, "季节子序列图按周期内槽位分组展示取值分布；槽位间箱体高度差异大，说明该周期下的季节结构稳定且可用。", ""]
+        lines += [ref, "槽位分布仅用于观察；长期趋势可能扩大箱体范围，不能凭此图确认季节稳定性。", ""]
     acf_peaks = _sget(s, "cycle", "acf_peak_lags") or []
     rec_period = _sget(rec, "seasonal_period", "recommended_period")
     conf = _sget(rec, "seasonal_period", "confidence")
     fft = _sget(s, "cycle", "dominant_period_fft")
     parts = []
     if acf_peaks:
-        parts.append(f"ACF 峰值检测识别到 {', '.join(str(int(p)) for p in acf_peaks)} 天滞后")
+        parts.append(f"原序列 ACF 峰值滞后：{', '.join(period_label(p, ctx.get('freq')) for p in acf_peaks)}")
         harm = _harmonic_note(acf_peaks[0], period)
         if harm:
             parts.append(harm)
     if rec_period is not None:
-        parts.append(f"自动建议将 {int(rec_period)} 作为低置信度候选周期（{_confidence_zh(conf)}）")
+        parts.append(f"自动建议周期 {period_label(rec_period, ctx.get('freq'))}（{_confidence_zh(conf)}；非统计置信概率）")
     if parts:
         lines.append("；".join(parts) + "。")
     if _is_fft_artifact(fft, ctx.get("n_samples")):
@@ -529,7 +539,7 @@ def build_section_3(ctx: dict, output_dir: Path) -> list[str]:
             for p, v in sorted(ms["seasonal_strengths"].items(), key=lambda kv: int(kv[0]))
         ]
         lines.append("MSTL 多周期分解：" + "；".join(parts_ms) + "；强度显著的周期都可作为建模候选，而非只保留单一周期。")
-    lines.append("上述周期候选都需要在去趋势或一阶差分后的序列上重新验证，并通过样本外回测确认。")
+    lines.append("去趋势后的分段周期筛选见 §10；即使通过筛选，也需要模型滚动回测确认。")
     lines.append("")
     ref = _plot_ref(output_dir, "periodogram", "周期图")
     if ref:
@@ -556,7 +566,7 @@ def build_section_4(ctx: dict, output_dir: Path) -> list[str]:
         lines += ["| 检验 | 统计量 | p 值 | 解释 |", "| --- | ---: | ---: | --- |", *rows, ""]
     d = _sget(rec, "differencing", "recommended_d")
     big_d = _sget(rec, "differencing", "recommended_D")
-    lines.append(f"综合三个检验方向，普通差分建议 `d={d}`、季节差分 `D={big_d}`（{_confidence_zh(_sget(rec, 'differencing', 'confidence'))}）。")
+    lines.append(f"普通差分候选 d={d if d is not None else '证据不足'}、季节差分候选 D={big_d if big_d is not None else '证据不足'}（{_confidence_zh(_sget(rec, 'differencing', 'confidence'))}）；差分后复检见 §10。")
     acf1 = (_sget(s, "acf_head") or [None, None])
     pacf1 = (_sget(s, "pacf_head") or [None, None])
     acf1 = acf1[1] if len(acf1) > 1 else None
@@ -564,7 +574,7 @@ def build_section_4(ctx: dict, output_dir: Path) -> list[str]:
     if _as_float(acf1) is not None or _as_float(pacf1) is not None:
         lines.append(
             f"原序列一阶自相关系数约 **{_fmt_num(acf1, 3)}**，PACF 在滞后 1 处约 **{_fmt_num(pacf1, 3)}**，"
-            "随后明显下降，符合需要差分或 AR(1) 主导的结构。"
+            "原序列相关性可能由趋势抬高，不能直接据此确定 AR/MA 阶数。"
         )
     lines.append("")
     ref = _plot_ref(output_dir, "acf_pacf", "ACF 与 PACF")
@@ -589,6 +599,7 @@ def build_section_5(ctx: dict, output_dir: Path) -> list[str]:
     lines = [
         "## 5. 波动与异常",
         "",
+        "检验对象：ARCH-LM 使用一阶差分；White/BP 使用时间趋势 OLS 残差；BDS 使用原序列（范围见下文）。均不等于已训练预测模型的残差。",
         f"ARCH-LM 统计量为 {_fmt_num(_sget(s, 'heteroskedasticity', 'arch_lm_stat'))}，p 值 {_fmt_pvalue(arch_p)}；"
         f"White p={_fmt_pvalue(white_p)}、Breusch-Pagan p={_fmt_pvalue(bp_p)}。"
         + _arch_vs_white(arch_p, white_p, bp_p) + "。",
@@ -636,7 +647,7 @@ def build_section_6(ctx: dict) -> list[str]:
     steps.append(f"**差分**：`d={d}`、`D={big_d}`；AR/MA 阶数参考差分后 ACF/PACF，由滚动回测选择。")
     steps.append(f"**预处理**：`detrend_method={detrend}`、`decomposition_method={decomp}`、`denoise_method={denoise}`（默认保持轻量）。")
     if rec_period is not None:
-        steps.append(f"**季节性**：把配置周期与 {int(rec_period)} 候选都作为实验变量，当前证据不支持直接季节差分。")
+        steps.append(f"**季节性**：把配置周期与 {int(rec_period)} 点候选作为实验变量；D 仅适用于接受 CH/OCSB 检验的配置周期。")
     steps.append("**波动**：若业务关心预测区间或峰值风险，可在均值模型残差仍存 ARCH 效应时叠加 ARCH/GARCH；不以 GARCH 替代负荷均值预测。")
     steps.append("**异常值**：默认 `denoise_method=none`，仅在核验异常日期后针对性处理。")
     cov_useful = _sget(rec, "covariates", "useful") or []
@@ -670,7 +681,7 @@ def build_section_7(ctx: dict) -> list[str]:
     agg = ctx.get("aggregation")
     n = ctx.get("n_samples")
     lines = ["## 7. 限制与稳健性边界", ""]
-    lines.append(f"- 样本约 {_fmt_int(n)} 个观测，覆盖时长有限，尚不足以验证年度季节性或多个完整业务周期。")
+    lines.append(f"- 样本约 {_fmt_int(n)} 个观测；本报告不自动证明年度季节性，业务周期需足够覆盖并分窗验证。")
     if agg and agg.get("source_freq"):
         lines.append(
             f"- 本序列由 {_freq_zh(agg['source_freq']) or agg['source_freq']} 聚合为建模频率，"
@@ -760,6 +771,9 @@ def generate_eda_report(
         build_section_6(ctx),
         build_section_7(ctx),
         build_section_8(ctx),
+        model_config_section(ctx.get("summary") or {}, ctx.get("recommendations") or {}, cfg),
+        evidence_section(ctx.get("summary") or {}, ctx.get("diagnostics") or [], ctx.get("freq")),
+        scenario_section(ctx.get("summary") or {}, out, ctx.get("freq")),
         build_footer(ctx),
     ]
     body = "\n\n".join("\n".join(b).rstrip() for b in blocks if b)

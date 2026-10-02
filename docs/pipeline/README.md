@@ -1,6 +1,6 @@
 # pipeline：运行编排
 
-统一入口 `run.py` 解析配置后调用 `ModelApp`；pipeline 组织流程，不实现模型算法、通用聚合算法或产物序列化。
+建模入口 `run.py` 调用 `ModelApp`；独立 EDA 入口 `run_eda.py` 经 `eda/runner.py` 校验后复用 ModelApp 的 EDA-only 分支。pipeline 不实现统计/聚合算法或产物序列化。
 
 ## 模块职责
 

@@ -7,16 +7,16 @@
 | 主题 | 规则 |
 | --- | --- |
 | 平稳性方向 | ADF/PP 原假设=单位根：`p>0.05`→不能拒绝(非平稳)；KPSS 原假设=平稳（**反向**）：`p<0.05`→拒绝平稳(非平稳)。`ok=False`/NaN→检验失败 |
-| ARCH vs White/BP | arch<0.05 且 white/bp≥0.05 → 波动聚集（条件异方差），非固定异方差；arch<0.05 且 white/bp<0.05 → 部分可由时间趋势解释；arch≥0.05 → 未检测到 |
+| ARCH vs White/BP | 前者检验一阶差分，后者检验线性时间趋势残差；显著不证明波动由趋势解释，也不等于预测模型残差存在同样结构 |
 | FFT 伪周期 | `abs(fft−n)≤1` 或 `fft/n>0.9` → 主周期≈样本长度，是趋势/边界伪周期，非业务周期 |
-| 谐波 | `acf_peak % 配置周期==0 且 >周期` → 更可能是周季节性的倍频/谐波（如 35=5×7） |
+| 谐波 | 整数倍配置周期只是倍周期候选；周期以点和实际时长显示，不能统一写“天” |
 | Ljung-Box | `p<0.05` → 拒绝白噪声，含可利用依赖，残差须复检 |
 | BDS | 任一 dim `p<0.05` → 不符合 iid，可能含线性外结构；但 BDS 不能证明具体非线性机制，须对残差复检 |
 | forecastability | 谱熵相对评分（[0,1]），仅作复杂度辅助信号，**非可达预测准确率** |
 | 异常点处置 | `max(rate)<0.03` → 异常率低，不默认全局去噪，先定位日期核对；否则核对后考虑去噪 |
-| 置信度 | high/medium/low → 高/中/低 |
+| 置信度 | high/medium/low 是启发式规则评级，不是统计置信概率 |
 
-**复用项（已在 `eda/recommendations.py` 应用阈值，不要重算）**：`recommended_period`（seasonal_strength≥0.25 取配置周期，否则 ACF 峰值，否则 FFT≥2）、`recommended_d`（ADF/PP/KPSS 多数票）、`recommended_D`（max(D_ch,D_ocsb)）、`preprocessing`（trend≥0.35 线性去趋势；seasonal≥0.35 季节分解；outlier_rate≥0.03 moving_median）、`model_family`（theta 需 forecastability≥0.2）。
+**复用项**：`eda/recommendations.py` 负责候选规则；周期须通过分段验证、差分需有效检验证据，失败的 D 为 null，不回退为 0。具体口径见 [证据契约](evidence.md)，报告不重算阈值。
 
 ---
 
@@ -25,17 +25,17 @@
 - **克制**：不下绝对结论；低置信项要标注；周期/模型选择一律建议**样本外/rolling 回测**验证。
 - **不主张因果**：ARCH/BDS/相关性是统计结构，不是因果。
 - **引用图**：用相对路径 `plots/*.png`，仅引用确实存在的图。
-- **forecastability ≠ 准确率**；ARCH/BDS 在原始水平序列上的显著性必须在**残差**上复检。
+- **forecastability ≠ 准确率**；ARCH/BDS 的 EDA 显著性必须在**模型残差**上复检。
 - 领域名词（如“负荷”）由人/Agent 补，生成器只用 `data_name`/`target_col`/`aggregation_method` 字面值。
 
 ---
 
 ## 7. 陷阱
 
-- 标题与“日值定义”为字面值（如 `# A_Loads_1day EDA 报告`、`当日最大值`），不含领域名词——需精修。
+- 标题和聚合值定义不自动推断业务单位；槽位箱线图不能单独证明稳定季节性。
 - `data_quality.json` 仅在 **EDA-only** 运行时落 in eda_dir；模型运行时在 `train_results_dir`，§1 质量行会降级。
 - 生成时 `run_summary.json` 尚不存在（它在 EDA 之后才写），不能作为生成输入。
-- FFT/谐波 caveat 见 §5；ARCH 在水平序列显著 ≠ 在残差显著。
+- §9 的窗口长度和小阶数是初始候选，不是 EDA 求出的最优值；业务预测长度必须另行确认。
 
 ---
 

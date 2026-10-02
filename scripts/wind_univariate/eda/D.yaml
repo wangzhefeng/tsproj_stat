@@ -1,0 +1,24 @@
+# 常规日频 EDA；业务预测任务未确认。
+time_col: "DATE"
+target_col: "WIND"
+aggregation_enabled: false
+model_name: "naive"
+do_eda: true
+do_train: false
+do_test: false
+do_forecast: false
+eda_run_preprocessed: false
+eda_recommendation_enabled: true
+eda_generate_report: true
+eda_task_confirmed: false
+eda_bds_mode: "off"
+eda_bds_max_samples: 0
+results_dir: "results"
+data_path: "dataset/wind/wind_dataset.csv"
+freq: "D"
+eda_period: 7
+eda_nlags: 24
+eda_acf_nlags: 28
+eda_window_size: 28
+eda_window_step: 7
+eda_local_outlier_window: 15

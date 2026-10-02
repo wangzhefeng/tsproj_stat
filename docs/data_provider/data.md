@@ -46,10 +46,11 @@ CSV、内存帧与 demo 共用 `cleaning/normalization.py` 和 `quality/`：只�
 | --- | --- |
 | `scripts/aidc_power_month/prepare_data.py` | A/B 共享数据准备入口：5min → 15min/小时/日均值，复用通用算法；日期与路径等场景配置仅在此维护 |
 | `scripts/wind_univariate/run_eda.sh` + 22 个模型脚本 | wind 单变量全模型入口 |
-| `scripts/aidc_power_month/route_A\|route_B/run_eda.sh` + 各 29 个日频脚本 | AIDC 两路：从只读 5min 原始聚合生成/复用 `derived/` 日频 CSV；新运行结果落 `results/aidc_power_month/route_A\|route_B/`（`--results_data_name`）；不保证历史结果预先存在 |
+| `scripts/aidc_power_month/route_A\|route_B/run_eda.sh` | 选择场景 `eda/*.yaml`，调用根 run_eda.py；默认日频，只读派生 CSV；可用 --config 切换粒度 |
+| AIDC 各路日频模型脚本 | 从 5min 原始聚合生成/复用派生 CSV；模型结果仍落对应 route 子树 |
 | `scripts/aidc_power_month/run_all.sh` | A/B 各 16 个基准配置串行批跑；日志落项目根 `logs/aidc_power_month/run_all_<时间戳>/` |
 
-注意：删除审计 JSON 后重跑会触发重聚合并覆盖派生文件；有人工调整的派生数据重跑前先备份。
+注意：数据准备/启用聚合的模型入口会在审计缺失时重聚合覆盖；独立 EDA 不会，只披露来源未验证。
 
 独立准备：`.venv/bin/python scripts/aidc_power_month/prepare_data.py`。可用 `--data-dir`、`--output-dir`、`--date-range` 覆盖输入目录、输出目录与文件日期标识；默认输出仍为原数据目录下 `derived/`。支持绝对脚本路径从其他工作目录调用；MC/Hermes 加 `env -u PYTHONPATH` 前缀。
 

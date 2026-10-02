@@ -131,18 +131,8 @@ def build_experiment_path(cfg: AppConfig, *, source: dict | None = None) -> Path
 
 def build_eda_path(cfg: AppConfig, *, source: dict | None = None) -> Path:
     """构建只依赖数据准备与 EDA 参数的相对路径。"""
-    aggregation = cfg.aggregation_method if cfg.aggregation_enabled else "none"
-    fill_method = cfg.aggregation_fill_method if cfg.aggregation_enabled else "none"
-    return Path(
-        f"freq-{path_token(cfg.freq)}",
-        f"period-{cfg.eda_period}_nlags-{cfg.eda_nlags}",
-        (
-            f"recommend-{'on' if cfg.eda_recommendation_enabled else 'off'}"
-            f"_preprocessed-{'on' if cfg.eda_run_preprocessed else 'off'}"
-        ),
-        f"aggregation-{path_token(aggregation)}_fill-{path_token(fill_method)}",
-        build_identity(cfg, eda=True, source=source).token,
-    )
+    identity = build_identity(cfg, eda=True, source=source)
+    return Path(_bounded(f"{path_token(cfg.freq)}_{identity.token}"))
 
 
 def plan_run_artifacts(cfg: AppConfig, run_id: str, *, source: dict | None = None) -> RunArtifacts:

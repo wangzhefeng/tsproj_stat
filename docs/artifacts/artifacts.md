@@ -18,7 +18,7 @@
 - 实验身份来自规范化有效配置、数据源标识和协议版本；完整 SHA-256 存 `identity.json`，路径使用短摘要并核对完整身份，碰撞失败。
 - 输入内容指纹记录在每次 manifest，不参与稳定监控身份；数据追加不切断监控历史。内存指纹包括列/dtype/索引/值及 pandas 版本。
 - 模型：`results/{data_name}/{checkpoints|results_train|results_test|results_forecast}/{experiment_path}/runs/{run_id}/`。
-- EDA：`results/{data_name}/results_eda/{eda_path}/runs/{run_id}/`，不含模型名；预处理 EDA 纳入对应变换配置。
+- EDA：`results/{data_name}/results_eda/{freq}_{identity}/runs/{run_id}/`，不含模型名；可读参数层压缩为一层，完整配置仍在 identity.json，预处理 EDA 纳入变换配置。
 - 比较表：`results/{data_name}/results_test/comparison/runs/{run_id}/model_comparison.csv`。
 - `monitor/custom_monitor` 不加运行子目录，按实验累计，记录 run_id；其可变日志不纳入文件校验清单。
 - 顶层执行生成 run_id，同一次多模型执行共用该 ID；面板 batch manifest 通过子任务结果关联各 child run_id。

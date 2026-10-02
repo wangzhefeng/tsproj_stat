@@ -43,3 +43,17 @@ def test_path_components_are_bounded(tmp_path):
     paths = prepare_run_artifacts(cfg)
     assert paths.forecast_results_dir.is_dir()
     assert all(len(part.encode()) <= 180 for part in paths.experiment_path.parts)
+
+
+def test_short_eda_path_preserves_identity_and_run_isolation(tmp_path):
+    cfg = AppConfig(results_dir=str(tmp_path), freq="15min", do_eda=True,
+                    do_train=False, do_test=False, do_forecast=False)
+    first = prepare_run_artifacts(cfg, "first")
+    assert len(first.eda_path.parts) == 1
+    assert first.eda_path.name.startswith("15min_identity-v2-")
+    assert (first.eda_dir.parent.parent / "identity.json").is_file()
+    second = prepare_run_artifacts(cfg, "second")
+    assert first.eda_dir != second.eda_dir and first.eda_path == second.eda_path
+    limited = replace(cfg, eda_bds_max_samples=1000)
+    assert build_eda_path(limited) != first.eda_path
+    assert build_experiment_path(limited) == build_experiment_path(cfg)

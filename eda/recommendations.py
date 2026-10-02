@@ -28,13 +28,16 @@ def build_recommendations(summary: dict[str, Any], diagnostics: pd.DataFrame, pe
     trend_strength = _as_float(decomposition.get("trend_strength"))
     dominant_period = _as_float(cycle.get("dominant_period_fft"))
     acf_peaks = [int(v) for v in cycle.get("acf_peak_lags", []) if _is_number(v)]
-    recommended_period = _choose_period(period, seasonal_strength, dominant_period, acf_peaks)
+    stable_periods = [item["period"] for item in summary.get("period_evidence", []) if item.get("stable")]
+    recommended_period = period if period in stable_periods else min(stable_periods, default=None)
     multi_seasonal = summary.get("multi_seasonal") or {}
     multi_strengths = (
         (multi_seasonal.get("seasonal_strengths") or {}) if multi_seasonal.get("ok") else {}
     )
 
     d = _recommend_regular_diff(stationarity)
+    diff_tests = (summary.get("views", {}).get("difference", {}).get("stationarity", []))
+    diff_validated = _recommend_regular_diff(diff_tests) == 0 if diff_tests else False
     D = _recommend_seasonal_diff(seasonal_diff)
     arch_pvalue = _as_float(heteroskedasticity.get("arch_lm_pvalue"))
     outlier_rate = max(
@@ -56,7 +59,7 @@ def build_recommendations(summary: dict[str, Any], diagnostics: pd.DataFrame, pe
     families = ["naive"]
     if recommended_period is not None:
         families.append("seasonal_naive")
-    if d > 0 or D > 0 or trend_strength >= 0.2:
+    if (d or 0) > 0 or (D or 0) > 0 or trend_strength >= 0.2:
         families.append("arima")
     if recommended_period is not None and seasonal_strength >= 0.25:
         families.append("sarima")
@@ -76,12 +79,14 @@ def build_recommendations(summary: dict[str, Any], diagnostics: pd.DataFrame, pe
                 "dominant_period_fft": dominant_period if _is_number(dominant_period) else None,
                 "acf_peak_lags": acf_peaks,
                 "multi_seasonal_strengths": multi_strengths,
+                "period_validation": summary.get("period_evidence", []),
             },
         },
         "differencing": {
             "recommended_d": d,
             "recommended_D": D,
-            "confidence": _confidence(0.7 if d or D else 0.4),
+            "confidence": "medium" if d is not None and D is not None else "low",
+            "difference_validated": diff_validated,
             "reason": "stationarity tests and CH/OCSB seasonal differencing signals",
         },
         "preprocessing": preprocessing,
@@ -177,27 +182,23 @@ def recommendations_to_frame(recommendations: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _choose_period(period: int, seasonal_strength: float, dominant_period: float, acf_peaks: list[int]) -> int | None:
-    if seasonal_strength >= 0.25:
-        return int(period)
-    if acf_peaks:
-        return int(acf_peaks[0])
-    if _is_number(dominant_period) and dominant_period >= 2:
-        return int(round(dominant_period))
-    return None
-
-
-def _recommend_regular_diff(stationarity: list[dict[str, Any]]) -> int:
-    pvalues = {item.get("name"): _as_float(item.get("pvalue")) for item in stationarity}
+def _recommend_regular_diff(stationarity: list[dict[str, Any]]) -> int | None:
+    pvalues = {item.get("name"): _as_float(item.get("pvalue")) for item in stationarity
+               if item.get("ok") and _is_number(item.get("pvalue"))}
+    if len(pvalues) < 2:
+        return None
     adf_nonstationary = _is_number(pvalues.get("adf")) and pvalues["adf"] > 0.05
     pp_nonstationary = _is_number(pvalues.get("pp")) and pvalues["pp"] > 0.05
     kpss_nonstationary = _is_number(pvalues.get("kpss")) and pvalues["kpss"] < 0.05
-    return 1 if sum([adf_nonstationary, pp_nonstationary, kpss_nonstationary]) >= 2 else 0
+    votes = sum([adf_nonstationary, pp_nonstationary, kpss_nonstationary])
+    if votes >= 2:
+        return 1
+    return 0 if len(pvalues) - votes >= 2 else None
 
 
-def _recommend_seasonal_diff(seasonal_diff: dict[str, Any]) -> int:
+def _recommend_seasonal_diff(seasonal_diff: dict[str, Any]) -> int | None:
     values = [int(v) for v in (seasonal_diff.get("D_ch"), seasonal_diff.get("D_ocsb")) if isinstance(v, int) and v >= 0]
-    return max(values) if values else 0
+    return max(values) if values else None
 
 
 def _confidence(score: float) -> str:

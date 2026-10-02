@@ -13,14 +13,14 @@
 | `plots/*.png` | output_dir/plots | 各段图引用（存在才引用） |
 
 ### 调用方式
-- **自动**：`scripts/**/run_eda.sh` → `ModelApp.eda` 在 `run_eda` 后调用生成器（默认 `eda_generate_report=true`）。
+- **自动**：根 `run_eda.py` → `eda/runner.py` 读取 scripts 场景 YAML → 复用 `ModelApp.eda` 执行分析后生成报告；shell 只负责选择配置（默认 `eda_generate_report=true`）。
 - **手动**：`from eda.report_generator import generate_eda_report`。
 
 签名：
 ```python
 generate_eda_report(output_dir, *, cfg=None, aggregation_result=None, data_name=None, force=False) -> str | None
 ```
-- `cfg` / `aggregation_result` 仅取少量标签字段（`getattr` 防御式读取，保持 `eda` 包与 config 解耦）。
+- `cfg` 提供标签与 §9 候选示例上下文；不修改配置。模型参数示例由 `eda/config_advice.py` 生成；`evidence_report.py` 渲染 §10，不重算诊断。
 - `eda_summary.json` 缺失 → 告警返回 `None`（不生成）。
 
 ### 覆盖策略（marker 保护）
@@ -35,12 +35,13 @@ generate_eda_report(output_dir, *, cfg=None, aggregation_result=None, data_name=
 | `eda_summary.json` | 中止，返回 None |
 | `eda_recommendations.json` | §6 渲染兜底文案，跳过候选列表 |
 | `data_quality.json` | §1 缺失率行显示「—」，其余口径行用审计兜底 |
-| `aggregation_result`/审计 | §1 省略聚合行，注明“未启用频率聚合” |
+| `aggregation_result`/审计 | §1 省略聚合行，注明本次未聚合，不推断上游修复历史 |
 | `periodogram.png`(频域单点) / `trend,seasonal,residual.png`(len<period×2) | 省略图引用（仍叙述数值） |
 | `seasonal_subseries.png`(len<period×2) | 省略图引用与槽位叙述 |
 | `summary.multi_seasonal`（候选周期 <2） | §3 省略多周期叙述 |
 | `summary.covariates`（未配置 endog/exog） | §6 省略协变量建议步 |
 | 检验失败/NaN | 叙述“检验失败/样本不足”，不发数值结论 |
+| cfg 缺失/建议关闭/任务未确认 | §9 不生成 YAML；确认任务但样本不足时同样不生成，不擅自缩小窗口 |
 
 ---
 

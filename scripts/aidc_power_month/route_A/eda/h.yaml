@@ -1,0 +1,25 @@
+# 常规只读 EDA；完整 BDS 用 CLI 显式开启。预测任务尚未确认。
+time_col: "time"
+target_col: "value"
+aggregation_enabled: false
+model_name: "naive"
+do_eda: true
+do_train: false
+do_test: false
+do_forecast: false
+eda_run_preprocessed: false
+eda_recommendation_enabled: true
+eda_generate_report: true
+eda_task_confirmed: false
+eda_bds_mode: "off"
+eda_bds_max_samples: 0
+results_dir: "results"
+data_path: "dataset/aidc_power_month/derived/A_Loads_1hour_mean_20251001_20260728.csv"
+freq: "h"
+eda_period: 24
+eda_nlags: 48
+eda_acf_nlags: 168
+eda_window_size: 672
+eda_window_step: 168
+eda_local_outlier_window: 169
+results_data_name: "aidc_power_month/route_A"
