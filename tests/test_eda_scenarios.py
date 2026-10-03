@@ -101,18 +101,24 @@ def test_scenario_configs_and_script_override(tmp_path):
     from config.loader import load_config
     root = Path(__file__).resolve().parents[1]
     scenarios = sorted((root/"scripts").glob("**/eda/*.yaml"))
-    assert len(scenarios) == 7
+    assert root/"scripts/ett_small/ETTm1/eda/15min.yaml" in scenarios
+    assert root/"scripts/wind/eda/D.yaml" in scenarios
     for path in scenarios:
         cfg = load_config(path)
         assert cfg.is_eda_only() and not cfg.aggregation_enabled
-        assert cfg.eda_bds_mode == "off" and not cfg.eda_task_confirmed
+        assert cfg.eda_bds_mode == "off"
+    wind = load_config(root/"scripts/wind/eda/D.yaml")
+    assert wind.eda_task_confirmed and wind.history_size == 365 and wind.predict_horizon == 7
+    ett = load_config(root/"scripts/ett_small/ETTm1/eda/15min.yaml")
+    assert ett.freq == "15min" and ett.target_col == "OT"
+    assert ett.exog_cols == ["HUFL", "HULL", "MUFL", "MULL", "LUFL", "LULL"]
     cfg = load_config(root/"scripts/aidc_power_month/route_A/eda/15min.yaml")
     assert cfg.freq == "15min" and cfg.eda_period == 96 and cfg.eda_acf_nlags == 672
     frame = pd.DataFrame({"t": pd.date_range("2024-01-01", periods=60, freq="h"), "y": np.arange(60.) + np.sin(np.arange(60.))})
     source = tmp_path/"override.csv"
     frame.to_csv(source, index=False)
     env = {k:v for k,v in os.environ.items() if k != "PYTHONPATH" and not k.startswith("TSPROJ_")}
-    completed = subprocess.run(["bash", str(root/"scripts/aidc_power_month/route_A/run_eda.sh"),
+    completed = subprocess.run(["bash", str(root/"scripts/aidc_power_month/route_A/eda/run_eda.sh"),
         "--config", str(root/"scripts/aidc_power_month/route_A/eda/15min.yaml"), "--data_path", str(source),
         "--time_col", "t", "--target_col", "y", "--freq", "h", "--eda_period", "12",
         "--eda_nlags", "12", "--eda_acf_nlags", "24", "--eda_window_size", "24", "--eda_window_step", "12",

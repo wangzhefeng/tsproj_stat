@@ -3,7 +3,7 @@
 ## 场景配置
 
 - 主入口 `run_eda.py` → 通用运行器 `eda/runner.py` → 场景 YAML → 既有 EDA-only 分析/报告/manifest；不调用 run.py。
-- 配置位于 `scripts/aidc_power_month/route_A|route_B/eda/{15min,h,D}.yaml` 与 `scripts/wind_univariate/eda/D.yaml`；复用 AppConfig，不新增参数体系。
+- 配置位于 `scripts/aidc_power_month/route_A|route_B/eda/{15min,h,D}.yaml`、`scripts/wind/eda/D.yaml`、`scripts/ett_small/ETTm1/eda/15min.yaml`；同目录 run_eda.sh 为入口，复用 AppConfig。
 - 相对配置/数据/结果路径始终以项目根为基准；shell 仅选择默认配置并透传 CLI，新入口要求显式 --config。
 - 运行 `.venv/bin/python run_eda.py --config scripts/aidc_power_month/route_A/eda/15min.yaml`；通用运行器复用 ModelApp 的 EDA-only 分支，不执行模型阶段。
 - 专用入口拒绝训练/回测/预测、自动选模、面板、监控、模拟和聚合；原 run.py 的兼容接口不在本次删除范围。

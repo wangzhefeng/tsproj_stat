@@ -20,9 +20,9 @@ def _executable(path: Path, text: str) -> None:
 @pytest.mark.parametrize("route", ["A", "B"])
 def test_eda_route_is_self_contained_and_preserves_arguments(tmp_path, route):
     project = tmp_path / "project with spaces"
-    entry = project / "scripts/aidc_power_month" / f"route_{route}" / "run_eda.sh"
+    entry = project / "scripts/aidc_power_month" / f"route_{route}" / "eda/run_eda.sh"
     entry.parent.mkdir(parents=True)
-    shutil.copy2(SOURCE / f"route_{route}" / "run_eda.sh", entry)
+    shutil.copy2(SOURCE / f"route_{route}" / "eda/run_eda.sh", entry)
     _executable(project / ".venv/bin/python", '#!/usr/bin/env bash\nprintf "%s\\n" "$PWD" "$LOG_NAME" "$@"\nexit 23\n')
     args = ["--config", "a configuration with spaces.yaml", "--eda_bds_mode", "off"]
     result = subprocess.run(["bash", str(entry), *args], cwd=tmp_path,
@@ -46,11 +46,11 @@ def test_batch_routes_summary_and_exit_status(tmp_path, mode):
     trap = project / "uv-invoked"
     _executable(project / "bin/uv", '#!/usr/bin/env bash\nprintf invoked > "$UV_TRAP"\nexit 7\n')
     for route in ("A", "B"):
-        for original in (SOURCE / f"route_{route}").glob("run_*.sh"):
+        for original in (SOURCE / f"route_{route}" / "univariate").glob("run_*.sh"):
             if mode == "missing_all" or (mode == "missing_one" and route == "A" and original.name == "run_naive.sh"):
                 continue
             fail = mode == "failed_one" and route == "A" and original.name == "run_naive.sh"
-            _executable(scene / f"route_{route}" / original.name,
+            _executable(scene / f"route_{route}" / "univariate" / original.name,
                         f'#!/usr/bin/env bash\nprintf "executed {route}/{original.stem}\\n"\nexit {7 if fail else 0}\n')
     result = subprocess.run(["bash", str(entry)], cwd=tmp_path, capture_output=True, text=True,
                             env={**os.environ, "PATH": str(project / "bin") + os.pathsep + os.environ["PATH"],

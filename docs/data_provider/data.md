@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | wind | `wind/wind_dataset.csv` | 单变量风电，`DATE` 时间列、`WIND` 目标列 |
 | AIDC 负荷 | `aidc_power_month/` | A/B 两路 5min 原始 + `derived/` 派生 + `plots/` |
-| 公开基准 | `ETT-small/`、`weather/`、`electricity/` | 直接用 CLI 运行，无专项脚本 |
+| 公开基准 | `ETT-small/`、`weather/`、`electricity/` | ETTm1 有专项脚本，其余可用 CLI |
 
 数据读取统一走 `data_provider/loading/loader.py`；无数据源时加载 demo（`utils/demo_data.py`）。职责及旧接口迁移见 [data-architecture.md](data-architecture.md)。
 
@@ -45,9 +45,12 @@ CSV、内存帧与 demo 共用 `cleaning/normalization.py` 和 `quality/`：只�
 | 脚本 | 用途 |
 | --- | --- |
 | `scripts/aidc_power_month/prepare_data.py` | A/B 共享数据准备入口：5min → 15min/小时/日均值，复用通用算法；日期与路径等场景配置仅在此维护 |
-| `scripts/wind_univariate/run_eda.sh` + 22 个模型脚本 | wind 单变量全模型入口 |
-| `scripts/aidc_power_month/route_A\|route_B/run_eda.sh` | 选择场景 `eda/*.yaml`，调用根 run_eda.py；默认日频，只读派生 CSV；可用 --config 切换粒度 |
-| AIDC 各路日频模型脚本 | 从 5min 原始聚合生成/复用派生 CSV；模型结果仍落对应 route 子树 |
+| `scripts/wind/eda/run_eda.sh` | wind 数据集独立 EDA，默认配置为同目录 D.yaml |
+| `scripts/wind/univariate/` 26 个模型脚本 | wind 单变量入口；批量对比在 `scripts/wind/run_models_all.sh`（neuralprophet 保留单脚本但不入批量） |
+| `scripts/wind/multivariate/` 3 个模型脚本 + run_models_all.sh | wind 多变量入口：WIND + RAIN/T.MAX/T.MIN/T.MIN.G 内生面板（var/bayesian_var/linear_var），缺失窗口内线性插值并逐列入审计，评估只看 WIND |
+| `scripts/ett_small/ETTm1/` | eda + univariate + multivariate；OT 目标，多变量另读 6 列内生协变量；单变量批量入口在场景根 |
+| `scripts/aidc_power_month/route_A\|route_B/eda/run_eda.sh` | 选择同目录 `*.yaml`，调用根 run_eda.py；默认日频，只读派生 CSV；可用 --config 切换粒度 |
+| AIDC 各路 `univariate/` 日频模型脚本 | 从 5min 原始聚合生成/复用派生 CSV；模型结果仍落对应 route 子树；批量入口留 route 根 |
 | `scripts/aidc_power_month/run_all.sh` | A/B 各 16 个基准配置串行批跑；日志落项目根 `logs/aidc_power_month/run_all_<时间戳>/` |
 
 注意：数据准备/启用聚合的模型入口会在审计缺失时重聚合覆盖；独立 EDA 不会，只披露来源未验证。

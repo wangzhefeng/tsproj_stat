@@ -16,9 +16,10 @@
 ## 需要本地数据的场景
 
 ```bash
-bash scripts/wind_univariate/run_eda.sh
-bash scripts/aidc_power_month/route_A/run_eda.sh
-bash scripts/aidc_power_month/route_B/run_eda.sh
+bash scripts/wind/eda/run_eda.sh
+bash scripts/aidc_power_month/route_A/eda/run_eda.sh
+bash scripts/aidc_power_month/route_B/eda/run_eda.sh
+bash scripts/ett_small/ETTm1/eda/run_eda.sh
 ```
 
 - 先检查业务数据和聚合审计；这类脚本写正式结果，还可能重建派生输入，不为文档检查而运行。

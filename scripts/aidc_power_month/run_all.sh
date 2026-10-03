@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # 串行运行 AIDC 两路全部 32 个基准回测配置（A/B 各 16 个）。
-# 每个 run_*.sh 自带 `set -euo pipefail` 与 `cd ../../..`，本脚本只负责：
+# 每个 univariate/run_*.sh 经共用体定位项目根，本脚本只负责：
 #   调度顺序 / 日志分流 / 失败隔离 / 计时与汇总。
 #
 # 注意：orchestrator 级别故意【不开 set -e】，这样单个模型失败不会中断整批。
@@ -82,7 +82,7 @@ for route in "${ROUTES[@]}"; do
   echo "########## 路线 $route ##########"
   for s in "${SCRIPTS[@]}"; do
     idx=$((idx + 1))
-    script="$DIR/route_${route}/$s.sh"
+    script="$DIR/route_${route}/univariate/$s.sh"
     log="$LOGDIR/${route}_${s}.log"
 
     if [[ ! -f "$script" ]]; then

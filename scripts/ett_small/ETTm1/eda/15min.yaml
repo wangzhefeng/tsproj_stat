@@ -1,0 +1,27 @@
+# ETT-small ETTm1 15min 常规只读 EDA；业务预测任务未确认。
+time_col: "date"
+target_col: "OT"
+exog_cols: ["HUFL", "HULL", "MUFL", "MULL", "LUFL", "LULL"]
+aggregation_enabled: false
+model_name: "naive"
+do_eda: true
+do_train: false
+do_test: false
+do_forecast: false
+eda_run_preprocessed: false
+eda_recommendation_enabled: true
+eda_generate_report: true
+eda_task_confirmed: false
+eda_bds_mode: "off"
+eda_bds_max_samples: 0
+results_dir: "results"
+data_path: "dataset/ETT-small/ETTm1.csv"
+freq: "15min"
+eda_period: 96
+# Granger 检验已改自实现（eda/covariates.py，峰值内存 O(n·maxlag)），192 滞后（2 天）可用；ACF 独立覆盖 672（7 天）。
+eda_nlags: 192
+eda_acf_nlags: 672
+eda_window_size: 2688
+eda_window_step: 672
+eda_local_outlier_window: 673
+results_data_name: "ett_small/ETTm1"
