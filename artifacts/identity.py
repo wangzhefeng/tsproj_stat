@@ -21,6 +21,14 @@ EDA_FIELDS = set("eda_period eda_nlags eda_run_preprocessed eda_recommendation_e
 CONTROL_FIELDS = set("project_name series_id_col batch_models batch_allow_failed batch_resume_from model_names do_train do_test do_forecast do_eda eda_report_overwrite backtest_verbose backtest_progress_every backtest_n_jobs batch_n_jobs auto_select auto_select_candidates auto_select_metric auto_select_n_windows monitor_enabled monitor_window monitor_actuals_path monitor_actuals_experiment_path monitor_actuals_forecast_ts monitor_actuals_value_col monitor_actuals_snapshot monitor_actuals_run_id log_format results_dir results_data_name aggregation_output_path".split())
 
 
+MODEL_FIELDS.add("backtest_missing_target_policy")
+DATA_FIELDS.add("require_aggregation_audit")
+DATA_FIELDS.add("future_exog_issue_time_col")
+SELECTION_FIELDS = set("auto_select auto_select_candidates auto_select_metric auto_select_n_windows auto_select_holdout_size".split())
+MODEL_FIELDS.update(SELECTION_FIELDS)
+CONTROL_FIELDS.difference_update(SELECTION_FIELDS)
+
+
 def check_field_classification() -> None:
     groups = (DATA_FIELDS, PROCESS_FIELDS, MODEL_FIELDS, EDA_FIELDS, CONTROL_FIELDS)
     classified = set().union(*groups)

@@ -14,11 +14,13 @@ import numpy as np
 import pandas as pd
 
 from data_provider.cleaning.imputation import RepairAudit, repair_history_frame
+from data_provider.availability import FutureExogSource
 from data_provider.quality.checks import require_finite
 from data_provider.target_transforms.transformer import TargetTransformer
 from models.contracts.inputs import combine_history_frame
 from forecasting.strategies import run_interval_inference, run_point_inference
 from features.model_inputs import ModelFeatureSpec, FutureFeatures
+from forecasting.tuning import resolve_origin_builder
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,7 @@ def forecast_at_origin(
     """
     if native_intervals and feature_spec is not None:
         raise ValueError("native intervals do not support derived features")
+    model_builder = resolve_origin_builder(model_builder, y, processor_builder)
     prepared = prepare_origin_inputs(y, X_hist, processor_builder, feature_spec, history_time, future_time)
     proc = prepared.processor
     if X_future is not None:
@@ -135,6 +138,8 @@ def rolling_error_pool(
     first_origin: int,
     feature_spec: ModelFeatureSpec | None = None,
     history_time: pd.Series | None = None,
+    exog_future_known: bool = False,
+    future_source: FutureExogSource | None = None,
 ) -> np.ndarray:
     """滚动起点校准：返回带符号误差池 (n_windows, horizon)。
 
@@ -144,7 +149,17 @@ def rolling_error_pool(
     """
     scores: list[np.ndarray] = []
     for origin in range(first_origin, len(y), horizon):
-        future = x.iloc[origin:origin + horizon][future_columns].reset_index(drop=True) if future_columns else None
+        future = None
+        if future_columns:
+            if future_source is not None:
+                if history_time is None:
+                    raise ValueError("as-of calibration requires history timestamps")
+                future = future_source.at(pd.Timestamp(history_time.iloc[origin - 1]),
+                    pd.DatetimeIndex(history_time.iloc[origin:origin + horizon]))
+            elif exog_future_known:
+                future = x.iloc[origin:origin + horizon][future_columns].reset_index(drop=True)
+            else:
+                raise ValueError("calibration requires known future values or an as-of source")
         pred = forecast_at_origin(
             model_builder, y.iloc[:origin],
             h=horizon, strategy=strategy,

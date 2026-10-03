@@ -47,16 +47,17 @@ class AppConfig:
     freq: str = "D"
     future_exog_path: str | None = None
     future_exog_time_col: str | None = None
+    future_exog_issue_time_col: str | None = None
     future_exog_cols: list[str] = field(default_factory=list)
-    # 外生变量未来可知性声明（T16）：True=日历类等已知未来（回测可用真实未来值）；
-    # False=天气类等需预报外生——回测的真实未来值评估为 perfect foresight，主线暂不支持，显式 RAISE
-    exog_future_known: bool = True
+    # 默认未知；确定性已知值须显式 true，需预报变量必须有 issue-time 版本档案。
+    exog_future_known: bool = False
     aggregation_enabled: bool = False
     aggregation_source_freq: str | None = None
     aggregation_method: str = "mean"
     aggregation_fill_method: str = "none"
     aggregation_fill_weeks: int = 4
     aggregation_output_path: str | None = None
+    require_aggregation_audit: bool = False
     
     # 模型参数
     model_name: str = "arima"
@@ -108,6 +109,8 @@ class AppConfig:
     backtest_refit_every: int = 1
     # 失败窗口容忍开关：默认 False（任一窗口失败即 RAISE）；显式开启才跳过并打标 survivor_bias
     backtest_allow_failed_windows: bool = False
+    # 缺失评估真值永不修复；exclude 显式仅在观测点计分并披露数量。
+    backtest_missing_target_policy: str = "raise"
     
     # 特征工程
     feature_mode: str = "analysis_snapshot"
@@ -141,6 +144,8 @@ class AppConfig:
     auto_select_candidates: list[str] = field(default_factory=list)
     auto_select_metric: str = "mae"
     auto_select_n_windows: int = 5
+    # 独立尾段测试点数；None = max(backtest_horizon, ceil(总行数 * 0.2))。
+    auto_select_holdout_size: int | None = None
 
     # 数据质量：在清洗后检查缺失比例和时间间隔规则性。
     max_missing_ratio: float = 0.3
@@ -254,11 +259,19 @@ class AppConfig:
             raise ValueError("BDS requires full/tail/off, nonnegative limit, tail limit >= 10")
         normalize_forecast_strategy(self.forecast_strategy)
         normalize_window_mode(self.backtest_window_mode)
+        if self.backtest_missing_target_policy not in {"raise", "exclude"}:
+            raise ValueError("backtest_missing_target_policy must be raise or exclude")
+        if self.auto_select_holdout_size is not None and self.auto_select_holdout_size < self.backtest_horizon:
+            raise ValueError("auto_select_holdout_size must cover at least one backtest horizon")
         validate_single_step_horizon(self.resolved_forecast_strategy(), self.predict_horizon)
         validate_single_step_horizon(self.resolved_forecast_strategy(), self.backtest_horizon)
 
         if self.target_col in self.endog_cols:
             raise ValueError("endog_cols must not include target_col")
+        if self.target_col in self.exog_cols or self.target_col in self.future_exog_cols:
+            raise ValueError("exog_cols/future_exog_cols must not include target_col")
+        if self.future_exog_cols and not self.exog_future_known and not self.future_exog_issue_time_col:
+            raise ValueError("future inputs require exog_future_known=true or future_exog_issue_time_col (as-of forecasts)")
         # batch_models 双语义：series_id_col 非空 = 面板批量；为空 = 单表多模型参数源
         # （与 model_names 组合，每模型独立超参，供场景级合并脚本使用）。
         if not isinstance(self.batch_models, dict) or any(not isinstance(v, dict) for v in self.batch_models.values()):
@@ -364,8 +377,8 @@ class AppConfig:
             raise ValueError("aggregation_enabled requires aggregation_source_freq")
         if self.aggregation_method not in {"mean", "max", "min", "sum", "median"}:
             raise ValueError("aggregation_method must be one of {'mean', 'max', 'min', 'sum', 'median'}")
-        if self.aggregation_fill_method not in {"none", "linear", "seasonal_slot"}:
-            raise ValueError("aggregation_fill_method must be one of {'none', 'linear', 'seasonal_slot'}")
+        if self.aggregation_fill_method not in {"none", "linear", "seasonal_slot", "preserve"}:
+            raise ValueError("aggregation_fill_method must be none, linear, seasonal_slot or preserve")
         _ensure_positive(self.aggregation_fill_weeks, "aggregation_fill_weeks")
         if self.eda_comparison_labels and len(self.eda_comparison_labels) != len(self.eda_comparison_paths):
             raise ValueError("eda_comparison_labels must be empty or match eda_comparison_paths length")

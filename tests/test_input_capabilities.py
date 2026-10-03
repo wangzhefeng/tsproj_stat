@@ -22,7 +22,7 @@ def test_selector_filters_capabilities_and_passes_covariates():
     selector = AutoSelector(candidates=["naive", "linear_var"], initial_train_size=30,
                             horizon=2, n_windows=2, forecast_strategy="native",
                             model_params_map={"linear_var": {"feature_lags": [0]}})
-    result = selector.select(frame.y, X_hist=frame, future_exog_cols=["temp"])
+    result = selector.select(frame.y, X_hist=frame, future_exog_cols=["temp"], exog_future_known=True)
     assert result == "linear_var"
     assert "naive" not in selector.scores
     assert selector.scores["linear_var"] < 1e-8

@@ -130,7 +130,8 @@ def _conformal_radius(
 def predict_frame(model_builder, history, horizon, forecast_strategy, X_hist=None, X_future=None,
                   processor_builder=None, interval_method="none", alpha=0.05, n_windows=20,
                   levels: Sequence[float] | None = None,
-                  spec: IntervalSpec | None = None):
+                  spec: IntervalSpec | None = None, history_time=None,
+                  exog_future_known=False, future_source=None):
     """输入原始 history；返回原始尺度点预测与可选区间。
 
     spec 显式传入时以其为准（interval_method/alpha/n_windows/levels 兼容参数仍支持）；
@@ -180,6 +181,7 @@ def predict_frame(model_builder, history, horizon, forecast_strategy, X_hist=Non
         horizon=horizon, strategy=forecast_strategy,
         future_columns=future_columns, processor_builder=processor_builder,
         first_origin=first_origin,
+        history_time=history_time, exog_future_known=exog_future_known, future_source=future_source,
     )
     if not np.isfinite(errors).all():
         raise ValueError("calibration errors must be finite")
@@ -193,6 +195,7 @@ def predict_frame(model_builder, history, horizon, forecast_strategy, X_hist=Non
         result[lower_col] = result.yhat - radius
         result[upper_col] = result.yhat + radius
     result.attrs.update(interval_method="conformal", calibration_windows=n_windows,
+                        calibration_exog_policy=("as_of_forecast" if future_source is not None else "known_in_advance") if future_columns else "none",
                         calibration_first_origin=first_origin,
                         calibration_ranks=_conformal_ranks(resolved_levels, n_windows),
                         interval_levels=resolved_levels, interval_alpha=alpha)

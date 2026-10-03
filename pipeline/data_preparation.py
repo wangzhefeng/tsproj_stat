@@ -7,6 +7,8 @@ def resolve_config_aggregation(cfg: AppConfig) -> AggregationResult | None:
     """按 AppConfig 生成派生文件，并把本次有效 data_path 切换到派生文件。"""
     if not cfg.aggregation_enabled:
         return None
+    if (cfg.do_train or cfg.do_test or cfg.do_forecast or cfg.auto_select) and cfg.aggregation_fill_method in {"linear", "seasonal_slot"}:
+        raise ValueError("bidirectional aggregation is offline only; modeling requires preserve or none")
     if cfg.data_path is None or cfg.aggregation_source_freq is None:
         raise ValueError("aggregation requires data_path and aggregation_source_freq")
     result = aggregate_csv(

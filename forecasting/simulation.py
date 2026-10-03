@@ -117,6 +117,8 @@ def simulate_frame(
     feature_spec: ModelFeatureSpec | None = None,
     history_time: pd.Series | None = None,
     future_time: pd.Series | None = None,
+    exog_future_known: bool = False,
+    future_source=None,
 ) -> SimulateResult:
     """误差驱动样本路径模拟：任意模型 × 任意策略通用。
 
@@ -160,6 +162,7 @@ def simulate_frame(
         future_columns=future_columns, processor_builder=processor_builder,
         first_origin=first_origin,
         feature_spec=feature_spec, history_time=history_time,
+        exog_future_known=exog_future_known, future_source=future_source,
     )
     if not np.isfinite(errors).all():
         raise ValueError("simulation calibration errors must be finite")
@@ -193,5 +196,6 @@ def simulate_frame(
         "n_windows": int(n_windows),
         "quantiles": resolved_quantiles,
         "seed": int(seed if seed is not None else 2026),
+        "calibration_exog_policy": ("as_of_forecast" if future_source is not None else "known_in_advance") if future_columns else "none",
     }
     return SimulateResult(point=point, paths_df=paths_df, quantile_df=quantile_df, metadata=metadata)

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from typing import Callable
+from models.base import BaseStatModel
 
 from models.factory import ModelFactory
 from features.model_inputs import FutureFeatures
@@ -83,10 +85,11 @@ class Forecaster:
         X_hist: pd.DataFrame | None = None,
         X_future: pd.DataFrame | None = None,
         feature_context: FutureFeatures | None = None,
+        model_builder: Callable[[], BaseStatModel] | None = None,
     ) -> pd.Series:
         """执行点预测并返回长度等于 horizon 的 yhat 序列。"""
         yhat = run_point_inference(
-            model_builder=lambda: self.factory.create_model(self.model_name, self.model_params, self.ignore_unsupported_inputs),
+            model_builder=model_builder or (lambda: self.factory.create_model(self.model_name, self.model_params, self.ignore_unsupported_inputs)),
             history=history,
             horizon=horizon,
             forecast_strategy=self.forecast_strategy,

@@ -24,9 +24,11 @@ export LOG_NAME="multi_model"
   --aggregation_enabled true \
   --aggregation_source_freq 5min \
   --aggregation_method mean \
-  --aggregation_fill_method seasonal_slot \
+  --aggregation_fill_method preserve \
+  --require_aggregation_audit true \
+  --backtest_missing_target_policy exclude \
   --aggregation_fill_weeks 4 \
-  --aggregation_output_path "dataset/aidc_power_month/derived/${ROUTE}_Loads_1day_mean_20251001_20260728.csv" \
+  --aggregation_output_path "dataset/aidc_power_month/derived/${ROUTE}_Loads_1day_observed_20251001_20260728.csv" \
   --model_names ar,arch,arima,arma,auto_arima,auto_ets,auto_theta,bayesian_tmt,croston,dynamic_theta,ets,garch,historic_average,ma,naive,prophet,rar,sarima,seasonal_naive,tbats,theta \
   --batch_models '{"ar": {"p": 2}, "arch": {}, "arima": {"order": [1, 1, 1]}, "arma": {"p": 1, "q": 1}, "auto_arima": {"seasonal": false, "m": 1, "stepwise": true, "start_p": 0, "start_q": 0, "max_p": 2, "max_q": 2, "max_order": 4, "maxiter": 20, "information_criterion": "aic", "trace": true, "error_action": "ignore", "suppress_warnings": true}, "auto_ets": {"season_length": 7, "freq": "D"}, "auto_theta": {"season_length": 7, "freq": "D"}, "bayesian_tmt": {"lags": [1, 2, 7]}, "croston": {"alpha": 0.2}, "dynamic_theta": {"season_length": 7, "freq": "D"}, "ets": {"trend": "add", "seasonal": "add", "seasonal_periods": 7}, "garch": {}, "historic_average": {"window": 180}, "ma": {"q": 1}, "naive": {}, "prophet": {"freq": "D"}, "rar": {"alpha": 0.2}, "sarima": {"order": [1, 1, 1], "seasonal_order": [1, 1, 1, 7], "enforce_stationarity": false, "enforce_invertibility": false, "fit_kwargs": {"disp": false, "maxiter": 20}}, "seasonal_naive": {"season_length": 7}, "tbats": {"seasonal_periods": [7], "show_warnings": false, "n_jobs": 1}, "theta": {"period": 7}}' \
   --forecast_strategy native \

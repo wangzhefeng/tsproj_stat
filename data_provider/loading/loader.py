@@ -56,7 +56,7 @@ class DataLoader:
         )
         return frame
 
-    def load_future_exog(self, future_exog_cols: list[str]) -> pd.DataFrame | None:
+    def load_future_exog(self, future_exog_cols: list[str], issue_time_col: str | None = None) -> pd.DataFrame | None:
         """读取全部已知未来外生输入；原点对齐和 horizon 选择由 pipeline 负责。"""
         if self.future_exog_path is None and self.future_exog_frame is None:
             return None
@@ -65,4 +65,12 @@ class DataLoader:
         if self.future_exog_time_col is None:
             raise ValueError("future_exog_time_col must be provided when future exog inputs are set")
         raw = read_frame(self.future_exog_path, self.future_exog_frame)
-        return normalize_future_frame(raw, self.future_exog_time_col, future_exog_cols)
+        result = normalize_future_frame(raw, self.future_exog_time_col, future_exog_cols)
+        if issue_time_col is not None:
+            if issue_time_col == self.future_exog_time_col or issue_time_col in future_exog_cols:
+                raise ValueError("issue timestamp must be distinct from time/value columns")
+            ordered = raw.copy()
+            ordered[self.future_exog_time_col] = pd.to_datetime(ordered[self.future_exog_time_col])
+            ordered = ordered.sort_values(self.future_exog_time_col, kind="stable")
+            result[issue_time_col] = pd.to_datetime(ordered[issue_time_col], errors="raise").to_numpy()
+        return result

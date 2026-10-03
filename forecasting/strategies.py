@@ -59,6 +59,8 @@ def _append_history_frame(
     next_row = history_frame.iloc[-1].copy()
     next_row.iloc[0] = float(next_target)
     if next_future is not None:
+        if history_frame.columns[0] in next_future.columns:
+            raise ValueError("future exogenous inputs must not contain the target")
         for col in next_future.columns:
             if col in next_row.index:
                 next_row[col] = float(next_future.iloc[0][col])
@@ -119,6 +121,10 @@ def _recursive_with_update(
 
 def checked_model_builder(model_builder, strategy, X_future, intervals=False, history=None, X_hist=None):
     """注册模型能力是执行门禁；自定义模型仍遵守公共接口。"""
+    if history is not None and X_future is not None:
+        target = to_univariate_series(history).name or "y"
+        if target in X_future.columns:
+            raise ValueError("future exogenous inputs must not contain the target")
     def build():
         """构建模型并按 registry 能力位校验「策略 × 输入 × 区间」组合。"""
         model = model_builder()

@@ -24,7 +24,8 @@ _AUDIT_VERSION = 2
 # 填充方向披露（T16）：linear 的 limit_direction="both" 与 seasonal_slot 的 ±fill_weeks
 # 双向窗口都会用未来观测回填过去的缺失，不是 as-of 操作；离线数据准备可接受，但必须披露。
 _FILL_DISCLOSURE = {
-    "none": (False, "no filling; as-of safe"),
+    "preserve": (False, "observed complete buckets only; incomplete buckets remain missing; repair after slicing history"),
+    "none": (False, "no filling; legacy pandas bucket labels"),
     "linear": (True, "linear interpolation with limit_direction='both'; past gaps may use future observations (not as-of)"),
     "seasonal_slot": (True, "bidirectional ±fill_weeks same (weekday, minute-of-day) window; past gaps use future observations (not as-of)"),
 }
@@ -72,6 +73,7 @@ def _audit_config(
         "method": method,
         "fill_method": fill_method,
         "fill_weeks": int(fill_weeks),
+        **({"observed_bucket_policy": "complete_right_labeled_v1"} if fill_method == "preserve" else {}),
     }
 
 
@@ -93,6 +95,10 @@ def _read_cache(output_path: Path, audit_path: Path, expected_config: dict[str, 
             return None
         counts = ("source_rows", "output_rows", "inserted_timestamp_count", "filled_value_count")
         if any(type(audit.get(key)) is not int or audit[key] < 0 for key in counts):
+            return None
+        if expected_config.get("fill_method") == "preserve" and (
+            type(audit.get("incomplete_bucket_count")) is not int or audit["incomplete_bucket_count"] < 0
+        ):
             return None
         if audit.get("config") != expected_config or audit.get("audit_sha256") != _audit_digest(audit):
             return None
@@ -202,6 +208,7 @@ def _aggregate_locked(source: Path, destination: Path, audit_path: Path, time_co
         "output_rows": len(aggregated),
         "inserted_timestamp_count": inserted_count,
         "filled_value_count": filled_count,
+        "incomplete_bucket_count": computed.incomplete_bucket_count,
         "fill_uses_future": _FILL_DISCLOSURE[fill_method][0],
         "fill_direction_note": _FILL_DISCLOSURE[fill_method][1],
         "duplicate_timestamp_count": computed.duplicate_timestamp_count,

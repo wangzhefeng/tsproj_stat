@@ -20,6 +20,8 @@ from pipeline.stages import model_feature_spec
 from config import AppConfig
 from data_provider.loading.loader import DataLoader
 from data_provider.resampling.service import AggregationResult
+from data_provider.resampling.provenance import require_modeling_source
+from data_provider.availability import FutureExogSource
 from data_provider.cleaning.imputation import repair_history_frame
 from data_provider.quality.checks import require_regular_time
 from pipeline.windows import split_history, align_future_exog
@@ -108,6 +110,8 @@ class ModelApp:
         self.aggregation_result = aggregation_result
         self.source_identity = source_identity
         self.input_fingerprints: dict = {}
+        self.future_source: FutureExogSource | None = None
+        self.evaluation_start: int | None = None
         self._manifests: list[RunManifest] = []
         self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
         configure_logging(log_format=cfg.log_format, run_id=self.run_id)
@@ -337,9 +341,9 @@ class ModelApp:
         logger.info(f"{'=' * 100}")
 
     def _run_auto_select(self, df: pd.DataFrame, out: dict[str, str | dict[str, float]]) -> None:
-        """自动模型选择（可选，失败不阻断后续阶段）。
+        """前段自动模型选择；失败关闭运行，独立尾段只用于最终评估。
 
-        选型用原始完整历史做窗口评估 + per-window processor，
+        选型用原始前段历史做窗口评估 + per-window processor，
         与 test 链路同口径，避免在预处理后的 history_y 上评估导致选错模型；
         改选后按最终模型名重建产物目录（P12），否则结果会写入原始模型名的 experiment_path。
         """
@@ -348,7 +352,14 @@ class ModelApp:
         try:
             from evaluation.selector import AutoSelector
             logger.info(f"[AutoSelect] running with candidates: {self.cfg.auto_select_candidates or 'registry-stable'}")
-            candidates = self.cfg.auto_select_candidates or [name for name, spec in MODEL_REGISTRY.items() if spec.stability == "stable"]
+            candidates = (self.cfg.resolved_model_names() if self.cfg.is_multi_model() else
+                          self.cfg.auto_select_candidates or [name for name, spec in MODEL_REGISTRY.items() if spec.stability == "stable"])
+            holdout_size = self.cfg.auto_select_holdout_size or max(self.cfg.backtest_horizon, (len(df) + 4) // 5)
+            cutoff = len(df) - holdout_size
+            if cutoff < self.cfg.resolved_backtest_train_size() + self.cfg.backtest_horizon:
+                raise ValueError("insufficient data for separate selection and holdout windows")
+            selection_df = df.iloc[:cutoff].copy()
+            self.evaluation_start = cutoff
             params_map = {name: resolve_model_params(replace(
                 self.cfg, model_name=name,
                 model_params=self.cfg.batch_models.get(name, self.cfg.model_params),
@@ -364,13 +375,16 @@ class ModelApp:
                 window_mode=self.cfg.resolved_backtest_window_mode(),
             )
             best_model = selector.select(
-                y=df[self.cfg.target_col].astype(float).reset_index(drop=True),
-                X_hist=df[[self.cfg.time_col, *self.model_history_input_cols]].reset_index(drop=True),
+                y=selection_df[self.cfg.target_col].astype(float).reset_index(drop=True),
+                X_hist=selection_df[[self.cfg.time_col, *self.model_history_input_cols]].reset_index(drop=True),
                 target_col=self.cfg.target_col,
                 time_col=self.cfg.time_col,
                 processor_builder=self._new_processor,
                 future_exog_cols=self.cfg.future_exog_cols,
                 feature_spec=model_feature_spec(self.cfg),
+                exog_future_known=self.cfg.exog_future_known,
+                future_source=self.future_source,
+                missing_target_policy=self.cfg.backtest_missing_target_policy,
             )
             logger.info(f"[AutoSelect] overriding model_name: {self.cfg.model_name!r} → {best_model!r}")
             self.cfg.model_name = best_model
@@ -380,9 +394,12 @@ class ModelApp:
             out.update(self._directory_payload())
             out["auto_selected_model"] = best_model
             out["auto_select_scores"] = selector.scores
+            out["selection_end"] = str(selection_df[self.cfg.time_col].iloc[-1])
+            out["holdout_start"] = str(df[self.cfg.time_col].iloc[cutoff])
         except Exception as exc:
             logger.error(f"[AutoSelect] failed: {exc}")
             out["auto_select_error"] = str(exc)
+            raise
 
     def _run_single_model_stages(
         self,
@@ -419,6 +436,10 @@ class ModelApp:
 
     def _load_dataset(self) -> pd.DataFrame:
         """加载历史数据，并将清洗后的质量报告写入训练结果目录。"""
+        modeling = self.cfg.do_train or self.cfg.do_test or self.cfg.do_forecast or self.cfg.auto_select
+        if modeling:
+            require_modeling_source(self.cfg.data_path, freq=self.cfg.freq, time_col=self.cfg.time_col,
+                                    target_col=self.cfg.target_col, required=self.cfg.require_aggregation_audit)
         df = self.loader.load_data()
         if self.loader.quality_report is not None:
             quality_dir = (self.artifacts.eda_dir if self.cfg.is_eda_only() else
@@ -436,15 +457,8 @@ class ModelApp:
         local_df = df.copy()
         metadata: dict[str, str] = {}
 
-        # T16：声明为「需预报」的外生（exog_future_known=false）不得在回测中使用真实未来值。
-        if not self.cfg.exog_future_known:
-            overlap = [c for c in self.cfg.future_exog_cols if c in local_df.columns]
-            if overlap:
-                raise ValueError(
-                    f"exog_future_known=false 但回测会对未来外生 {overlap} 使用 df 真实值"
-                    "（perfect foresight）；主线暂不支持需预报外生的回测，"
-                    "请改用已知未来外生或移出 future_exog_cols"
-                )
+        if self.cfg.future_exog_cols and not self.cfg.exog_future_known and not self.cfg.future_exog_issue_time_col:
+            raise ValueError("unknown future inputs require issue-time forecasts; observations would be perfect foresight")
 
         processor = self._new_processor()
 
@@ -503,18 +517,25 @@ class ModelApp:
             metadata["history_scaler_type"] = self.cfg.scaler_type
 
         future_exog_df = None
-        future_exog_raw = self.loader.load_future_exog(self.cfg.future_exog_cols)
+        future_exog_raw = self.loader.load_future_exog(self.cfg.future_exog_cols, self.cfg.future_exog_issue_time_col)
         if future_exog_raw is not None:
             self.input_fingerprints["future_exog_view"] = frame_fingerprint(future_exog_raw)
             for manifest in self._manifests:
                 manifest.inputs(self.input_fingerprints)
             if self.cfg.future_exog_time_col is None:
                 raise ValueError("future_exog_time_col is required")
-            future_exog_df = align_future_exog(
-                future_exog_raw, self.cfg.future_exog_time_col, self.cfg.future_exog_cols,
-                pd.Timestamp(history_time.iloc[-1]), self.cfg.freq, self.cfg.predict_horizon,
-            )
-            metadata["future_exog_rows"] = str(len(future_exog_df))
+            if self.cfg.future_exog_issue_time_col:
+                self.future_source = FutureExogSource(future_exog_raw, self.cfg.future_exog_time_col,
+                    tuple(self.cfg.future_exog_cols), self.cfg.future_exog_issue_time_col)
+                if self.cfg.do_forecast:
+                    future_exog_df = self.future_source.at(pd.Timestamp(history_time.iloc[-1]),
+                        pd.DatetimeIndex(forecast_timestamps(history_time, self.cfg.predict_horizon, self.cfg.freq)))
+            else:
+                future_exog_df = align_future_exog(
+                    future_exog_raw, self.cfg.future_exog_time_col, self.cfg.future_exog_cols,
+                    pd.Timestamp(history_time.iloc[-1]), self.cfg.freq, self.cfg.predict_horizon,
+                )
+            metadata["future_exog_rows"] = str(len(future_exog_df)) if future_exog_df is not None else "0"
 
         return PrepareResult(
             # df 语义为「建模窗口数据」：预处理后 EDA 与特征快照均作用于实际建模的
@@ -529,6 +550,7 @@ class ModelApp:
             history_time=history_time,
             processor=processor,
             raw_history_df=raw_history_df,
+            future_source=self.future_source,
             model_input_feature_columns=model_input_feature_columns,
             metadata=metadata,
             feature_context=feature_context,
@@ -655,6 +677,8 @@ class ModelApp:
             "endog_cols": self.effective_endog_cols,
             "exog_cols": self.cfg.exog_cols,
             "future_exog_cols": self.cfg.future_exog_cols,
+            "future_exog_issue_time_col": self.cfg.future_exog_issue_time_col,
+            "future_exog_policy": ("as_of_forecast" if self.future_source is not None else "known_in_advance") if self.cfg.future_exog_cols else "none",
         }
 
     def train(self, prepared: PrepareResult) -> dict[str, str]:
@@ -757,6 +781,8 @@ class ModelApp:
             model_history_input_cols=self.model_history_input_cols,
             effective_endog_cols=self.effective_endog_cols,
             processor_builder=processor_builder,
+            future_source=self.future_source,
+            evaluation_start=self.evaluation_start,
         )
         # 回测产物分为窗口指标、逐点预测、按步聚合指标、汇总指标和图形，便于后续误差分析。
         metrics_path = dataframe_to_csv(self.artifacts.test_results_dir / "backtest_metrics.csv", result.metrics_df)

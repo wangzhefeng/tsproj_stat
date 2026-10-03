@@ -199,15 +199,13 @@ def test_run_forecast_stage_multi_levels_columns():
     cfg.interval_levels = [0.8, 0.95]
     cfg.validate()
 
-    class Prepared:
-        pass
-
-    prepared = Prepared()
-    prepared.raw_history_df = pd.DataFrame({"y": np.arange(60., dtype=float)})
-    prepared.history_y = pd.Series(np.arange(60., dtype=float), name="y")
-    prepared.history_model_input_df = pd.DataFrame({"y": np.arange(60., dtype=float)})
-    prepared.future_exog_df = None
-    prepared.processor = type("P", (), {"enabled": False})()
+    from pipeline.stages import PrepareResult
+    from data_provider.target_transforms.transformer import TargetTransformer
+    raw = pd.DataFrame({"ds": pd.date_range("2026-01-01", periods=60), "y": np.arange(60.)})
+    prepared = PrepareResult(df=raw, history_df=raw, raw_history_df=raw, history_y=raw.y,
+                             history_endog_df=raw[["y"]], history_exog_df=None,
+                             history_model_input_df=raw[["y"]], future_exog_df=None,
+                             history_time=raw.ds, processor=TargetTransformer())
 
     stage = run_forecast_stage(cfg, prepared, model_history_input_cols=["y"])
     cols = set(stage.forecast_df.columns)

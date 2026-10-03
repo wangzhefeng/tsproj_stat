@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 from typing import Callable
 from data_provider.target_transforms.transformer import TargetTransformer
+from data_provider.availability import FutureExogSource
 
 from evaluation.backtest import BacktestResult, rolling_backtest
 from models.factory import ModelFactory
@@ -44,6 +45,10 @@ class Tester:
         refit_every: int = 1,
         ignore_unsupported_inputs: bool = False,
         feature_spec: ModelFeatureSpec | None = None,
+        missing_target_policy: str = "raise",
+        exog_future_known: bool = False,
+        future_source: FutureExogSource | None = None,
+        evaluation_start: int | None = None,
     ):
         """参数与 rolling_backtest 一一对应；本类只做配置装配，不做窗口逻辑。"""
         self.model_name = model_name
@@ -70,6 +75,10 @@ class Tester:
         self.refit_every = refit_every
         self.ignore_unsupported_inputs = ignore_unsupported_inputs
         self.feature_spec = feature_spec
+        self.missing_target_policy = missing_target_policy
+        self.exog_future_known = exog_future_known
+        self.future_source = future_source
+        self.evaluation_start = evaluation_start
         self.factory = ModelFactory()
 
     def evaluate(self, df: pd.DataFrame) -> BacktestResult:
@@ -98,4 +107,8 @@ class Tester:
             levels=self.levels,
             refit_every=self.refit_every,
             feature_spec=self.feature_spec,
+            missing_target_policy=self.missing_target_policy,
+            exog_future_known=self.exog_future_known,
+            future_source=self.future_source,
+            evaluation_start=self.evaluation_start,
         )

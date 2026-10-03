@@ -29,6 +29,7 @@ from utils.log_util import logger
 from artifacts.writers import dataframe_to_csv, write_json
 from config import AppConfig
 from data_provider.panel import SeriesPanel
+from data_provider.resampling.provenance import require_modeling_source
 
 
 def _series_token(series_id: str) -> str:
@@ -123,6 +124,7 @@ def _build_task_configs(cfg: AppConfig, panel: SeriesPanel, future: pd.DataFrame
             child.batch_resume_from = None  # 续跑决策只属于父任务
             child.model_names = []  # 子任务始终对应一个明确模型
             child.data_path = None  # 内存帧直通：不再读文件
+            child.require_aggregation_audit = False  # 父级在拆分前已核验共同来源。
             child.future_exog_path = None
             # data_name 显式指定：data_path 已置 None，回退派生会退化成 demo_series；
             # 保持原「每序列独立结果根」语义（stem-series-token）。
@@ -212,6 +214,9 @@ def run_batch(cfg: AppConfig) -> dict:
     cfg.validate()
     if not cfg.data_path or not cfg.series_id_col:
         raise ValueError("batch requires data_path and series_id_col")
+    if cfg.do_train or cfg.do_test or cfg.do_forecast:
+        require_modeling_source(cfg.data_path, freq=cfg.freq, time_col=cfg.time_col,
+                                target_col=cfg.target_col, required=cfg.require_aggregation_audit)
     source = pd.read_csv(cfg.data_path, dtype={cfg.series_id_col: "string"})
     id_col = cfg.series_id_col
     if source.duplicated([id_col, cfg.time_col]).any():

@@ -144,7 +144,7 @@ def _partially_failing_builder():
 
 
 def test_backtest_summary_discloses_future_exog_policy():
-    """T16：回测使用 df 真实未来外生值时必须在 summary 披露 perfect_foresight。"""
+    """显式合成已知输入应披露 known_in_advance；默认未知输入由独立门禁测试拒绝。"""
     df = pd.DataFrame(
         {
             "ds": pd.date_range("2024-01-01", periods=60, freq="D"),
@@ -159,11 +159,12 @@ def test_backtest_summary_discloses_future_exog_policy():
         time_col="ds",
         exog_cols=["temp"],
         future_exog_cols=["temp"],
+        exog_future_known=True,
         train_size=30,
         horizon=5,
         step=5,
     )
-    assert result.summary["future_exog_policy"] == "perfect_foresight"
+    assert result.summary["future_exog_policy"] == "known_in_advance"
 
     result_plain = rolling_backtest(
         df[["ds", "y"]],

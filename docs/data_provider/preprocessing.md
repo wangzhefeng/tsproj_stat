@@ -48,7 +48,7 @@ MSTL 多季节示例见 [strategies.md](../forecasting/strategies.md#原生多�
 
 `ETSModel`（SES/DES/TES 统一入口）的 `seasonal_periods` 优先级：`model_params.seasonal_periods` > `--seasonal_period` > 自动周期推断；启用了 `seasonal` 但推断失败直接报错，不静默退化。
 
-ETS 调参示例（smoothing grid）：
+ETS 调参先在原始历史切内部留出，再逐候选修复/变换；验证真值不变换，评分恢复原尺度。选定参数后全窗重拟合并归档参数与 tuning_metadata；模型直接 fit 的周期推断也只用内部训练段。示例：
 
 ```bash
 .venv/bin/python run.py --model_name ets \

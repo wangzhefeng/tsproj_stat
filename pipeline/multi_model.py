@@ -1,8 +1,8 @@
 """多模型单 run 编排：数据准备一次，模型阶段逐模型循环。
 
 从 runner 拆出的纯编排逻辑：每个模型独立重建 artifacts（各自 experiment_path）
-并复用 ModelApp 的 train/test/forecast 方法落盘；comparison 表按回测汇总指标
-横向对比，auto_select 消费同一批回测结果选优（P3：消除 AutoSelector 平行扫描）。
+并复用 ModelApp 的 train/test/forecast 方法落盘；auto_select 先在前段选型，
+comparison 表只展示冻结模型选择后的独立尾段评估。
 """
 from __future__ import annotations
 
@@ -34,8 +34,7 @@ def run_multi_model(
 
     每个模型独立重建 artifacts（各自 experiment_path）并复用现有
     train/test/forecast 方法落盘；comparison 表按回测汇总指标横向对比。
-    auto_select 开启时消费同一批回测结果选优（P3：消除 AutoSelector
-    平行扫描——多模型模式下不再单独跑选型回测）。
+    auto_select 开启时与单模型共用前段选型，最终测试从独立尾段开始。
     """
     model_names = cfg.resolved_model_names()
     metric = cfg.auto_select_metric
@@ -44,6 +43,8 @@ def run_multi_model(
     # 场景级合并脚本（每模型不同超参）依赖本映射。
     per_model_params = dict(cfg.batch_models) if cfg.batch_models else {}
     global_params = copy.deepcopy(cfg.model_params)
+    # 选型仅消费前段；后续所有候选测试都从同一独立留出边界开始。
+    app._run_auto_select(df, out)
     # 每模型回测汇总指标在 test 成功后当场读入（experiment_path 随循环变化，
     # 事后按路径重建会因 params 段不同而失配——P3 后续修复）。
     test_summaries: dict[str, dict] = {}
@@ -114,16 +115,9 @@ def run_multi_model(
     if comparison_path is not None:
         final_out["model_comparison_path"] = comparison_path
     # ------------------------------
-    # auto_select（多模型模式：消费 comparison 选优）
+    # auto_select：保留独立前段的选择
     # ------------------------------
-    if cfg.auto_select and test_summaries:
-        try:
-            best = select_best_model(test_summaries, metric)
-            final_out["auto_selected_model"] = best
-            logger.info(f"[MultiModel:auto_select] selected {best!r} by {metric}")
-        except Exception as exc:
-            logger.error(f"[MultiModel:auto_select] failed: {exc}")
-            final_out["auto_select_error"] = str(exc)
+    # auto_selected_model 已在独立 selection 前段冻结，不能用 holdout 成绩改选。
     return final_out
 
 

@@ -23,4 +23,5 @@
 - train 生成归档；test/forecast 按策略即时拟合，不消费归档。关闭 train 不阻止 forecast。
 - 多模型复用数据准备，但模型与结果目录独立；每模型参数覆盖与自动选型见 [config](../config/usage.md)。
 - 面板、未来外生、恢复校验见 [外生与面板](exogenous.md)；不支持的组合见 [运行限制](limitations.md)。
+- 预测时点、观测聚合、独立选型与兼容变化见 [信息集与防泄露](information-set.md)。
 - 模型计算归 [models](../models/models.md)，多步推理归 [forecasting](../forecasting/strategies.md)，序列化和完成协议归 [artifacts](../artifacts/artifacts.md)。

@@ -7,7 +7,7 @@ set -euo pipefail
 : "${ROUTE:?ROUTE must be A or B}"
 
 DATA_PATH="dataset/aidc_power_month/${ROUTE}_Loads_5min_20251001_20260728.csv"
-DERIVED_PATH="dataset/aidc_power_month/derived/${ROUTE}_Loads_1day_mean_20251001_20260728.csv"
+DERIVED_PATH="dataset/aidc_power_month/derived/${ROUTE}_Loads_1day_observed_20251001_20260728.csv"
 RESULTS_DATA_NAME="aidc_power_month/route_${ROUTE}"
 
 run_single_model() {
@@ -33,7 +33,9 @@ run_single_model() {
     --aggregation_enabled true \
     --aggregation_source_freq 5min \
     --aggregation_method mean \
-    --aggregation_fill_method seasonal_slot \
+    --aggregation_fill_method preserve \
+    --require_aggregation_audit true \
+    --backtest_missing_target_policy exclude \
     --aggregation_fill_weeks 4 \
     --aggregation_output_path "${DERIVED_PATH}" \
     --model_name "${model_name}" \

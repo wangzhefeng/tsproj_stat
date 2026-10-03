@@ -19,6 +19,7 @@
 - 单模型变体在 `scripts/aidc_power_month/variants/<name>.sh` 设置模型、超参、去趋势、回测日志选项，再调用 `_common.sh` 的 `run_single_model`。
 - EDA shell 选择场景 YAML 后调用根 `run_eda.py`，通用运行器是 `eda/runner.py`；`run_models_all.sh` 仍委托 `_run_models_all.sh`。
 - 新增变体只维护 `variants/` 中的差异参数，复用既有配置消费路径。
+- AIDC 模型共用体使用 preserve 聚合、新 `*_observed_*` 文件、强制来源审计和显式缺失标签 exclude；prepare_data.py 仍只服务离线 EDA 补缺数据，两者不可混用。
 
 ## 场景级多模型执行
 

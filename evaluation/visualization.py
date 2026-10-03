@@ -41,7 +41,15 @@ def plot_backtest_residuals(predictions_df: pd.DataFrame, output_path: str, titl
 def plot_error_distribution(predictions_df: pd.DataFrame, output_path: str, title: str) -> str:
     """保存回测残差分布图，用于观察偏态与异常误差。"""
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.hist(predictions_df["residual"], bins=min(20, max(len(predictions_df) // 2, 5)), color="tab:orange", alpha=0.8)
+    residual = predictions_df["residual"].dropna()
+    # 缺失真值不计入直方图；近常数误差须扩展范围，避免浮点分箱边界重合。
+    bounds = None
+    if not residual.empty:
+        low, high = float(residual.min()), float(residual.max())
+        padding = max(abs(low), abs(high), 1.) * 1e-6
+        if high - low < padding:
+            bounds = (low - padding, high + padding)
+    ax.hist(residual, bins=min(20, max(len(residual) // 2, 5)), range=bounds, color="tab:orange", alpha=0.8)
     ax.set_title(title)
     ax.set_xlabel("residual")
     ax.set_ylabel("count")

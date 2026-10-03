@@ -247,6 +247,7 @@ def test_batch_future_exog_in_memory(tmp_path, n_jobs):
     future.to_csv(future_path, index=False)
     cfg.batch_models = {"linear_var": {"target_lags": [1], "feature_lags": [0], "require_future_exog": True}}
     cfg.exog_cols = cfg.future_exog_cols = ["x"]
+    cfg.exog_future_known = True  # 此夹具是合成提前已知输入，不代表天气实测可提前取得。
     cfg.future_exog_path, cfg.future_exog_time_col = str(future_path), "ds"
     cfg.batch_n_jobs = n_jobs
     out = run_batch(cfg)

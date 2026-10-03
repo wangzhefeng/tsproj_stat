@@ -9,6 +9,7 @@ from evaluation.metrics import POINT_METRICS
 from evaluation.comparison import select_best_model
 from models.factory import ModelFactory
 from features.model_inputs import ModelFeatureSpec
+from data_provider.availability import FutureExogSource
 from forecasting.strategies import normalize_forecast_strategy, normalize_window_mode
 from models.registry import MODEL_REGISTRY
 
@@ -69,6 +70,9 @@ class AutoSelector:
         processor_builder=None,
         future_exog_cols: list[str] | None = None,
         feature_spec: ModelFeatureSpec | None = None,
+        exog_future_known: bool = False,
+        future_source: FutureExogSource | None = None,
+        missing_target_policy: str = "raise",
     ) -> str:
         """评估全部候选模型，并返回有效得分最优的模型名。
 
@@ -121,11 +125,13 @@ class AutoSelector:
                     forecast_strategy=self.forecast_strategy,
                     window_mode=self.window_mode,
                     verbose=False,
-                    # 选型需要对候选保持稳健：单个窗口失败不应拖垮整个候选评估；
-                    # 失败窗口由 summary 的 survivor_bias/failed_windows 披露。
-                    allow_failed_windows=True,
+                    # 候选必须完成同一组窗口；失败候选淘汰，不能只靠简单窗口取胜。
+                    allow_failed_windows=False,
                     processor_builder=processor_builder,
                     feature_spec=feature_spec,
+                    exog_future_known=exog_future_known,
+                    future_source=future_source,
+                    missing_target_policy=missing_target_policy,
                 )
                 score = result.summary.get(self.metric, float("inf"))
                 self._scores[model_name] = float(score)

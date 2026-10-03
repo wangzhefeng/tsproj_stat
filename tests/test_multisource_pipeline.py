@@ -41,6 +41,7 @@ def test_pipeline_multisource_linear_var_forecast_contract(tmp_path):
         future_exog_path=str(future_path),
         future_exog_time_col="ds",
         future_exog_cols=["temp"],
+        exog_future_known=True,  # 合成已知外生通路；真实天气预报另测 issue-time 档案。
         do_eda=False,
         do_train=True,
         do_test=True,

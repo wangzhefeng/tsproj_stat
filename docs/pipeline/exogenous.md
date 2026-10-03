@@ -10,7 +10,7 @@
 | `exog_cols` | 历史外生变量列 |
 | `future_exog_path` + `future_exog_time_col` + `future_exog_cols` | 独立未来外生文件 |
 
-Loader 读取全部未来输入，`pipeline/windows.py` 按原点之后的实际预测时间戳选择 horizon，不再取文件前 N 行。重复时间戳、覆盖不足、选中值缺失均失败；额外历史/未来行不进入预测窗口。
+Loader 读取全部未来输入；确定性已知表按预测时间选择，预报档案由 `data_provider/availability.py` 按 valid time + issue time 选择原点前最新版本。覆盖不足、选中值缺失、同版重复均失败。
 
 ```bash
 .venv/bin/python run.py \
@@ -18,6 +18,7 @@ Loader 读取全部未来输入，`pipeline/windows.py` 按原点之后的实际
   --model_name linear_var --model_params '{"target_lags":[1,2],"feature_lags":[0,1]}' \
   --endog_cols load --exog_cols temp \
   --future_exog_path /abs/path/future_exog.csv --future_exog_time_col ds --future_exog_cols temp \
+  --future_exog_issue_time_col issued_at \
   --do_train true --do_test true --do_forecast true --history_size 12 --predict_horizon 4
 ```
 
@@ -25,9 +26,10 @@ Loader 读取全部未来输入，`pipeline/windows.py` 按原点之后的实际
 
 - AR/MA/ARMA/ARIMA/SARIMA/AutoARIMA 真实消费历史与未来外生变量
 - 回归型 ARIMA 将历史输入中除目标外的列作回归变量；预测必须提供相同列集合与正确行数，按训练列顺序对齐
-- 不可把仅历史可得的协变量当作未来已知变量
+- `exog_future_known` 默认改为 false；日历/计划量须显式 true，天气等须提供 `future_exog_issue_time_col`。历史回测需要覆盖每个原点的预报档案，不接受未来实测冒充预报。
+- 目标列不得出现在 `exog_cols/future_exog_cols`；配置与公共推理双重拒绝，递归追加也禁止同名覆盖。
 - 不支持的历史协变量或未来输入默认失败；兼容旧实验可显式 `--ignore_unsupported_inputs true`（记录在配置与实验路径中，不增加模型能力）
-- 自动选型按历史/未来输入与 native 能力过滤候选；回测披露 `perfect_foresight`，不伪造历史天气预报
+- 回测、选型、conformal、模拟共同选择发布时间 <= 原点的版本；策略披露 known_in_advance/as_of_forecast/none，详见 [信息集](information-set.md)。
 - CLI 阶段错误以非零退出，错误与已有产物索引保留在 run summary
 
 ## 面板多序列、多模型

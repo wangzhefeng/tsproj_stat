@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from config import AppConfig
+from data_provider.availability import FutureExogSource
 from features.model_inputs import ModelFeatureSpec, FutureFeatures
 from models.base import BaseStatModel
 from pipeline.trainer import Trainer
@@ -24,6 +25,7 @@ from pipeline.tester import Tester
 from forecasting.forecaster import Forecaster
 from forecasting.intervals import predict_frame
 from forecasting.simulation import simulate_frame
+from forecasting.tuning import resolve_origin_builder
 from config.model_params import resolve_model_params
 from data_provider.target_transforms.transformer import TargetTransformer
 from data_provider.quality.checks import require_finite
@@ -83,6 +85,7 @@ class PrepareResult:
     model_input_feature_columns: list[str] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)
     feature_context: FutureFeatures | None = None
+    future_source: FutureExogSource | None = None
 
 
 def model_feature_spec(cfg: AppConfig) -> ModelFeatureSpec | None:
@@ -131,6 +134,9 @@ def run_train_stage(
         X_hist=prepared.history_model_input_df,
         X_future=(prepared.feature_context.row(prepared.future_exog_df, 0, [])
                   if prepared.feature_context else prepared.future_exog_df),
+        model_builder=resolve_origin_builder(
+            lambda: trainer.factory.create_model(cfg.model_name, resolve_model_params(cfg), cfg.ignore_unsupported_inputs),
+            prepared.raw_history_df[cfg.target_col], lambda: new_processor_from_config(cfg)),
     )
     if not getattr(cfg, "train_fitted_values", False):
         # 默认关闭：训练不附带诊断，行为与 P8 之前完全一致。
@@ -208,6 +214,8 @@ def run_test_stage(
     model_history_input_cols: list[str],
     effective_endog_cols: list[str],
     processor_builder: Callable[[], TargetTransformer] | None,
+    future_source: FutureExogSource | None = None,
+    evaluation_start: int | None = None,
 ) -> BacktestResult:
     """回测阶段：rolling backtest，返回 BacktestResult（不落盘）。"""
     tester = Tester(
@@ -235,6 +243,10 @@ def run_test_stage(
         refit_every=cfg.backtest_refit_every,
         ignore_unsupported_inputs=cfg.ignore_unsupported_inputs,
         feature_spec=model_feature_spec(cfg),
+        missing_target_policy=cfg.backtest_missing_target_policy,
+        exog_future_known=cfg.exog_future_known,
+        future_source=future_source,
+        evaluation_start=evaluation_start,
     )
     return tester.evaluate(df[[cfg.time_col, *model_history_input_cols]].copy())
 
@@ -246,6 +258,8 @@ def run_forecast_stage(
     processor_builder: Callable[[], TargetTransformer] | None = None,
 ) -> ForecastStageResult:
     """预测阶段：推理未来 horizon 步，返回 yhat（或含区间）结果（不落盘）。"""
+    if processor_builder is None:
+        processor_builder = lambda: new_processor_from_config(cfg)
     forecaster = Forecaster(
         model_name=cfg.model_name,
         model_params=resolve_model_params(cfg),
@@ -269,6 +283,9 @@ def run_forecast_stage(
             n_windows=cfg.conformal_n_windows,
             levels=cfg.interval_levels or None,
             processor_builder=processor_builder,
+            history_time=prepared.raw_history_df[cfg.time_col],
+            exog_future_known=cfg.exog_future_known,
+            future_source=prepared.future_source,
         )
         result = ForecastStageResult(
             forecast_df=interval_df.reset_index(drop=True),
@@ -282,6 +299,9 @@ def run_forecast_stage(
             X_hist=prepared.history_model_input_df,
             X_future=prepared.future_exog_df,
             feature_context=prepared.feature_context,
+            model_builder=resolve_origin_builder(
+                lambda: forecaster.factory.create_model(cfg.model_name, resolve_model_params(cfg), cfg.ignore_unsupported_inputs),
+                prepared.raw_history_df[cfg.target_col], processor_builder),
         )
         # 还原点预测；区间分支在 predict_frame 内已经还原。
         if prepared.processor.enabled:
@@ -310,6 +330,8 @@ def run_forecast_stage(
             feature_spec=model_feature_spec(cfg),
             history_time=prepared.raw_history_df[cfg.time_col],
             future_time=prepared.feature_context.future_time if prepared.feature_context else None,
+            exog_future_known=cfg.exog_future_known,
+            future_source=prepared.future_source,
         )
         result.simulate_paths_df = sim.paths_df
         result.simulate_quantile_df = sim.quantile_df

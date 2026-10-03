@@ -7,6 +7,7 @@ AppConfig/model_params 注入，模型内部只负责拟合与 fallback。
 from __future__ import annotations
 
 import itertools
+import copy
 
 import pandas as pd
 
@@ -50,15 +51,33 @@ class ETSModel(FallbackMixin, BaseStatModel):
         self._fallback = TrendFallbackModel()
         self._result = None
         self._resolved_seasonal_periods: int | None = seasonal_periods
+        self.selected_smoothing_params: tuple[float | None, float | None, float | None] | None = None
+        self.tuning_metadata: dict = {}
+
+    def tuning_plan(self, n_rows: int):
+        """公开内部验证长度与候选网格，供原始窗口编排层独立预处理。"""
+        size = self._resolve_validation_size(pd.Series(index=range(n_rows), dtype=float))
+        return size, list(self._iter_smoothing_candidates())
+
+    def with_fixed_smoothing(self, params):
+        """返回独立候选；不携带编排闭包，模型归档仍可独立回读。"""
+        model = copy.deepcopy(self)
+        model.tune_smoothing_params = False
+        model.selected_smoothing_params = tuple(params)
+        return model
 
     def fit(self, y: pd.Series | pd.DataFrame, X_hist: pd.DataFrame | None = None, X_future: pd.DataFrame | None = None) -> "ETSModel":
         series = to_univariate_series(y).astype(float)
         self._fallback.fit(series)
         self._validate_configuration()
-        self._resolved_seasonal_periods = self._resolve_seasonal_periods(series)
+        validation_size = self._resolve_validation_size(series) if self.tune_smoothing_params else None
+        period_history = series.iloc[:-validation_size] if validation_size else series
+        self._resolved_seasonal_periods = self._resolve_seasonal_periods(period_history)
         try:
             if self.tune_smoothing_params:
                 self._result = self._fit_with_tuning(series)
+            elif self.selected_smoothing_params is not None:
+                self._result = self._fit_model(series, *self.selected_smoothing_params, optimized=False)
             else:
                 self._result = self._fit_model(series)
         except Exception as exc:
@@ -187,6 +206,8 @@ class ETSModel(FallbackMixin, BaseStatModel):
                 raise last_error
             raise ValueError("No valid smoothing parameter candidates were available for ETS tuning")
 
+        self.selected_smoothing_params = best_params
+        self._resolved_seasonal_periods = self._resolve_seasonal_periods(series)
         return self._fit_model(
             series,
             smoothing_level=best_params[0],

@@ -29,15 +29,15 @@ CSV、内存帧与 demo 共用 `cleaning/normalization.py` 和 `quality/`：只�
   --data_path dataset/aidc_power_month/A_Loads_5min_20251001_20260728.csv \
   --time_col time --target_col value --freq D \
   --aggregation_enabled true --aggregation_source_freq 5min \
-  --aggregation_method mean --aggregation_fill_method seasonal_slot \
-  --aggregation_fill_weeks 4 \
-  --aggregation_output_path dataset/aidc_power_month/derived/A_Loads_1day_mean_20251001_20260728.csv
+  --aggregation_method mean --aggregation_fill_method preserve \
+  --require_aggregation_audit true --backtest_missing_target_policy exclude \
+  --aggregation_output_path dataset/aidc_power_month/derived/A_Loads_1day_observed_20251001_20260728.csv
 ```
 
-- 方法：`mean / max / min / sum / median`；缺失策略：`none / linear / seasonal_slot`
-- 聚合拒绝空/NaT/非有限目标和源网格错位；重复时间按均值合并并审计。固定步长仅支持整倍数降频/同频；日内细分及 D 可聚合到周/月/季/年桶，其他跨日历组合明确拒绝。边界不完整桶保留已有 pandas 语义；`sum` 不自动换算电量。
+- 方法：`mean / max / min / sum / median`；缺失策略：`none / linear / seasonal_slot / preserve`
+- 聚合拒绝空/NaT/非有限目标和源网格错位；重复时间按均值合并并审计。固定步长仅支持整倍数降频/同频；旧模式可聚合周/月/季/年桶并保留 pandas 标签，preserve 仅固定频率、严格完整桶且右标签；`sum` 不自动换算电量。
 - 派生 CSV 旁生成 v2 `.aggregate.json`：参数、源 SHA-256、输出 SHA-256 和审计摘要均匹配才复用；旧版/缺字段/损坏均重建。人工修改 CSV 也会触发重算，需另存路径。
-- `linear` 与 `seasonal_slot` 为双向填充（离线数据准备可接受，但审计中披露 `fill_uses_future`）
+- `linear/seasonal_slot` 只用于离线准备/EDA，建模入口拒绝；`preserve` 固定频率完整桶保留观测，不完整桶为 NaN，窗口内再修复历史；真值不修复。详见 [信息集](../pipeline/information-set.md)。
 - 同目标进程锁（macOS/Linux）覆盖校验与发布；`.CSV文件名.lock` 空锁文件保留。唯一临时目录避免写入冲突；CSV/审计分两次替换，不是联合原子事务，中断不匹配会在下次调用重建。
 
 ## 数据项目脚本
@@ -53,7 +53,7 @@ CSV、内存帧与 demo 共用 `cleaning/normalization.py` 和 `quality/`：只�
 | AIDC 各路 `univariate/` 日频模型脚本 | 从 5min 原始聚合生成/复用派生 CSV；模型结果仍落对应 route 子树；批量入口留 route 根 |
 | `scripts/aidc_power_month/run_all.sh` | A/B 各 16 个基准配置串行批跑；日志落项目根 `logs/aidc_power_month/run_all_<时间戳>/` |
 
-注意：数据准备/启用聚合的模型入口会在审计缺失时重聚合覆盖；独立 EDA 不会，只披露来源未验证。
+注意：AIDC 建模写新的 `*_observed_*` 派生名，不复用离线补缺 CSV；旧 EDA 数据保留。独立 EDA 只读并披露来源未验证。
 
 独立准备：`.venv/bin/python scripts/aidc_power_month/prepare_data.py`。可用 `--data-dir`、`--output-dir`、`--date-range` 覆盖输入目录、输出目录与文件日期标识；默认输出仍为原数据目录下 `derived/`。支持绝对脚本路径从其他工作目录调用；MC/Hermes 加 `env -u PYTHONPATH` 前缀。
 

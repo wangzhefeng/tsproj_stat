@@ -31,6 +31,8 @@ def inspect_aggregation_audit(data_path: str | Path, *, freq: str, time_col: str
         if audit.get("output_sha256") != _file_digest(data):
             raise ValueError("derived CSV digest mismatch")
         cfg = audit["config"]
+        if cfg.get("fill_method") == "preserve" and cfg.get("observed_bucket_policy") != "complete_right_labeled_v1":
+            raise ValueError("unknown observed bucket policy")
         if (cfg["time_col"] != time_col or cfg["target_col"] != target_col
                 or pd.tseries.frequencies.to_offset(cfg["target_freq"]) != pd.tseries.frequencies.to_offset(freq)):
             raise ValueError("audit column/frequency mismatch")
@@ -48,3 +50,18 @@ def inspect_aggregation_audit(data_path: str | Path, *, freq: str, time_col: str
     except (OSError, ValueError, KeyError, TypeError) as exc:
         result.update(status="invalid", reason=str(exc))
     return result
+
+
+def require_modeling_source(data_path: str | None, *, freq: str, time_col: str,
+                            target_col: str, required: bool = False) -> None:
+    """单序列/面板共用来源门禁；未知原始输入的可用性仍须调用方保证。"""
+    if data_path is None:
+        if required:
+            raise ValueError("as-of aggregation audit requires a file input")
+        return
+    path = Path(data_path)
+    if not required and not path.with_name(path.name + ".aggregate.json").exists():
+        return
+    provenance = inspect_aggregation_audit(path, freq=freq, time_col=time_col, target_col=target_col)
+    if provenance["status"] != "verified" or provenance.get("fill_uses_future") is not False:
+        raise ValueError(f"modeling requires verified as-of aggregation: {provenance}")

@@ -21,9 +21,9 @@ CLI 参数按 AppConfig 字段自动注册（int/float 标量直转、`list[floa
 .venv/bin/python run.py --model_names naive,arima,seasonal_naive --auto_select true --do_train true --do_test true --do_forecast true
 ```
 
-对比表写入 `results/{data_name}/results_test/comparison/runs/{run_id}/model_comparison.csv`；多模型 `auto_select` 消费该表，指标规则见 [testing.md](../evaluation/testing.md)。`batch_models` 提供每模型独立参数；未覆盖的模型使用全局 `model_params`。
+对比表写入 `results/{data_name}/results_test/comparison/runs/{run_id}/model_comparison.csv`；开启 `auto_select` 时它是独立尾段成绩，不能用于改选；指标规则见 [testing.md](../evaluation/testing.md)。`batch_models` 提供每模型独立参数；未覆盖的模型使用全局 `model_params`。
 `model_names` 去重保序，未设置回退 `[model_name]`；`batch_models` 的 `{model: params}` 在 series_id_col 为空时用于单表多模型，非空时为面板任务参数表。
-单模型 `auto_select` 使用原始完整历史做窗口评估（不是先截成最终训练窗）；最多 `auto_select_n_windows` 个窗口，使用相同预处理、特征、策略、窗口模式与有效模型参数。`--auto_select_candidates` 缺省为空表，取 registry 的 stable 模型；显式名单覆盖候选，最终训练仍只用尾部 `history_size` 行。选型评分不是独立留出集成绩。
+单/多模型 `auto_select` 先保留独立尾段，再在前段最多评估 `auto_select_n_windows` 个窗口；`auto_select_holdout_size` 默认保留至少一个 horizon 的 20% 尾段。单模型候选缺省 registry stable，多模型用 model_names；最终训练/未来预测仍用最新 history_size 行。选型、外生声明等行为变化见 [信息集](../pipeline/information-set.md)。
 
 仅 EDA：
 

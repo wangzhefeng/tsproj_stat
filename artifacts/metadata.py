@@ -17,7 +17,7 @@ def model_info_payload(model: BaseStatModel, model_params: dict[str, Any],
         "is_experimental": spec is not None and spec.stability == "experimental",
         **asdict(model.runtime_info()),
     }
-    for attr in ("order", "seasonal_order", "selected_order", "selected_score", "ic", "seasonal", "m"):
+    for attr in ("order", "seasonal_order", "selected_order", "selected_score", "ic", "seasonal", "m", "selected_smoothing_params", "tuning_metadata"):
         if hasattr(model, attr):
             value = getattr(model, attr)
             payload[attr] = list(value) if isinstance(value, tuple) else value

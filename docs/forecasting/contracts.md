@@ -9,6 +9,7 @@
 | `origins.py` | `prepare_origin_inputs` 修复与预处理、`forecast_at_origin` 原点编排、`rolling_error_pool` 带符号误差池 |
 | `intervals.py` | IntervalSpec、组合裁决、conformal/native 区间 |
 | `simulation.py` | 误差驱动样本路径模拟 |
+| `tuning.py` | ETS 原始内窗调参：先切分，再候选级修复/变换，原尺度真值评分 |
 
 ## 区间与模拟
 

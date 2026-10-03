@@ -11,7 +11,7 @@ from data_provider.cleaning.seasonal import seasonal_slot_fill
 from data_provider.quality.checks import require_finite
 
 AGGREGATION_METHODS = {"mean", "max", "min", "sum", "median"}
-FILL_METHODS = {"none", "linear", "seasonal_slot"}
+FILL_METHODS = {"none", "linear", "seasonal_slot", "preserve"}
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ class FrameAggregationResult:
     inserted_timestamp_count: int
     filled_value_count: int
     duplicate_timestamp_count: int
+    incomplete_bucket_count: int = 0
 
 
 def validate_aggregation_options(method: str, fill_method: str, fill_weeks: int) -> None:
@@ -101,13 +102,26 @@ def aggregate_frame(
         series = seasonal_slot_fill(series, fill_weeks)
 
     remaining = int(series.isna().sum())
-    if remaining:
+    if remaining and fill_method != "preserve":
         raise ValueError(
             f"Aggregation has {remaining} missing source-frequency values after fill_method={fill_method!r}"
         )
     filled_count = before_fill - remaining
     aggregated = getattr(series.resample(target_freq), method)().reset_index(name=target_col)
-    require_finite(aggregated[target_col], "Aggregation output")
+    incomplete_count = 0
+    if fill_method == "preserve":
+        # 不完整桶不是完整观测；连边界桶也必须达到完整源网格点数。
+        source_offset, target_offset = to_offset(source_freq), to_offset(target_freq)
+        fixed = (offsets.Tick, offsets.Day)
+        if not isinstance(source_offset, fixed) or not isinstance(target_offset, fixed):
+            raise ValueError("preserve aggregation requires fixed source and target frequencies")
+        expected = target_offset.nanos // source_offset.nanos
+        complete = series.resample(target_freq).count().to_numpy() == expected
+        aggregated.loc[~complete, target_col] = float("nan")
+        aggregated[time_col] = aggregated[time_col] + target_offset
+        incomplete_count = int((~complete).sum())
+    else:
+        require_finite(aggregated[target_col], "Aggregation output")
 
     return FrameAggregationResult(
         frame=aggregated,
@@ -115,4 +129,5 @@ def aggregate_frame(
         inserted_timestamp_count=inserted_count,
         filled_value_count=filled_count,
         duplicate_timestamp_count=int(frame[time_col].duplicated().sum()),
+        incomplete_bucket_count=incomplete_count,
     )

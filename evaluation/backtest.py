@@ -12,10 +12,12 @@ from typing import Callable
 
 import pandas as pd
 from features.model_inputs import ModelFeatureSpec
+from data_provider.availability import FutureExogSource
 import numpy as np
 
 from forecasting.strategies import normalize_forecast_strategy, normalize_window_mode, run_point_inference
 from forecasting.origins import prepare_origin_inputs
+from forecasting.tuning import resolve_origin_builder
 from .metrics import POINT_METRICS, train_scales
 from .metrics import coverage, interval_width, winkler_score
 from forecasting.intervals import iter_bound_pairs, predict_frame
@@ -61,13 +63,14 @@ def _build_step_metrics(
     rows: list[dict] = []
     for step in sorted(merged["horizon_step"].unique()):
         grp = merged[merged["horizon_step"] == step]
+        grp = grp.loc[grp["y_true"].notna()]
         y_true = grp["y_true"].to_numpy(dtype=float)
         y_pred = grp["y_pred"].to_numpy(dtype=float)
         row: dict[str, float | int] = {"horizon_step": int(step), "window_count": int(len(grp))}
         for metric_name, metric_spec in POINT_METRICS.items():
             if metric_spec.requires_train:
                 continue
-            row[metric_name] = metric_spec.func(y_true, y_pred)
+            row[metric_name] = metric_spec.func(y_true, y_pred) if len(grp) else float("nan")
         err = y_true - y_pred
         mase_scale = grp["_mase_scale"].to_numpy(dtype=float)
         valid = np.isfinite(mase_scale) & (mase_scale > 0)
@@ -106,6 +109,10 @@ def rolling_backtest(
     levels: list[float] | None = None,
     refit_every: int = 1,
     feature_spec: ModelFeatureSpec | None = None,
+    missing_target_policy: str = "raise",
+    exog_future_known: bool = False,
+    future_source: FutureExogSource | None = None,
+    evaluation_start: int | None = None,
 ) -> BacktestResult:
     """执行滚动回测。
 
@@ -116,6 +123,8 @@ def rolling_backtest(
     """
     if time_col is not None:
         require_regular_time(df[time_col], role="backtest")
+    if missing_target_policy not in {"raise", "exclude"}:
+        raise ValueError("missing_target_policy must be raise or exclude")
     n = len(df)
     if min(train_size, horizon, step) <= 0:
         raise ValueError("train_size, horizon and step must be positive")
@@ -133,14 +142,20 @@ def rolling_backtest(
     endog_cols = endog_cols or []
     exog_cols = exog_cols or []
     future_exog_cols = future_exog_cols or []
+    if target_col in future_exog_cols:
+        raise ValueError("future_exog_cols must not contain the target")
 
     feature_cols = []
     for col in [*endog_cols, *exog_cols]:
         if col != target_col and col not in feature_cols:
             feature_cols.append(col)
-    future_cols = [col for col in future_exog_cols if col in df.columns]
-    # 回测的未来外生直接取 df 真实值 = perfect foresight；必须在 summary 中披露（T16）。
-    future_exog_policy = "perfect_foresight" if future_cols else "none"
+    future_cols = list(future_exog_cols)
+    if future_cols and future_source is None and not exog_future_known:
+        raise ValueError("future exogenous backtest requires known values or an as-of forecast source")
+    if future_source is not None and (time_col is None or set(future_source.columns) != set(future_cols)):
+        raise ValueError("as-of source requires aligned time and future columns")
+    # 原点前发布的预报与确定性已知量分开披露，未知实测不再默认当作未来已知。
+    future_exog_policy = ("as_of_forecast" if future_source is not None else "known_in_advance") if future_cols else "none"
     cached_model = None
     if refit_every != 1:
         if feature_spec is not None:
@@ -154,7 +169,10 @@ def rolling_backtest(
         if not callable(getattr(candidate, "update", None)) or (spec is not None and not spec.supports_update):
             raise ValueError("model does not support fixed-parameter update")
 
-    total_windows = ((n - train_size - horizon) // step) + 1
+    first_start = train_size if evaluation_start is None else evaluation_start
+    if first_start < train_size or first_start + horizon > n:
+        raise ValueError("evaluation_start must leave sufficient training and test data")
+    total_windows = ((n - first_start - horizon) // step) + 1
     started_at = time.perf_counter()
     metric_rows: list[dict] = []
     prediction_rows: list[dict] = []
@@ -162,7 +180,7 @@ def rolling_backtest(
     window_scales: dict[int, tuple[float, float]] = {}
 
     windows = []
-    start = train_size
+    start = first_start
     window_id = 0
     while start + horizon <= n:
         window_id += 1
@@ -188,7 +206,11 @@ def rolling_backtest(
         test_y = test_slice[target_col].astype(float).reset_index(drop=True)
         test_x_future = None
         if future_cols:
-            test_x_future = test_slice[future_cols].astype(float).reset_index(drop=True)
+            if future_source is not None:
+                test_x_future = future_source.at(pd.Timestamp(train_slice[time_col].iloc[-1]),
+                                                 pd.DatetimeIndex(test_slice[time_col]))
+            else:
+                test_x_future = test_slice[future_cols].astype(float).reset_index(drop=True)
         test_time = test_slice[time_col] if time_col is not None and time_col in test_slice.columns else None
 
         proc = processor_builder() if processor_builder is not None else None
@@ -198,14 +220,23 @@ def rolling_backtest(
         bound_pairs: list[tuple[str, str]] = []
         repaired_count = 0
         try:
-            require_finite(test_y, "evaluation target")
+            observed = test_y.notna()
+            if missing_target_policy == "raise":
+                require_finite(test_y, "evaluation target")
+            else:
+                if not observed.any():
+                    raise ValueError("evaluation target has no observed values")
+                require_finite(test_y.loc[observed], "evaluation target")
             if test_x_future is not None:
                 require_finite(test_x_future, "future exogenous data")
             # interval_method=none：修复→预处理经 forecasting.origins 共享原语
             # （与 conformal/simulate 的校准原点同一实现）；区间路径不在此处修复，
             # 由 predict_frame 的每个内部校准原点独立修复。
             prepared = None
+            origin_builder = model_builder
             if interval_method == "none":
+                if refit_every == 1:
+                    origin_builder = resolve_origin_builder(model_builder, train_y, processor_builder)
                 builder: Callable[[], TargetTransformer] | None = None
                 if use_proc:
                     assert proc is not None
@@ -237,11 +268,12 @@ def rolling_backtest(
                 interval_df = predict_frame(model_builder, train_y, horizon, strategy,
                                             train_x_hist, test_x_future, processor_builder,
                                             interval_method, interval_alpha, conformal_n_windows,
-                                            levels=levels)
+                                            levels=levels, history_time=train_slice[time_col] if time_col else None,
+                                            exog_future_known=exog_future_known, future_source=future_source)
                 pred = interval_df["yhat"]
             else:
                 pred = run_point_inference(
-                    model_builder=model_builder,
+                    model_builder=origin_builder,
                     history=train_y_model,
                     horizon=horizon,
                     forecast_strategy=strategy,
@@ -278,9 +310,11 @@ def rolling_backtest(
         }
         for metric_name, metric_spec in POINT_METRICS.items():
             if metric_spec.requires_train:
-                metric_row[metric_name] = metric_spec.func(test_y.values, pred.values, train_y.values)
+                metric_row[metric_name] = metric_spec.func(test_y.loc[observed].values, pred.loc[observed].values, train_y.values)
             else:
-                metric_row[metric_name] = metric_spec.func(test_y.values, pred.values)
+                metric_row[metric_name] = metric_spec.func(test_y.loc[observed].values, pred.loc[observed].values)
+        metric_row["observed_target_count"] = int(observed.sum())
+        metric_row["excluded_target_count"] = int((~observed).sum())
         metric_row["refitted"] = did_refit
         metric_row["history_filled_value_count"] = repaired_count if interval_method == "none" else None
         metric_row["history_repair_policy"] = (
@@ -300,12 +334,12 @@ def rolling_backtest(
                 coverage_key = f"interval_coverage_{level_tag}" if level_tag else "interval_coverage"
                 width_key = f"interval_width_{level_tag}" if level_tag else "interval_width"
                 winkler_key = f"winkler_score_{level_tag}" if level_tag else "winkler_score"
-                lower, upper = interval_df[lower_col], interval_df[upper_col]
+                lower, upper = interval_df.loc[observed, lower_col], interval_df.loc[observed, upper_col]
                 level_alpha = alphas[lower_col]
                 metric_row.update(
-                    {coverage_key: coverage(test_y, lower, upper),
+                    {coverage_key: coverage(test_y.loc[observed], lower, upper),
                      width_key: interval_width(lower, upper),
-                     winkler_key: winkler_score(test_y, lower, upper, level_alpha)},
+                     winkler_key: winkler_score(test_y.loc[observed], lower, upper, level_alpha)},
                 )
         for idx in range(horizon):
             row: dict[str, object] = {
@@ -387,6 +421,11 @@ def rolling_backtest(
         "window_mode": resolved_window_mode,
         "forecast_strategy": strategy,
         "future_exog_policy": future_exog_policy,
+        "missing_target_policy": missing_target_policy,
+        "observed_target_count": int(metrics_df["observed_target_count"].sum()),
+        "excluded_target_count": int(metrics_df["excluded_target_count"].sum()),
+        "evaluation_start": int(first_start),
+        "evaluation_role": "independent_holdout" if evaluation_start is not None else "rolling_evaluation",
     }
     # 点指标均值由注册表驱动；NaN 窗口（如常数训练窗的 mase/rmsse）跳过，全缺为 NaN。
     for metric_name in POINT_METRICS:
